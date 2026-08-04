@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { enableNotifications, notificationsEnabled } from '../lib/push'
+import { localTimeToUTC, utcTimeToLocal } from '../lib/dates'
 import type { Reminder } from '../lib/types'
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -31,7 +32,7 @@ export function Settings() {
     if (!user) return
     await supabase.from('reminders').insert({
       label: label.trim(),
-      time_of_day: time,
+      time_of_day: localTimeToUTC(time),
       days_of_week: [0, 1, 2, 3, 4, 5, 6],
       user_id: user.id,
     })
@@ -92,7 +93,7 @@ export function Settings() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-slate-100">{reminder.label}</p>
-                <p className="text-sm text-slate-500">{reminder.time_of_day.slice(0, 5)}</p>
+                <p className="text-sm text-slate-500">{utcTimeToLocal(reminder.time_of_day)}</p>
               </div>
               <div className="flex items-center gap-3">
                 <button
