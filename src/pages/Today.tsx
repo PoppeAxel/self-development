@@ -15,6 +15,7 @@ export function Today() {
   const [newCategoryId, setNewCategoryId] = useState('')
   const [newGoalSeriesId, setNewGoalSeriesId] = useState('')
   const [newAutoStepsTarget, setNewAutoStepsTarget] = useState('')
+  const [newRecurring, setNewRecurring] = useState(true)
   const [loading, setLoading] = useState(true)
   const [steps, setSteps] = useState<number | null>(null)
   const [stepGoal, setStepGoal] = useState<number | null>(null)
@@ -51,6 +52,8 @@ export function Today() {
           .from('task_completions')
           .insert(toAutoComplete.map((t) => ({ task_id: t.id, date, user_id: user.id })))
         for (const t of toAutoComplete) completed.add(t.id)
+        const oneTimeIds = toAutoComplete.filter((t) => !t.recurring).map((t) => t.id)
+        if (oneTimeIds.length > 0) await supabase.from('daily_tasks').update({ active: false }).in('id', oneTimeIds)
       }
     }
 
@@ -81,11 +84,13 @@ export function Today() {
       category_id: newCategoryId || null,
       goal_series_id: newGoalSeriesId || null,
       auto_steps_target: newAutoStepsTarget ? Number(newAutoStepsTarget) : null,
+      recurring: newRecurring,
     })
     setNewTitle('')
     setNewCategoryId('')
     setNewGoalSeriesId('')
     setNewAutoStepsTarget('')
+    setNewRecurring(true)
     load()
   }
 
@@ -107,6 +112,7 @@ export function Today() {
       setCompletedIds(next)
       await supabase.from('task_completions').delete().eq('task_id', task.id).eq('date', date)
       await bumpLinkedGoal(task, -1)
+      if (!task.recurring) await supabase.from('daily_tasks').update({ active: true }).eq('id', task.id)
     } else {
       next.add(task.id)
       setCompletedIds(next)
@@ -116,6 +122,9 @@ export function Today() {
       if (!user) return
       await supabase.from('task_completions').insert({ task_id: task.id, date, user_id: user.id })
       await bumpLinkedGoal(task, 1)
+      // One-time tasks shouldn't reappear tomorrow — archive it now; it stays visible
+      // (checked, struck through) for the rest of today since local state is untouched.
+      if (!task.recurring) await supabase.from('daily_tasks').update({ active: false }).eq('id', task.id)
     }
   }
 
@@ -212,6 +221,9 @@ export function Today() {
                           🚶 {(steps ?? 0).toLocaleString()}/{task.auto_steps_target!.toLocaleString()} synced from Garmin
                         </span>
                       )}
+                      {!task.recurring && (
+                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">One-time</span>
+                      )}
                     </span>
                   </span>
                 </Wrapper>
@@ -263,6 +275,26 @@ export function Today() {
           placeholder="Auto-complete from Garmin steps at, e.g. 10000 (optional)"
           className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
         />
+        <div className="flex gap-2 rounded-2xl bg-gray-100 p-1">
+          <button
+            type="button"
+            onClick={() => setNewRecurring(true)}
+            className={`flex-1 rounded-xl px-3 py-2 text-sm font-medium transition ${
+              newRecurring ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500'
+            }`}
+          >
+            Recurring daily
+          </button>
+          <button
+            type="button"
+            onClick={() => setNewRecurring(false)}
+            className={`flex-1 rounded-xl px-3 py-2 text-sm font-medium transition ${
+              !newRecurring ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500'
+            }`}
+          >
+            One-time
+          </button>
+        </div>
         <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
           Add task
         </button>

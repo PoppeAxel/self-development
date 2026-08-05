@@ -17,6 +17,7 @@ export interface DailyTask {
   category_id: string | null
   goal_series_id: string | null
   auto_steps_target: number | null
+  recurring: boolean
 }
 
 export interface TaskCompletion {
