@@ -5,6 +5,7 @@ import { rolloverRecurringGoals } from '../lib/goals'
 import { ensureDefaultCategories, CATEGORY_STYLES } from '../lib/categories'
 import { AUTO_METRICS, METRIC_INFO, isAutoMetric, type AutoMetric } from '../lib/metrics'
 import { ProgressRing } from '../components/ProgressRing'
+import { RefreshButton } from '../components/RefreshButton'
 import type { Category, DailyTask, WeeklyGoal } from '../lib/types'
 
 export function Today() {
@@ -163,7 +164,10 @@ export function Today() {
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
-      <h1 className="text-2xl font-bold text-gray-900">Manage Your Daily Tasks</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">Manage Your Daily Tasks</h1>
+        <RefreshButton onRefresh={load} />
+      </div>
 
       {(tasks.length > 0 || steps != null) && (
         <div className="rounded-3xl border border-gray-100 bg-white shadow-sm">

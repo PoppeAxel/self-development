@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
+import { RefreshButton } from '../components/RefreshButton'
 import type { JournalEntry, JournalEntryType } from '../lib/types'
 
 const MOODS = ['😞', '😕', '😐', '🙂', '😄']
@@ -52,7 +53,10 @@ export function Journal() {
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
-      <h1 className="text-2xl font-bold text-gray-900">Your Journal</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">Your Journal</h1>
+        <RefreshButton onRefresh={load} />
+      </div>
 
       <div className="flex gap-2 rounded-2xl bg-gray-100 p-1">
         {(['weight', 'mood', 'note'] as JournalEntryType[]).map((t) => (

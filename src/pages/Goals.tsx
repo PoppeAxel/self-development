@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { weekStartISO } from '../lib/dates'
 import { rolloverRecurringGoals } from '../lib/goals'
 import { ProgressRing } from '../components/ProgressRing'
+import { RefreshButton } from '../components/RefreshButton'
 import type { WeeklyGoal } from '../lib/types'
 
 export function Goals() {
@@ -64,7 +65,10 @@ export function Goals() {
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
-      <h1 className="text-2xl font-bold text-gray-900">This Week's Goals</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">This Week's Goals</h1>
+        <RefreshButton onRefresh={load} />
+      </div>
       {loading ? (
         <p className="text-sm text-gray-400">Loading…</p>
       ) : goals.length === 0 ? (

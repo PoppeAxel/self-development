@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { enableNotifications, notificationsEnabled } from '../lib/push'
 import { localTimeToUTC, utcTimeToLocal } from '../lib/dates'
 import { ensureDefaultCategories, CATEGORY_STYLES } from '../lib/categories'
+import { RefreshButton } from '../components/RefreshButton'
 import { CATEGORY_COLORS } from '../lib/types'
 import type { Category, CategoryColor, Reminder } from '../lib/types'
 
@@ -131,7 +132,10 @@ export function Settings() {
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-4">
-      <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
+        <RefreshButton onRefresh={load} />
+      </div>
 
       <div className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
         <p className="font-semibold text-gray-900">Push notifications</p>

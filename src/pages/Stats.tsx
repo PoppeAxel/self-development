@@ -4,6 +4,7 @@ import { format, subDays, parseISO, differenceInCalendarDays } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { todayISO, weekStartISO } from '../lib/dates'
 import { CATEGORY_STYLES } from '../lib/categories'
+import { RefreshButton } from '../components/RefreshButton'
 import type { Category, DailyTask, WeeklyGoal } from '../lib/types'
 
 interface Streak {
@@ -121,9 +122,8 @@ export function Stats() {
   const [stepGoal, setStepGoal] = useState<number | null>(null)
   const [stepsExpanded, setStepsExpanded] = useState(false)
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true)
+  async function load() {
+    setLoading(true)
       const since = format(subDays(new Date(), 29), 'yyyy-MM-dd')
       const currentWeekStart = weekStartISO()
 
@@ -213,9 +213,12 @@ export function Stats() {
       }
       setPastGoalsByWeek([...byWeek.entries()].map(([weekStart, goals]) => ({ weekStart, goals })).slice(0, 12))
 
-      setLoading(false)
-    }
+    setLoading(false)
+  }
+
+  useEffect(() => {
     load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   if (loading) {
@@ -229,7 +232,10 @@ export function Stats() {
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-4">
-      <h1 className="text-2xl font-bold text-gray-900">Statistics</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">Statistics</h1>
+        <RefreshButton onRefresh={load} />
+      </div>
 
       {weightSeries.length > 1 && (
         <div>
