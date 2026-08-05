@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { Login } from './components/Login'
 import { TabBar, type Tab } from './components/TabBar'
 import { Today } from './pages/Today'
+import { Calendar } from './pages/Calendar'
 import { Goals } from './pages/Goals'
 import { Journal } from './pages/Journal'
 import { Stats } from './pages/Stats'
@@ -16,6 +17,7 @@ function Shell() {
       <div className="safe-top" />
       <div className="flex-1 overflow-y-auto">
         {tab === 'today' && <Today />}
+        {tab === 'calendar' && <Calendar />}
         {tab === 'goals' && <Goals />}
         {tab === 'journal' && <Journal />}
         {tab === 'stats' && <Stats />}

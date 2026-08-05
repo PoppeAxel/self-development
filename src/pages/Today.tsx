@@ -32,7 +32,12 @@ export function Today() {
     await rolloverRecurringGoals()
     const [{ data: taskRows }, { data: completionRows }, { data: categoryRows }, { data: goalRows }, { data: metricRows }, { data: settingsRow }] =
       await Promise.all([
-        supabase.from('daily_tasks').select('*').eq('active', true).order('created_at'),
+        supabase
+          .from('daily_tasks')
+          .select('*')
+          .eq('active', true)
+          .or(`scheduled_date.is.null,scheduled_date.lte.${date}`)
+          .order('created_at'),
         supabase.from('task_completions').select('task_id').eq('date', date),
         supabase.from('categories').select('*').order('name'),
         supabase.from('weekly_goals').select('*').eq('week_start', weekStart).not('target_value', 'is', null),

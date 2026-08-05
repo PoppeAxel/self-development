@@ -19,6 +19,7 @@ export interface DailyTask {
   auto_metric: string | null
   auto_metric_target: number | null
   recurring: boolean
+  scheduled_date: string | null
 }
 
 export interface TaskCompletion {
