@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { weekStartISO } from '../lib/dates'
+import { rolloverRecurringGoals } from '../lib/goals'
 import { ProgressRing } from '../components/ProgressRing'
 import type { WeeklyGoal } from '../lib/types'
 
@@ -8,11 +9,13 @@ export function Goals() {
   const [goals, setGoals] = useState<WeeklyGoal[]>([])
   const [title, setTitle] = useState('')
   const [target, setTarget] = useState('')
+  const [recurring, setRecurring] = useState(false)
   const [loading, setLoading] = useState(true)
   const weekStart = weekStartISO()
 
   async function load() {
     setLoading(true)
+    await rolloverRecurringGoals()
     const { data } = await supabase
       .from('weekly_goals')
       .select('*')
@@ -39,9 +42,11 @@ export function Goals() {
       target_value: target ? Number(target) : null,
       week_start: weekStart,
       user_id: user.id,
+      recurring,
     })
     setTitle('')
     setTarget('')
+    setRecurring(false)
     load()
   }
 
@@ -81,6 +86,11 @@ export function Goals() {
                     >
                       {done ? 'Done' : 'Active'}
                     </span>
+                    {goal.recurring && (
+                      <span className="ml-1.5 mt-1 inline-block rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-medium text-sky-600">
+                        ↻ Weekly
+                      </span>
+                    )}
                   </div>
                   <button onClick={() => remove(goal)} className="text-gray-300">
                     ✕
@@ -143,6 +153,10 @@ export function Goals() {
             Add
           </button>
         </div>
+        <label className="flex items-center gap-2 text-sm text-gray-500">
+          <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} className="accent-violet-600" />
+          Recurring every week
+        </label>
       </form>
     </div>
   )

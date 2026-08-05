@@ -5,6 +5,7 @@ import { TabBar, type Tab } from './components/TabBar'
 import { Today } from './pages/Today'
 import { Goals } from './pages/Goals'
 import { Journal } from './pages/Journal'
+import { Stats } from './pages/Stats'
 import { Settings } from './pages/Settings'
 
 function Shell() {
@@ -17,6 +18,7 @@ function Shell() {
         {tab === 'today' && <Today />}
         {tab === 'goals' && <Goals />}
         {tab === 'journal' && <Journal />}
+        {tab === 'stats' && <Stats />}
         {tab === 'settings' && <Settings />}
       </div>
       <TabBar active={tab} onChange={setTab} />

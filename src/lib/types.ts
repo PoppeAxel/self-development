@@ -1,9 +1,21 @@
+export const CATEGORY_COLORS = ['pink', 'amber', 'violet', 'emerald', 'sky', 'rose'] as const
+export type CategoryColor = (typeof CATEGORY_COLORS)[number]
+
+export interface Category {
+  id: string
+  user_id: string
+  name: string
+  color: CategoryColor
+}
+
 export interface DailyTask {
   id: string
   user_id: string
   title: string
   active: boolean
   created_at: string
+  category_id: string | null
+  goal_series_id: string | null
 }
 
 export interface TaskCompletion {
@@ -22,6 +34,8 @@ export interface WeeklyGoal {
   progress: number
   week_start: string
   status: 'active' | 'done'
+  series_id: string
+  recurring: boolean
 }
 
 export type JournalEntryType = 'weight' | 'mood' | 'note'

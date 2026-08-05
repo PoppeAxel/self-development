@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { enableNotifications, notificationsEnabled } from '../lib/push'
 import { localTimeToUTC, utcTimeToLocal } from '../lib/dates'
-import type { Reminder } from '../lib/types'
+import { ensureDefaultCategories, CATEGORY_STYLES } from '../lib/categories'
+import { CATEGORY_COLORS } from '../lib/types'
+import type { Category, CategoryColor, Reminder } from '../lib/types'
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
@@ -12,16 +14,53 @@ export function Settings() {
   const [time, setTime] = useState('20:00')
   const [pushOn, setPushOn] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+  const [categories, setCategories] = useState<Category[]>([])
+  const [categoryName, setCategoryName] = useState('')
+  const [categoryColor, setCategoryColor] = useState<CategoryColor>('violet')
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState('')
 
   async function load() {
-    const { data } = await supabase.from('reminders').select('*').order('time_of_day')
-    setReminders(data ?? [])
+    await ensureDefaultCategories()
+    const [{ data: reminderRows }, { data: categoryRows }] = await Promise.all([
+      supabase.from('reminders').select('*').order('time_of_day'),
+      supabase.from('categories').select('*').order('name'),
+    ])
+    setReminders(reminderRows ?? [])
+    setCategories(categoryRows ?? [])
     setPushOn(await notificationsEnabled())
   }
 
   useEffect(() => {
     load()
   }, [])
+
+  async function addCategory(e: React.FormEvent) {
+    e.preventDefault()
+    if (!categoryName.trim()) return
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    await supabase.from('categories').insert({ name: categoryName.trim(), color: categoryColor, user_id: user.id })
+    setCategoryName('')
+    load()
+  }
+
+  async function renameCategory(category: Category) {
+    if (!editingName.trim() || editingName === category.name) {
+      setEditingCategoryId(null)
+      return
+    }
+    setCategories((cs) => cs.map((c) => (c.id === category.id ? { ...c, name: editingName.trim() } : c)))
+    await supabase.from('categories').update({ name: editingName.trim() }).eq('id', category.id)
+    setEditingCategoryId(null)
+  }
+
+  async function removeCategory(category: Category) {
+    setCategories((cs) => cs.filter((c) => c.id !== category.id))
+    await supabase.from('categories').delete().eq('id', category.id)
+  }
 
   async function addReminder(e: React.FormEvent) {
     e.preventDefault()
@@ -152,6 +191,66 @@ export function Settings() {
           </button>
         </div>
       </form>
+
+      <h2 className="text-sm font-semibold text-gray-500">Labels</h2>
+      <div className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap gap-2">
+          {categories.map((category) => {
+            const style = CATEGORY_STYLES[category.color]
+            const isEditing = editingCategoryId === category.id
+            return (
+              <div key={category.id} className={`flex items-center gap-1.5 rounded-full py-1.5 pl-3 pr-2 ${style.bg}`}>
+                <span className={`h-2 w-2 rounded-full ${style.dot}`} />
+                {isEditing ? (
+                  <input
+                    autoFocus
+                    value={editingName}
+                    onChange={(e) => setEditingName(e.target.value)}
+                    onBlur={() => renameCategory(category)}
+                    onKeyDown={(e) => e.key === 'Enter' && renameCategory(category)}
+                    className={`w-20 border-b bg-transparent text-sm font-medium outline-none ${style.text}`}
+                  />
+                ) : (
+                  <button
+                    onClick={() => {
+                      setEditingCategoryId(category.id)
+                      setEditingName(category.name)
+                    }}
+                    className={`text-sm font-medium ${style.text}`}
+                  >
+                    {category.name}
+                  </button>
+                )}
+                <button onClick={() => removeCategory(category)} className="text-gray-400">
+                  ✕
+                </button>
+              </div>
+            )
+          })}
+        </div>
+        <form onSubmit={addCategory} className="mt-3 flex gap-2">
+          <input
+            value={categoryName}
+            onChange={(e) => setCategoryName(e.target.value)}
+            placeholder="New label"
+            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+          />
+          <select
+            value={categoryColor}
+            onChange={(e) => setCategoryColor(e.target.value as CategoryColor)}
+            className="rounded-2xl border border-gray-200 bg-white px-3 py-2 text-gray-900 outline-none focus:border-violet-400"
+          >
+            {CATEGORY_COLORS.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2 font-semibold text-white">
+            Add
+          </button>
+        </form>
+      </div>
 
       <button
         onClick={() => supabase.auth.signOut()}
