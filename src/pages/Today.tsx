@@ -14,6 +14,7 @@ export function Today() {
   const [newTitle, setNewTitle] = useState('')
   const [newCategoryId, setNewCategoryId] = useState('')
   const [newGoalSeriesId, setNewGoalSeriesId] = useState('')
+  const [newAutoStepsTarget, setNewAutoStepsTarget] = useState('')
   const [loading, setLoading] = useState(true)
   const [steps, setSteps] = useState<number | null>(null)
   const [stepGoal, setStepGoal] = useState<number | null>(null)
@@ -33,11 +34,31 @@ export function Today() {
         supabase.from('journal_entries').select('value_numeric').eq('type', 'steps').eq('date', date).maybeSingle(),
         supabase.from('user_settings').select('*').maybeSingle(),
       ])
-    setTasks(taskRows ?? [])
-    setCompletedIds(new Set((completionRows ?? []).map((r) => r.task_id)))
+    const allTasks = taskRows ?? []
+    const completed = new Set((completionRows ?? []).map((r) => r.task_id))
+    const todaysSteps = stepsRow?.value_numeric ?? null
+
+    // Auto-complete any task with a steps target once today's synced count reaches it.
+    const toAutoComplete = allTasks.filter(
+      (t) => t.auto_steps_target != null && todaysSteps != null && todaysSteps >= t.auto_steps_target && !completed.has(t.id),
+    )
+    if (toAutoComplete.length > 0) {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (user) {
+        await supabase
+          .from('task_completions')
+          .insert(toAutoComplete.map((t) => ({ task_id: t.id, date, user_id: user.id })))
+        for (const t of toAutoComplete) completed.add(t.id)
+      }
+    }
+
+    setTasks(allTasks)
+    setCompletedIds(completed)
     setCategories(categoryRows ?? [])
     setWeekGoals(goalRows ?? [])
-    setSteps(stepsRow?.value_numeric ?? null)
+    setSteps(todaysSteps)
     setStepGoal(settingsRow?.step_goal ?? null)
     setLoading(false)
   }
@@ -59,10 +80,12 @@ export function Today() {
       user_id: user.id,
       category_id: newCategoryId || null,
       goal_series_id: newGoalSeriesId || null,
+      auto_steps_target: newAutoStepsTarget ? Number(newAutoStepsTarget) : null,
     })
     setNewTitle('')
     setNewCategoryId('')
     setNewGoalSeriesId('')
+    setNewAutoStepsTarget('')
     load()
   }
 
@@ -148,13 +171,18 @@ export function Today() {
             const category = task.category_id ? categoryById.get(task.category_id) : undefined
             const style = category ? CATEGORY_STYLES[category.color] : CATEGORY_STYLES.violet
             const goal = task.goal_series_id ? weekGoals.find((g) => g.series_id === task.goal_series_id) : undefined
+            const isAutoSteps = task.auto_steps_target != null
+            const Wrapper = isAutoSteps ? 'div' : 'button'
             return (
               <li
                 key={task.id}
                 className="flex items-center justify-between overflow-hidden rounded-3xl border border-gray-100 bg-white shadow-sm"
               >
                 <span className={`h-full w-1.5 self-stretch ${style.dot}`} />
-                <button onClick={() => toggle(task)} className="flex flex-1 items-center gap-3 px-4 py-3.5 text-left">
+                <Wrapper
+                  onClick={isAutoSteps ? undefined : () => toggle(task)}
+                  className="flex flex-1 items-center gap-3 px-4 py-3.5 text-left"
+                >
                   <span
                     className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 ${
                       done ? `border-transparent ${style.dot}` : 'border-gray-300'
@@ -179,9 +207,14 @@ export function Today() {
                           → {goal.title} {goal.progress}/{goal.target_value}
                         </span>
                       )}
+                      {isAutoSteps && (
+                        <span className="text-[11px] text-gray-400">
+                          🚶 {(steps ?? 0).toLocaleString()}/{task.auto_steps_target!.toLocaleString()} synced from Garmin
+                        </span>
+                      )}
                     </span>
                   </span>
-                </button>
+                </Wrapper>
                 <button onClick={() => removeTask(task)} className="px-4 text-gray-300">
                   ✕
                 </button>
@@ -223,6 +256,13 @@ export function Today() {
             ))}
           </select>
         </div>
+        <input
+          value={newAutoStepsTarget}
+          onChange={(e) => setNewAutoStepsTarget(e.target.value)}
+          type="number"
+          placeholder="Auto-complete from Garmin steps at, e.g. 10000 (optional)"
+          className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+        />
         <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
           Add task
         </button>
