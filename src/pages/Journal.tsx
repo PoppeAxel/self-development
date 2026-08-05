@@ -51,16 +51,16 @@ export function Journal() {
   const recent = [...entries].reverse().slice(0, 20)
 
   return (
-    <div className="flex flex-col gap-4 px-4 pt-4">
-      <h1 className="text-xl font-semibold text-slate-100">Journal</h1>
+    <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
+      <h1 className="text-2xl font-bold text-gray-900">Your Journal</h1>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 rounded-2xl bg-gray-100 p-1">
         {(['weight', 'mood', 'note'] as JournalEntryType[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`flex-1 rounded-xl px-3 py-2 text-sm font-medium capitalize ${
-              tab === t ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300'
+            className={`flex-1 rounded-xl px-3 py-2 text-sm font-medium capitalize transition ${
+              tab === t ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500'
             }`}
           >
             {t}
@@ -76,7 +76,7 @@ export function Journal() {
             type="number"
             step="0.1"
             placeholder="Weight (kg)"
-            className="flex-1 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-slate-100 placeholder-slate-500 outline-none focus:border-indigo-500"
+            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
           />
           <button
             onClick={() => {
@@ -84,7 +84,7 @@ export function Journal() {
               addEntry('weight', Number(weight), null)
               setWeight('')
             }}
-            className="rounded-xl bg-indigo-600 px-4 py-2.5 font-medium text-white"
+            className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white"
           >
             Log
           </button>
@@ -92,12 +92,12 @@ export function Journal() {
       )}
 
       {tab === 'mood' && (
-        <div className="flex justify-between">
+        <div className="flex justify-between rounded-3xl border border-gray-100 bg-white p-3 shadow-sm">
           {MOODS.map((emoji, i) => (
             <button
               key={emoji}
               onClick={() => addEntry('mood', i + 1, emoji)}
-              className="rounded-xl bg-slate-800 px-3 py-2 text-2xl"
+              className="rounded-2xl px-3 py-2 text-2xl hover:bg-violet-50"
             >
               {emoji}
             </button>
@@ -111,7 +111,7 @@ export function Journal() {
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder="Write a note…"
-            className="flex-1 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-slate-100 placeholder-slate-500 outline-none focus:border-indigo-500"
+            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
           />
           <button
             onClick={() => {
@@ -119,7 +119,7 @@ export function Journal() {
               addEntry('note', null, note.trim())
               setNote('')
             }}
-            className="rounded-xl bg-indigo-600 px-4 py-2.5 font-medium text-white"
+            className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white"
           >
             Save
           </button>
@@ -127,35 +127,35 @@ export function Journal() {
       )}
 
       {weightSeries.length > 1 && (
-        <div className="h-48 rounded-xl border border-slate-800 bg-slate-900 p-2">
+        <div className="h-48 rounded-3xl border border-gray-100 bg-white p-2 shadow-sm">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={weightSeries}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-              <XAxis dataKey="date" stroke="#64748b" fontSize={11} />
-              <YAxis stroke="#64748b" fontSize={11} domain={['dataMin - 1', 'dataMax + 1']} />
-              <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #1e293b', fontSize: 12 }} />
-              <Line type="monotone" dataKey="value" stroke="#818cf8" strokeWidth={2} dot={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
+              <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
+              <YAxis stroke="#9ca3af" fontSize={11} domain={['dataMin - 1', 'dataMax + 1']} />
+              <Tooltip contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }} />
+              <Line type="monotone" dataKey="value" stroke="#7c3aed" strokeWidth={2.5} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
       )}
 
       {loading ? (
-        <p className="text-sm text-slate-500">Loading…</p>
+        <p className="text-sm text-gray-400">Loading…</p>
       ) : (
         <ul className="flex flex-col gap-2 pb-4">
           {recent.map((entry) => (
             <li
               key={entry.id}
-              className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm"
+              className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 text-sm shadow-sm"
             >
-              <span className="text-slate-400">{entry.date}</span>
-              <span className="flex-1 px-3 text-slate-100">
+              <span className="text-gray-400">{entry.date}</span>
+              <span className="flex-1 px-3 font-medium text-gray-900">
                 {entry.type === 'weight' && `${entry.value_numeric} kg`}
                 {entry.type === 'mood' && entry.value_text}
                 {entry.type === 'note' && entry.value_text}
               </span>
-              <button onClick={() => remove(entry)} className="text-slate-600">
+              <button onClick={() => remove(entry)} className="text-gray-300">
                 ✕
               </button>
             </li>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { weekStartISO } from '../lib/dates'
+import { ProgressRing } from '../components/ProgressRing'
 import type { WeeklyGoal } from '../lib/types'
 
 export function Goals() {
@@ -57,57 +58,65 @@ export function Goals() {
   }
 
   return (
-    <div className="flex flex-col gap-4 px-4 pt-4">
-      <h1 className="text-xl font-semibold text-slate-100">This week's goals</h1>
+    <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
+      <h1 className="text-2xl font-bold text-gray-900">This Week's Goals</h1>
       {loading ? (
-        <p className="text-sm text-slate-500">Loading…</p>
+        <p className="text-sm text-gray-400">Loading…</p>
       ) : goals.length === 0 ? (
-        <p className="text-sm text-slate-500">No goals yet for this week.</p>
+        <p className="text-sm text-gray-400">No goals yet for this week.</p>
       ) : (
         <ul className="flex flex-col gap-3">
           {goals.map((goal) => {
-            const pct = goal.target_value ? Math.min(100, (goal.progress / goal.target_value) * 100) : null
+            const pct = goal.target_value ? Math.min(100, (goal.progress / goal.target_value) * 100) : 0
+            const done = goal.status === 'done'
             return (
-              <li key={goal.id} className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+              <li key={goal.id} className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-2">
-                  <p className={`font-medium ${goal.status === 'done' ? 'text-slate-500 line-through' : 'text-slate-100'}`}>
-                    {goal.title}
-                  </p>
-                  <button onClick={() => remove(goal)} className="text-slate-600">
+                  <div>
+                    <p className={`font-semibold ${done ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{goal.title}</p>
+                    <span
+                      className={`mt-1 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                        done ? 'bg-emerald-100 text-emerald-600' : 'bg-pink-100 text-pink-600'
+                      }`}
+                    >
+                      {done ? 'Done' : 'Active'}
+                    </span>
+                  </div>
+                  <button onClick={() => remove(goal)} className="text-gray-300">
                     ✕
                   </button>
                 </div>
                 {goal.target_value ? (
-                  <>
-                    <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-800">
-                      <div className="h-full bg-indigo-500" style={{ width: `${pct}%` }} />
-                    </div>
-                    <div className="mt-2 flex items-center justify-between text-sm text-slate-400">
-                      <span>
+                  <div className="mt-3 flex items-center gap-4">
+                    <ProgressRing percent={pct} size={56} strokeWidth={6} color="#d97706" trackColor="#fef3c7">
+                      <span className="text-xs font-bold text-gray-900">{Math.round(pct)}%</span>
+                    </ProgressRing>
+                    <div className="flex flex-1 items-center justify-between">
+                      <span className="text-sm text-gray-500">
                         {goal.progress} / {goal.target_value}
                       </span>
                       <div className="flex gap-2">
-                        <button onClick={() => bump(goal, -1)} className="rounded-lg bg-slate-800 px-3 py-1">
+                        <button onClick={() => bump(goal, -1)} className="h-8 w-8 rounded-full bg-gray-100 font-semibold text-gray-600">
                           −
                         </button>
-                        <button onClick={() => bump(goal, 1)} className="rounded-lg bg-slate-800 px-3 py-1">
+                        <button onClick={() => bump(goal, 1)} className="h-8 w-8 rounded-full bg-violet-100 font-semibold text-violet-600">
                           +
                         </button>
                       </div>
                     </div>
-                  </>
+                  </div>
                 ) : (
                   <button
                     onClick={() =>
                       supabase
                         .from('weekly_goals')
-                        .update({ status: goal.status === 'done' ? 'active' : 'done' })
+                        .update({ status: done ? 'active' : 'done' })
                         .eq('id', goal.id)
                         .then(load)
                     }
-                    className="mt-2 text-sm text-indigo-400"
+                    className="mt-3 text-sm font-medium text-violet-600"
                   >
-                    {goal.status === 'done' ? 'Mark as active' : 'Mark as done'}
+                    {done ? 'Mark as active' : 'Mark as done'}
                   </button>
                 )}
               </li>
@@ -120,7 +129,7 @@ export function Goals() {
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="New weekly goal"
-          className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-slate-100 placeholder-slate-500 outline-none focus:border-indigo-500"
+          className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
         />
         <div className="flex gap-2">
           <input
@@ -128,9 +137,9 @@ export function Goals() {
             onChange={(e) => setTarget(e.target.value)}
             placeholder="Target number (optional)"
             type="number"
-            className="flex-1 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-slate-100 placeholder-slate-500 outline-none focus:border-indigo-500"
+            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
           />
-          <button type="submit" className="rounded-xl bg-indigo-600 px-4 py-2.5 font-medium text-white">
+          <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
             Add
           </button>
         </div>

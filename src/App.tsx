@@ -28,7 +28,7 @@ function Root() {
   const { session, loading } = useAuth()
 
   if (loading) {
-    return <div className="flex min-h-full items-center justify-center text-slate-500">Loading…</div>
+    return <div className="flex min-h-full items-center justify-center text-gray-400">Loading…</div>
   }
 
   return session ? <Shell /> : <Login />

@@ -70,40 +70,40 @@ export function Settings() {
   }
 
   return (
-    <div className="flex flex-col gap-4 px-4 pt-4 pb-4">
-      <h1 className="text-xl font-semibold text-slate-100">Settings</h1>
+    <div className="flex flex-col gap-4 px-4 pt-6 pb-4">
+      <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-        <p className="font-medium text-slate-100">Push notifications</p>
-        <p className="mt-1 text-sm text-slate-400">
+      <div className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
+        <p className="font-semibold text-gray-900">Push notifications</p>
+        <p className="mt-1 text-sm text-gray-500">
           {pushOn ? 'Enabled on this device.' : 'Enable to get reminders sent to your lock screen.'}
         </p>
         {!pushOn && (
-          <button onClick={handleEnablePush} className="mt-3 rounded-xl bg-indigo-600 px-4 py-2 font-medium text-white">
+          <button onClick={handleEnablePush} className="mt-3 rounded-2xl bg-violet-600 px-4 py-2 font-semibold text-white">
             Enable notifications
           </button>
         )}
         {pushOn && (
-          <button onClick={handleEnablePush} className="mt-3 text-sm text-indigo-400">
+          <button onClick={handleEnablePush} className="mt-3 text-sm font-medium text-violet-600">
             Resync this device's subscription
           </button>
         )}
-        {status && <p className="mt-2 text-sm text-slate-400">{status}</p>}
+        {status && <p className="mt-2 text-sm text-gray-400">{status}</p>}
       </div>
 
-      <h2 className="text-sm font-medium text-slate-400">Reminders</h2>
+      <h2 className="text-sm font-semibold text-gray-500">Reminders</h2>
       <ul className="flex flex-col gap-2">
         {reminders.map((reminder) => (
-          <li key={reminder.id} className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+          <li key={reminder.id} className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-slate-100">{reminder.label}</p>
-                <p className="text-sm text-slate-500">{utcTimeToLocal(reminder.time_of_day)}</p>
+                <p className="font-medium text-gray-900">{reminder.label}</p>
+                <p className="text-sm text-gray-400">{utcTimeToLocal(reminder.time_of_day)}</p>
               </div>
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => toggleReminder(reminder)}
-                  className={`h-6 w-11 rounded-full transition ${reminder.enabled ? 'bg-indigo-600' : 'bg-slate-700'}`}
+                  className={`h-6 w-11 rounded-full transition ${reminder.enabled ? 'bg-violet-600' : 'bg-gray-200'}`}
                 >
                   <span
                     className={`block h-5 w-5 translate-y-0.5 rounded-full bg-white transition ${
@@ -111,7 +111,7 @@ export function Settings() {
                     }`}
                   />
                 </button>
-                <button onClick={() => removeReminder(reminder)} className="text-slate-600">
+                <button onClick={() => removeReminder(reminder)} className="text-gray-300">
                   ✕
                 </button>
               </div>
@@ -121,8 +121,8 @@ export function Settings() {
                 <button
                   key={d}
                   onClick={() => toggleDay(reminder, i)}
-                  className={`flex-1 rounded-lg py-1 text-xs ${
-                    reminder.days_of_week.includes(i) ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-500'
+                  className={`flex-1 rounded-xl py-1 text-xs font-medium ${
+                    reminder.days_of_week.includes(i) ? 'bg-violet-100 text-violet-600' : 'bg-gray-100 text-gray-400'
                   }`}
                 >
                   {d}
@@ -138,16 +138,16 @@ export function Settings() {
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           placeholder="Reminder label, e.g. Log your weight"
-          className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-slate-100 placeholder-slate-500 outline-none focus:border-indigo-500"
+          className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
         />
         <div className="flex gap-2">
           <input
             value={time}
             onChange={(e) => setTime(e.target.value)}
             type="time"
-            className="flex-1 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-slate-100 outline-none focus:border-indigo-500"
+            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-violet-400"
           />
-          <button type="submit" className="rounded-xl bg-indigo-600 px-4 py-2.5 font-medium text-white">
+          <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
             Add reminder
           </button>
         </div>
@@ -155,7 +155,7 @@ export function Settings() {
 
       <button
         onClick={() => supabase.auth.signOut()}
-        className="mt-4 rounded-xl border border-slate-800 px-4 py-2.5 text-slate-400"
+        className="mt-4 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 font-medium text-gray-500"
       >
         Sign out
       </button>

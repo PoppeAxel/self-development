@@ -32,9 +32,9 @@ export function Login() {
 
   return (
     <div className="flex min-h-full flex-col items-center justify-center px-6 safe-top safe-bottom">
-      <div className="w-full max-w-sm">
-        <h1 className="mb-1 text-2xl font-semibold text-slate-100">Self Development</h1>
-        <p className="mb-8 text-sm text-slate-400">
+      <div className="w-full max-w-sm rounded-3xl border border-gray-100 bg-white p-6 shadow-sm">
+        <h1 className="mb-1 text-2xl font-bold text-gray-900">Self Development</h1>
+        <p className="mb-8 text-sm text-gray-500">
           {mode === 'sign-in' ? 'Sign in to your private space.' : 'Create your account.'}
         </p>
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
@@ -44,7 +44,7 @@ export function Login() {
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-slate-100 placeholder-slate-500 outline-none focus:border-indigo-500"
+            className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
           />
           <input
             type="password"
@@ -53,14 +53,14 @@ export function Login() {
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-slate-100 placeholder-slate-500 outline-none focus:border-indigo-500"
+            className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
           />
-          {error && <p className="text-sm text-red-400">{error}</p>}
-          {info && <p className="text-sm text-emerald-400">{info}</p>}
+          {error && <p className="text-sm text-pink-600">{error}</p>}
+          {info && <p className="text-sm text-emerald-600">{info}</p>}
           <button
             type="submit"
             disabled={busy}
-            className="mt-2 rounded-xl bg-indigo-600 px-4 py-3 font-medium text-white disabled:opacity-50"
+            className="mt-2 rounded-2xl bg-violet-600 px-4 py-3 font-semibold text-white disabled:opacity-50"
           >
             {mode === 'sign-in' ? 'Sign in' : 'Sign up'}
           </button>
@@ -71,7 +71,7 @@ export function Login() {
             setError(null)
             setInfo(null)
           }}
-          className="mt-4 w-full text-center text-sm text-slate-400"
+          className="mt-4 w-full text-center text-sm text-gray-500"
         >
           {mode === 'sign-in' ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
         </button>
