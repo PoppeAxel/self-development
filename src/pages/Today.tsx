@@ -21,6 +21,7 @@ export function Today() {
   const [loading, setLoading] = useState(true)
   const [metricValues, setMetricValues] = useState<Map<AutoMetric, number>>(new Map())
   const [stepGoal, setStepGoal] = useState<number | null>(null)
+  const [summaryOpen, setSummaryOpen] = useState(false)
   const date = todayISO()
   const weekStart = weekStartISO()
   const steps = metricValues.get('steps') ?? null
@@ -159,31 +160,54 @@ export function Today() {
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
       <h1 className="text-2xl font-bold text-gray-900">Manage Your Daily Tasks</h1>
 
-      {tasks.length > 0 && (
-        <div className="flex items-center gap-4 rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
-          <ProgressRing percent={pct} color="#db2777" trackColor="#fce7f3">
-            <span className="text-sm font-bold text-gray-900">{Math.round(pct)}%</span>
-          </ProgressRing>
-          <div>
-            <p className="font-semibold text-gray-900">
-              {doneCount}/{tasks.length} done
-            </p>
-            <p className="text-sm text-gray-500">Keep it up today</p>
-          </div>
-        </div>
-      )}
+      {(tasks.length > 0 || steps != null) && (
+        <div className="rounded-3xl border border-gray-100 bg-white shadow-sm">
+          <button
+            onClick={() => setSummaryOpen((o) => !o)}
+            className="flex w-full items-center justify-between px-4 py-3 text-left"
+          >
+            <span className="flex items-center gap-3 text-sm font-medium text-gray-700">
+              {tasks.length > 0 && <span>✓ {doneCount}/{tasks.length} tasks</span>}
+              {steps != null && (
+                <span>
+                  🚶 {steps.toLocaleString()}
+                  {stepGoal ? `/${stepGoal.toLocaleString()}` : ''} steps
+                </span>
+              )}
+            </span>
+            <span className={`text-gray-400 transition-transform ${summaryOpen ? 'rotate-180' : ''}`}>⌄</span>
+          </button>
 
-      {steps != null && (
-        <div className="flex items-center gap-4 rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
-          <ProgressRing percent={stepGoal ? (steps / stepGoal) * 100 : 0} color="#0284c7" trackColor="#e0f2fe">
-            <span className="text-xs">🚶</span>
-          </ProgressRing>
-          <div>
-            <p className="font-semibold text-gray-900">
-              {steps.toLocaleString()} {stepGoal ? `/ ${stepGoal.toLocaleString()}` : ''} steps
-            </p>
-            <p className="text-sm text-gray-500">Synced from Garmin</p>
-          </div>
+          {summaryOpen && (
+            <div className="flex flex-col gap-3 border-t border-gray-100 p-4">
+              {tasks.length > 0 && (
+                <div className="flex items-center gap-4">
+                  <ProgressRing percent={pct} color="#db2777" trackColor="#fce7f3">
+                    <span className="text-sm font-bold text-gray-900">{Math.round(pct)}%</span>
+                  </ProgressRing>
+                  <div>
+                    <p className="font-semibold text-gray-900">
+                      {doneCount}/{tasks.length} done
+                    </p>
+                    <p className="text-sm text-gray-500">Keep it up today</p>
+                  </div>
+                </div>
+              )}
+              {steps != null && (
+                <div className="flex items-center gap-4">
+                  <ProgressRing percent={stepGoal ? (steps / stepGoal) * 100 : 0} color="#0284c7" trackColor="#e0f2fe">
+                    <span className="text-xs">🚶</span>
+                  </ProgressRing>
+                  <div>
+                    <p className="font-semibold text-gray-900">
+                      {steps.toLocaleString()} {stepGoal ? `/ ${stepGoal.toLocaleString()}` : ''} steps
+                    </p>
+                    <p className="text-sm text-gray-500">Synced from Garmin</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
