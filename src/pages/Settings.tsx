@@ -83,6 +83,11 @@ export function Settings() {
             Enable notifications
           </button>
         )}
+        {pushOn && (
+          <button onClick={handleEnablePush} className="mt-3 text-sm text-indigo-400">
+            Resync this device's subscription
+          </button>
+        )}
         {status && <p className="mt-2 text-sm text-slate-400">{status}</p>}
       </div>
 
