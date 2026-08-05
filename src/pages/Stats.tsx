@@ -51,6 +51,38 @@ function WeightChart({
   )
 }
 
+function StepsChart({
+  data,
+  stepGoal,
+  height,
+}: {
+  data: { date: string; value: number }[]
+  stepGoal: number | null
+  height: number
+}) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
+        <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
+        <YAxis stroke="#9ca3af" fontSize={11} />
+        <Tooltip contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }} />
+        {stepGoal != null && (
+          <ReferenceLine
+            y={stepGoal}
+            stroke="#0284c7"
+            strokeWidth={2}
+            strokeDasharray="6 4"
+            ifOverflow="extendDomain"
+            label={{ value: `Goal ${stepGoal.toLocaleString()}`, fontSize: 12, fontWeight: 600, fill: '#0284c7', position: 'insideTopLeft' }}
+          />
+        )}
+        <Bar dataKey="value" fill="#38bdf8" radius={[4, 4, 0, 0]} />
+      </BarChart>
+    </ResponsiveContainer>
+  )
+}
+
 function computeStreaks(tasks: DailyTask[], completionsByTask: Map<string, string[]>): Streak[] {
   const today = todayISO()
   return tasks.map((task) => {
@@ -85,6 +117,9 @@ export function Stats() {
   const [weightSeries, setWeightSeries] = useState<{ date: string; value: number }[]>([])
   const [goalWeight, setGoalWeight] = useState<number | null>(null)
   const [weightExpanded, setWeightExpanded] = useState(false)
+  const [stepsSeries, setStepsSeries] = useState<{ date: string; value: number }[]>([])
+  const [stepGoal, setStepGoal] = useState<number | null>(null)
+  const [stepsExpanded, setStepsExpanded] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -100,6 +135,7 @@ export function Stats() {
         { data: pastGoals },
         { data: weightEntries },
         { data: settings },
+        { data: stepEntries },
       ] = await Promise.all([
         supabase.from('daily_tasks').select('*').eq('active', true),
         supabase.from('task_completions').select('task_id, date').gte('date', since),
@@ -108,6 +144,7 @@ export function Stats() {
         supabase.from('weekly_goals').select('*').lt('week_start', currentWeekStart).order('week_start', { ascending: false }),
         supabase.from('journal_entries').select('date, value_numeric').eq('type', 'weight').order('date').limit(200),
         supabase.from('user_settings').select('*').maybeSingle(),
+        supabase.from('journal_entries').select('date, value_numeric').eq('type', 'steps').gte('date', since).order('date'),
       ])
 
       setWeightSeries(
@@ -116,6 +153,12 @@ export function Stats() {
           .map((e) => ({ date: e.date.slice(5), value: e.value_numeric as number })),
       )
       setGoalWeight(settings?.goal_weight != null ? Number(settings.goal_weight) : null)
+      setStepGoal(settings?.step_goal != null ? Number(settings.step_goal) : null)
+      setStepsSeries(
+        (stepEntries ?? [])
+          .filter((e) => e.value_numeric !== null)
+          .map((e) => ({ date: e.date.slice(5), value: e.value_numeric as number })),
+      )
 
       const activeTasks = tasks ?? []
       const recent = recentCompletions ?? []
@@ -210,6 +253,32 @@ export function Stats() {
           </div>
           <div className="flex-1 px-2 pb-4">
             <WeightChart data={weightSeries} goalWeight={goalWeight} height={window.innerHeight - 120} />
+          </div>
+        </div>
+      )}
+
+      {stepsSeries.length > 1 && (
+        <div>
+          <h2 className="mb-2 text-sm font-semibold text-gray-500">Steps — last 30 days — tap to expand</h2>
+          <button
+            onClick={() => setStepsExpanded(true)}
+            className="block w-full rounded-3xl border border-gray-100 bg-white p-2 text-left shadow-sm"
+          >
+            <StepsChart data={stepsSeries} stepGoal={stepGoal} height={192} />
+          </button>
+        </div>
+      )}
+
+      {stepsExpanded && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+          <div className="flex items-center justify-between px-4 pt-4">
+            <h2 className="text-lg font-bold text-gray-900">Steps</h2>
+            <button onClick={() => setStepsExpanded(false)} className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600">
+              Close ✕
+            </button>
+          </div>
+          <div className="flex-1 px-2 pb-4">
+            <StepsChart data={stepsSeries} stepGoal={stepGoal} height={window.innerHeight - 120} />
           </div>
         </div>
       )}

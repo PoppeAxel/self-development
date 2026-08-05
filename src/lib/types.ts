@@ -38,7 +38,7 @@ export interface WeeklyGoal {
   recurring: boolean
 }
 
-export type JournalEntryType = 'weight' | 'mood' | 'note'
+export type JournalEntryType = 'weight' | 'mood' | 'note' | 'steps'
 
 export interface JournalEntry {
   id: string
@@ -62,4 +62,5 @@ export interface Reminder {
 export interface UserSettings {
   user_id: string
   goal_weight: number | null
+  step_goal: number | null
 }

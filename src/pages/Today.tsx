@@ -15,6 +15,8 @@ export function Today() {
   const [newCategoryId, setNewCategoryId] = useState('')
   const [newGoalSeriesId, setNewGoalSeriesId] = useState('')
   const [loading, setLoading] = useState(true)
+  const [steps, setSteps] = useState<number | null>(null)
+  const [stepGoal, setStepGoal] = useState<number | null>(null)
   const date = todayISO()
   const weekStart = weekStartISO()
 
@@ -22,16 +24,21 @@ export function Today() {
     setLoading(true)
     await ensureDefaultCategories()
     await rolloverRecurringGoals()
-    const [{ data: taskRows }, { data: completionRows }, { data: categoryRows }, { data: goalRows }] = await Promise.all([
-      supabase.from('daily_tasks').select('*').eq('active', true).order('created_at'),
-      supabase.from('task_completions').select('task_id').eq('date', date),
-      supabase.from('categories').select('*').order('name'),
-      supabase.from('weekly_goals').select('*').eq('week_start', weekStart).not('target_value', 'is', null),
-    ])
+    const [{ data: taskRows }, { data: completionRows }, { data: categoryRows }, { data: goalRows }, { data: stepsRow }, { data: settingsRow }] =
+      await Promise.all([
+        supabase.from('daily_tasks').select('*').eq('active', true).order('created_at'),
+        supabase.from('task_completions').select('task_id').eq('date', date),
+        supabase.from('categories').select('*').order('name'),
+        supabase.from('weekly_goals').select('*').eq('week_start', weekStart).not('target_value', 'is', null),
+        supabase.from('journal_entries').select('value_numeric').eq('type', 'steps').eq('date', date).maybeSingle(),
+        supabase.from('user_settings').select('*').maybeSingle(),
+      ])
     setTasks(taskRows ?? [])
     setCompletedIds(new Set((completionRows ?? []).map((r) => r.task_id)))
     setCategories(categoryRows ?? [])
     setWeekGoals(goalRows ?? [])
+    setSteps(stepsRow?.value_numeric ?? null)
+    setStepGoal(settingsRow?.step_goal ?? null)
     setLoading(false)
   }
 
@@ -112,6 +119,20 @@ export function Today() {
               {doneCount}/{tasks.length} done
             </p>
             <p className="text-sm text-gray-500">Keep it up today</p>
+          </div>
+        </div>
+      )}
+
+      {steps != null && (
+        <div className="flex items-center gap-4 rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
+          <ProgressRing percent={stepGoal ? (steps / stepGoal) * 100 : 0} color="#0284c7" trackColor="#e0f2fe">
+            <span className="text-xs">🚶</span>
+          </ProgressRing>
+          <div>
+            <p className="font-semibold text-gray-900">
+              {steps.toLocaleString()} {stepGoal ? `/ ${stepGoal.toLocaleString()}` : ''} steps
+            </p>
+            <p className="text-sm text-gray-500">Synced from Garmin</p>
           </div>
         </div>
       )}
