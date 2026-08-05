@@ -12,6 +12,45 @@ interface Streak {
   best: number
 }
 
+function WeightChart({
+  data,
+  goalWeight,
+  height,
+}: {
+  data: { date: string; value: number }[]
+  goalWeight: number | null
+  height: number
+}) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <LineChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
+        <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
+        <YAxis
+          stroke="#9ca3af"
+          fontSize={11}
+          domain={[
+            (dataMin: number) => Math.floor(Math.min(dataMin, goalWeight ?? dataMin) - 2),
+            (dataMax: number) => Math.ceil(Math.max(dataMax, goalWeight ?? dataMax) + 2),
+          ]}
+        />
+        <Tooltip contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }} />
+        {goalWeight != null && (
+          <ReferenceLine
+            y={goalWeight}
+            stroke="#059669"
+            strokeWidth={2}
+            strokeDasharray="6 4"
+            ifOverflow="extendDomain"
+            label={{ value: `Goal ${goalWeight}kg`, fontSize: 12, fontWeight: 600, fill: '#059669', position: 'insideTopLeft' }}
+          />
+        )}
+        <Line type="monotone" dataKey="value" stroke="#7c3aed" strokeWidth={2.5} dot={{ r: 3, fill: '#7c3aed' }} />
+      </LineChart>
+    </ResponsiveContainer>
+  )
+}
+
 function computeStreaks(tasks: DailyTask[], completionsByTask: Map<string, string[]>): Streak[] {
   const today = todayISO()
   return tasks.map((task) => {
@@ -45,6 +84,7 @@ export function Stats() {
   const [pastGoalsByWeek, setPastGoalsByWeek] = useState<{ weekStart: string; goals: WeeklyGoal[] }[]>([])
   const [weightSeries, setWeightSeries] = useState<{ date: string; value: number }[]>([])
   const [goalWeight, setGoalWeight] = useState<number | null>(null)
+  const [weightExpanded, setWeightExpanded] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -75,7 +115,7 @@ export function Stats() {
           .filter((e) => e.value_numeric !== null)
           .map((e) => ({ date: e.date.slice(5), value: e.value_numeric as number })),
       )
-      setGoalWeight(settings?.goal_weight ?? null)
+      setGoalWeight(settings?.goal_weight != null ? Number(settings.goal_weight) : null)
 
       const activeTasks = tasks ?? []
       const recent = recentCompletions ?? []
@@ -150,27 +190,26 @@ export function Stats() {
 
       {weightSeries.length > 1 && (
         <div>
-          <h2 className="mb-2 text-sm font-semibold text-gray-500">Weight</h2>
-          <div className="h-48 rounded-3xl border border-gray-100 bg-white p-2 shadow-sm">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={weightSeries}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
-                <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
-                <YAxis
-                  stroke="#9ca3af"
-                  fontSize={11}
-                  domain={[
-                    (dataMin: number) => Math.floor(Math.min(dataMin, goalWeight ?? dataMin) - 1),
-                    (dataMax: number) => Math.ceil(Math.max(dataMax, goalWeight ?? dataMax) + 1),
-                  ]}
-                />
-                <Tooltip contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }} />
-                {goalWeight != null && (
-                  <ReferenceLine y={goalWeight} stroke="#059669" strokeDasharray="4 4" label={{ value: `Goal ${goalWeight}kg`, fontSize: 11, fill: '#059669', position: 'insideTopLeft' }} />
-                )}
-                <Line type="monotone" dataKey="value" stroke="#7c3aed" strokeWidth={2.5} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
+          <h2 className="mb-2 text-sm font-semibold text-gray-500">Weight — tap to expand</h2>
+          <button
+            onClick={() => setWeightExpanded(true)}
+            className="block w-full rounded-3xl border border-gray-100 bg-white p-2 text-left shadow-sm"
+          >
+            <WeightChart data={weightSeries} goalWeight={goalWeight} height={192} />
+          </button>
+        </div>
+      )}
+
+      {weightExpanded && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+          <div className="flex items-center justify-between px-4 pt-4">
+            <h2 className="text-lg font-bold text-gray-900">Weight</h2>
+            <button onClick={() => setWeightExpanded(false)} className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600">
+              Close ✕
+            </button>
+          </div>
+          <div className="flex-1 px-2 pb-4">
+            <WeightChart data={weightSeries} goalWeight={goalWeight} height={window.innerHeight - 120} />
           </div>
         </div>
       )}
