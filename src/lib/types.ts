@@ -16,7 +16,8 @@ export interface DailyTask {
   created_at: string
   category_id: string | null
   goal_series_id: string | null
-  auto_steps_target: number | null
+  auto_metric: string | null
+  auto_metric_target: number | null
   recurring: boolean
 }
 

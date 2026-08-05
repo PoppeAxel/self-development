@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { todayISO, weekStartISO } from '../lib/dates'
 import { rolloverRecurringGoals } from '../lib/goals'
 import { ensureDefaultCategories, CATEGORY_STYLES } from '../lib/categories'
+import { AUTO_METRICS, METRIC_INFO, isAutoMetric, type AutoMetric } from '../lib/metrics'
 import { ProgressRing } from '../components/ProgressRing'
 import type { Category, DailyTask, WeeklyGoal } from '../lib/types'
 
@@ -14,35 +15,50 @@ export function Today() {
   const [newTitle, setNewTitle] = useState('')
   const [newCategoryId, setNewCategoryId] = useState('')
   const [newGoalSeriesId, setNewGoalSeriesId] = useState('')
-  const [newAutoStepsTarget, setNewAutoStepsTarget] = useState('')
+  const [newAutoMetric, setNewAutoMetric] = useState('')
+  const [newAutoMetricTarget, setNewAutoMetricTarget] = useState('')
   const [newRecurring, setNewRecurring] = useState(true)
   const [loading, setLoading] = useState(true)
-  const [steps, setSteps] = useState<number | null>(null)
+  const [metricValues, setMetricValues] = useState<Map<AutoMetric, number>>(new Map())
   const [stepGoal, setStepGoal] = useState<number | null>(null)
   const date = todayISO()
   const weekStart = weekStartISO()
+  const steps = metricValues.get('steps') ?? null
 
   async function load() {
     setLoading(true)
     await ensureDefaultCategories()
     await rolloverRecurringGoals()
-    const [{ data: taskRows }, { data: completionRows }, { data: categoryRows }, { data: goalRows }, { data: stepsRow }, { data: settingsRow }] =
+    const [{ data: taskRows }, { data: completionRows }, { data: categoryRows }, { data: goalRows }, { data: metricRows }, { data: settingsRow }] =
       await Promise.all([
         supabase.from('daily_tasks').select('*').eq('active', true).order('created_at'),
         supabase.from('task_completions').select('task_id').eq('date', date),
         supabase.from('categories').select('*').order('name'),
         supabase.from('weekly_goals').select('*').eq('week_start', weekStart).not('target_value', 'is', null),
-        supabase.from('journal_entries').select('value_numeric').eq('type', 'steps').eq('date', date).maybeSingle(),
+        supabase
+          .from('journal_entries')
+          .select('type, value_numeric')
+          .in(
+            'type',
+            AUTO_METRICS.map((m) => METRIC_INFO[m].journalType),
+          )
+          .eq('date', date),
         supabase.from('user_settings').select('*').maybeSingle(),
       ])
     const allTasks = taskRows ?? []
     const completed = new Set((completionRows ?? []).map((r) => r.task_id))
-    const todaysSteps = stepsRow?.value_numeric ?? null
+    const todaysMetrics = new Map<AutoMetric, number>()
+    for (const m of AUTO_METRICS) {
+      const row = (metricRows ?? []).find((r) => r.type === METRIC_INFO[m].journalType)
+      if (row?.value_numeric != null) todaysMetrics.set(m, row.value_numeric)
+    }
 
-    // Auto-complete any task with a steps target once today's synced count reaches it.
-    const toAutoComplete = allTasks.filter(
-      (t) => t.auto_steps_target != null && todaysSteps != null && todaysSteps >= t.auto_steps_target && !completed.has(t.id),
-    )
+    // Auto-complete any task whose linked metric has reached its target today.
+    const toAutoComplete = allTasks.filter((t) => {
+      if (!isAutoMetric(t.auto_metric) || t.auto_metric_target == null || completed.has(t.id)) return false
+      const value = todaysMetrics.get(t.auto_metric)
+      return value != null && value >= t.auto_metric_target
+    })
     if (toAutoComplete.length > 0) {
       const {
         data: { user },
@@ -61,7 +77,7 @@ export function Today() {
     setCompletedIds(completed)
     setCategories(categoryRows ?? [])
     setWeekGoals(goalRows ?? [])
-    setSteps(todaysSteps)
+    setMetricValues(todaysMetrics)
     setStepGoal(settingsRow?.step_goal ?? null)
     setLoading(false)
   }
@@ -83,13 +99,15 @@ export function Today() {
       user_id: user.id,
       category_id: newCategoryId || null,
       goal_series_id: newGoalSeriesId || null,
-      auto_steps_target: newAutoStepsTarget ? Number(newAutoStepsTarget) : null,
+      auto_metric: newAutoMetric || null,
+      auto_metric_target: newAutoMetric && newAutoMetricTarget ? Number(newAutoMetricTarget) : null,
       recurring: newRecurring,
     })
     setNewTitle('')
     setNewCategoryId('')
     setNewGoalSeriesId('')
-    setNewAutoStepsTarget('')
+    setNewAutoMetric('')
+    setNewAutoMetricTarget('')
     setNewRecurring(true)
     load()
   }
@@ -180,8 +198,9 @@ export function Today() {
             const category = task.category_id ? categoryById.get(task.category_id) : undefined
             const style = category ? CATEGORY_STYLES[category.color] : CATEGORY_STYLES.violet
             const goal = task.goal_series_id ? weekGoals.find((g) => g.series_id === task.goal_series_id) : undefined
-            const isAutoSteps = task.auto_steps_target != null
-            const Wrapper = isAutoSteps ? 'div' : 'button'
+            const metric = isAutoMetric(task.auto_metric) ? task.auto_metric : null
+            const metricInfo = metric ? METRIC_INFO[metric] : null
+            const Wrapper = metric ? 'div' : 'button'
             return (
               <li
                 key={task.id}
@@ -189,7 +208,7 @@ export function Today() {
               >
                 <span className={`h-full w-1.5 self-stretch ${style.dot}`} />
                 <Wrapper
-                  onClick={isAutoSteps ? undefined : () => toggle(task)}
+                  onClick={metric ? undefined : () => toggle(task)}
                   className="flex flex-1 items-center gap-3 px-4 py-3.5 text-left"
                 >
                   <span
@@ -216,9 +235,10 @@ export function Today() {
                           → {goal.title} {goal.progress}/{goal.target_value}
                         </span>
                       )}
-                      {isAutoSteps && (
+                      {metric && metricInfo && (
                         <span className="text-[11px] text-gray-400">
-                          🚶 {(steps ?? 0).toLocaleString()}/{task.auto_steps_target!.toLocaleString()} synced from Garmin
+                          {metricInfo.icon} {(metricValues.get(metric) ?? 0).toLocaleString()}/
+                          {task.auto_metric_target!.toLocaleString()} {metricInfo.unit} — auto-synced
                         </span>
                       )}
                       {!task.recurring && (
@@ -268,13 +288,29 @@ export function Today() {
             ))}
           </select>
         </div>
-        <input
-          value={newAutoStepsTarget}
-          onChange={(e) => setNewAutoStepsTarget(e.target.value)}
-          type="number"
-          placeholder="Auto-complete from Garmin steps at, e.g. 10000 (optional)"
-          className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
-        />
+        <div className="flex gap-2">
+          <select
+            value={newAutoMetric}
+            onChange={(e) => setNewAutoMetric(e.target.value)}
+            className="flex-1 rounded-2xl border border-gray-200 bg-white px-3 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+          >
+            <option value="">Manual check-off</option>
+            {AUTO_METRICS.map((m) => (
+              <option key={m} value={m}>
+                Auto from {METRIC_INFO[m].label}
+              </option>
+            ))}
+          </select>
+          {newAutoMetric && (
+            <input
+              value={newAutoMetricTarget}
+              onChange={(e) => setNewAutoMetricTarget(e.target.value)}
+              type="number"
+              placeholder={`Target, e.g. 10000 ${METRIC_INFO[newAutoMetric as AutoMetric]?.unit ?? ''}`}
+              className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+            />
+          )}
+        </div>
         <div className="flex gap-2 rounded-2xl bg-gray-100 p-1">
           <button
             type="button"
