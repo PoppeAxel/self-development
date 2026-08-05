@@ -23,6 +23,7 @@ export function Today() {
   const [metricValues, setMetricValues] = useState<Map<AutoMetric, number>>(new Map())
   const [stepGoal, setStepGoal] = useState<number | null>(null)
   const [summaryOpen, setSummaryOpen] = useState(false)
+  const [addFormOpen, setAddFormOpen] = useState(false)
   const date = todayISO()
   const weekStart = weekStartISO()
   const steps = metricValues.get('steps') ?? null
@@ -116,6 +117,7 @@ export function Today() {
     setNewAutoMetric('')
     setNewAutoMetricTarget('')
     setNewRecurring(true)
+    setAddFormOpen(false)
     load()
   }
 
@@ -288,86 +290,107 @@ export function Today() {
           })}
         </ul>
       )}
-      <form onSubmit={addTask} className="flex flex-col gap-2">
-        <input
-          value={newTitle}
-          onChange={(e) => setNewTitle(e.target.value)}
-          placeholder="New daily task"
-          className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
-        />
-        <div className="flex gap-2">
-          <select
-            value={newCategoryId}
-            onChange={(e) => setNewCategoryId(e.target.value)}
-            className="flex-1 rounded-2xl border border-gray-200 bg-white px-3 py-2.5 text-gray-900 outline-none focus:border-violet-400"
-          >
-            <option value="">No label</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <select
-            value={newGoalSeriesId}
-            onChange={(e) => setNewGoalSeriesId(e.target.value)}
-            className="flex-1 rounded-2xl border border-gray-200 bg-white px-3 py-2.5 text-gray-900 outline-none focus:border-violet-400"
-          >
-            <option value="">No linked goal</option>
-            {weekGoals.map((g) => (
-              <option key={g.series_id} value={g.series_id}>
-                {g.title}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="flex gap-2">
-          <select
-            value={newAutoMetric}
-            onChange={(e) => setNewAutoMetric(e.target.value)}
-            className="flex-1 rounded-2xl border border-gray-200 bg-white px-3 py-2.5 text-gray-900 outline-none focus:border-violet-400"
-          >
-            <option value="">Manual check-off</option>
-            {AUTO_METRICS.map((m) => (
-              <option key={m} value={m}>
-                Auto from {METRIC_INFO[m].label}
-              </option>
-            ))}
-          </select>
-          {newAutoMetric && (
+      <button
+        onClick={() => setAddFormOpen(true)}
+        className="rounded-2xl border-2 border-dashed border-gray-200 py-3 text-sm font-semibold text-violet-600"
+      >
+        + Add task
+      </button>
+
+      {addFormOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+          <div className="flex items-center justify-between px-4 pt-4">
+            <h2 className="text-lg font-bold text-gray-900">New task</h2>
+            <button
+              onClick={() => setAddFormOpen(false)}
+              className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
+            >
+              Close ✕
+            </button>
+          </div>
+          <form onSubmit={addTask} className="flex flex-1 flex-col gap-2 overflow-y-auto p-4">
             <input
-              value={newAutoMetricTarget}
-              onChange={(e) => setNewAutoMetricTarget(e.target.value)}
-              type="number"
-              placeholder={`Target, e.g. 10000 ${METRIC_INFO[newAutoMetric as AutoMetric]?.unit ?? ''}`}
-              className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+              autoFocus
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              placeholder="New daily task"
+              className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
             />
-          )}
+            <div className="flex gap-2">
+              <select
+                value={newCategoryId}
+                onChange={(e) => setNewCategoryId(e.target.value)}
+                className="flex-1 rounded-2xl border border-gray-200 bg-white px-3 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+              >
+                <option value="">No label</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={newGoalSeriesId}
+                onChange={(e) => setNewGoalSeriesId(e.target.value)}
+                className="flex-1 rounded-2xl border border-gray-200 bg-white px-3 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+              >
+                <option value="">No linked goal</option>
+                {weekGoals.map((g) => (
+                  <option key={g.series_id} value={g.series_id}>
+                    {g.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-2">
+              <select
+                value={newAutoMetric}
+                onChange={(e) => setNewAutoMetric(e.target.value)}
+                className="flex-1 rounded-2xl border border-gray-200 bg-white px-3 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+              >
+                <option value="">Manual check-off</option>
+                {AUTO_METRICS.map((m) => (
+                  <option key={m} value={m}>
+                    Auto from {METRIC_INFO[m].label}
+                  </option>
+                ))}
+              </select>
+              {newAutoMetric && (
+                <input
+                  value={newAutoMetricTarget}
+                  onChange={(e) => setNewAutoMetricTarget(e.target.value)}
+                  type="number"
+                  placeholder={`Target, e.g. 10000 ${METRIC_INFO[newAutoMetric as AutoMetric]?.unit ?? ''}`}
+                  className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+                />
+              )}
+            </div>
+            <div className="flex gap-2 rounded-2xl bg-gray-100 p-1">
+              <button
+                type="button"
+                onClick={() => setNewRecurring(true)}
+                className={`flex-1 rounded-xl px-3 py-2 text-sm font-medium transition ${
+                  newRecurring ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500'
+                }`}
+              >
+                Recurring daily
+              </button>
+              <button
+                type="button"
+                onClick={() => setNewRecurring(false)}
+                className={`flex-1 rounded-xl px-3 py-2 text-sm font-medium transition ${
+                  !newRecurring ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500'
+                }`}
+              >
+                One-time
+              </button>
+            </div>
+            <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
+              Add task
+            </button>
+          </form>
         </div>
-        <div className="flex gap-2 rounded-2xl bg-gray-100 p-1">
-          <button
-            type="button"
-            onClick={() => setNewRecurring(true)}
-            className={`flex-1 rounded-xl px-3 py-2 text-sm font-medium transition ${
-              newRecurring ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500'
-            }`}
-          >
-            Recurring daily
-          </button>
-          <button
-            type="button"
-            onClick={() => setNewRecurring(false)}
-            className={`flex-1 rounded-xl px-3 py-2 text-sm font-medium transition ${
-              !newRecurring ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500'
-            }`}
-          >
-            One-time
-          </button>
-        </div>
-        <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
-          Add task
-        </button>
-      </form>
+      )}
     </div>
   )
 }
