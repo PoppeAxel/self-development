@@ -19,15 +19,19 @@ export function Settings() {
   const [categoryColor, setCategoryColor] = useState<CategoryColor>('violet')
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
+  const [goalWeight, setGoalWeight] = useState('')
+  const [goalWeightStatus, setGoalWeightStatus] = useState<string | null>(null)
 
   async function load() {
     await ensureDefaultCategories()
-    const [{ data: reminderRows }, { data: categoryRows }] = await Promise.all([
+    const [{ data: reminderRows }, { data: categoryRows }, { data: settingsRow }] = await Promise.all([
       supabase.from('reminders').select('*').order('time_of_day'),
       supabase.from('categories').select('*').order('name'),
+      supabase.from('user_settings').select('*').maybeSingle(),
     ])
     setReminders(reminderRows ?? [])
     setCategories(categoryRows ?? [])
+    setGoalWeight(settingsRow?.goal_weight != null ? String(settingsRow.goal_weight) : '')
     setPushOn(await notificationsEnabled())
   }
 
@@ -95,6 +99,18 @@ export function Settings() {
   async function removeReminder(reminder: Reminder) {
     setReminders((rs) => rs.filter((r) => r.id !== reminder.id))
     await supabase.from('reminders').delete().eq('id', reminder.id)
+  }
+
+  async function saveGoalWeight(e: React.FormEvent) {
+    e.preventDefault()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    const value = goalWeight ? Number(goalWeight) : null
+    await supabase.from('user_settings').upsert({ user_id: user.id, goal_weight: value })
+    setGoalWeightStatus('Saved.')
+    setTimeout(() => setGoalWeightStatus(null), 1500)
   }
 
   async function handleEnablePush() {
@@ -251,6 +267,25 @@ export function Settings() {
           </button>
         </form>
       </div>
+
+      <h2 className="text-sm font-semibold text-gray-500">Body goals</h2>
+      <form onSubmit={saveGoalWeight} className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
+        <p className="mb-2 text-sm text-gray-500">Goal weight, shown as a line on your weight trend in Stats.</p>
+        <div className="flex gap-2">
+          <input
+            value={goalWeight}
+            onChange={(e) => setGoalWeight(e.target.value)}
+            type="number"
+            step="0.1"
+            placeholder="Goal weight (kg)"
+            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+          />
+          <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
+            Save
+          </button>
+        </div>
+        {goalWeightStatus && <p className="mt-2 text-sm text-emerald-600">{goalWeightStatus}</p>}
+      </form>
 
       <button
         onClick={() => supabase.auth.signOut()}

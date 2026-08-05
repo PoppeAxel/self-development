@@ -58,3 +58,8 @@ export interface Reminder {
   days_of_week: number[]
   enabled: boolean
 }
+
+export interface UserSettings {
+  user_id: string
+  goal_weight: number | null
+}

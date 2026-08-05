@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+import { BarChart, Bar, LineChart, Line, ReferenceLine, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { format, subDays, parseISO, differenceInCalendarDays } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { todayISO, weekStartISO } from '../lib/dates'
@@ -43,6 +43,8 @@ export function Stats() {
   const [streaks, setStreaks] = useState<Streak[]>([])
   const [categoryBreakdown, setCategoryBreakdown] = useState<{ category: Category | null; pct: number; count: number }[]>([])
   const [pastGoalsByWeek, setPastGoalsByWeek] = useState<{ weekStart: string; goals: WeeklyGoal[] }[]>([])
+  const [weightSeries, setWeightSeries] = useState<{ date: string; value: number }[]>([])
+  const [goalWeight, setGoalWeight] = useState<number | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -50,14 +52,30 @@ export function Stats() {
       const since = format(subDays(new Date(), 29), 'yyyy-MM-dd')
       const currentWeekStart = weekStartISO()
 
-      const [{ data: tasks }, { data: recentCompletions }, { data: allCompletions }, { data: categories }, { data: pastGoals }] =
-        await Promise.all([
-          supabase.from('daily_tasks').select('*').eq('active', true),
-          supabase.from('task_completions').select('task_id, date').gte('date', since),
-          supabase.from('task_completions').select('task_id, date').order('date').limit(2000),
-          supabase.from('categories').select('*'),
-          supabase.from('weekly_goals').select('*').lt('week_start', currentWeekStart).order('week_start', { ascending: false }),
-        ])
+      const [
+        { data: tasks },
+        { data: recentCompletions },
+        { data: allCompletions },
+        { data: categories },
+        { data: pastGoals },
+        { data: weightEntries },
+        { data: settings },
+      ] = await Promise.all([
+        supabase.from('daily_tasks').select('*').eq('active', true),
+        supabase.from('task_completions').select('task_id, date').gte('date', since),
+        supabase.from('task_completions').select('task_id, date').order('date').limit(2000),
+        supabase.from('categories').select('*'),
+        supabase.from('weekly_goals').select('*').lt('week_start', currentWeekStart).order('week_start', { ascending: false }),
+        supabase.from('journal_entries').select('date, value_numeric').eq('type', 'weight').order('date').limit(200),
+        supabase.from('user_settings').select('*').maybeSingle(),
+      ])
+
+      setWeightSeries(
+        (weightEntries ?? [])
+          .filter((e) => e.value_numeric !== null)
+          .map((e) => ({ date: e.date.slice(5), value: e.value_numeric as number })),
+      )
+      setGoalWeight(settings?.goal_weight ?? null)
 
       const activeTasks = tasks ?? []
       const recent = recentCompletions ?? []
@@ -129,6 +147,33 @@ export function Stats() {
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-4">
       <h1 className="text-2xl font-bold text-gray-900">Statistics</h1>
+
+      {weightSeries.length > 1 && (
+        <div>
+          <h2 className="mb-2 text-sm font-semibold text-gray-500">Weight</h2>
+          <div className="h-48 rounded-3xl border border-gray-100 bg-white p-2 shadow-sm">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={weightSeries}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
+                <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
+                <YAxis
+                  stroke="#9ca3af"
+                  fontSize={11}
+                  domain={[
+                    (dataMin: number) => Math.floor(Math.min(dataMin, goalWeight ?? dataMin) - 1),
+                    (dataMax: number) => Math.ceil(Math.max(dataMax, goalWeight ?? dataMax) + 1),
+                  ]}
+                />
+                <Tooltip contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }} />
+                {goalWeight != null && (
+                  <ReferenceLine y={goalWeight} stroke="#059669" strokeDasharray="4 4" label={{ value: `Goal ${goalWeight}kg`, fontSize: 11, fill: '#059669', position: 'insideTopLeft' }} />
+                )}
+                <Line type="monotone" dataKey="value" stroke="#7c3aed" strokeWidth={2.5} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
 
       <div>
         <h2 className="mb-2 text-sm font-semibold text-gray-500">Completion rate — last 30 days</h2>
