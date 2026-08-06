@@ -4,8 +4,8 @@ export function todayISO(): string {
   return format(new Date(), 'yyyy-MM-dd')
 }
 
-export function weekStartISO(): string {
-  return format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
+export function weekStartISO(reference: Date = new Date()): string {
+  return format(startOfWeek(reference, { weekStartsOn: 1 }), 'yyyy-MM-dd')
 }
 
 // Reminders are stored in UTC (time_of_day) so the edge function's UTC clock

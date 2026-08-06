@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { format, addDays, subDays } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { todayISO, weekStartISO } from '../lib/dates'
 import { rolloverRecurringGoals } from '../lib/goals'
@@ -24,9 +25,11 @@ export function Today() {
   const [stepGoal, setStepGoal] = useState<number | null>(null)
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [addFormOpen, setAddFormOpen] = useState(false)
-  const date = todayISO()
-  const weekStart = weekStartISO()
+  const [viewDate, setViewDate] = useState(todayISO())
+  const date = viewDate
+  const weekStart = weekStartISO(new Date(viewDate + 'T00:00:00'))
   const steps = metricValues.get('steps') ?? null
+  const isToday = viewDate === todayISO()
 
   async function load() {
     setLoading(true)
@@ -93,7 +96,7 @@ export function Today() {
   useEffect(() => {
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [viewDate])
 
   async function addTask(e: React.FormEvent) {
     e.preventDefault()
@@ -169,6 +172,31 @@ export function Today() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Manage Your Daily Tasks</h1>
         <RefreshButton onRefresh={load} />
+      </div>
+
+      <div className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-2 py-1.5 shadow-sm">
+        <button
+          onClick={() => setViewDate((d) => format(subDays(new Date(d + 'T00:00:00'), 1), 'yyyy-MM-dd'))}
+          className="flex h-8 w-8 items-center justify-center rounded-full text-gray-500"
+        >
+          ‹
+        </button>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-gray-900">
+            {isToday ? 'Today' : format(new Date(viewDate + 'T00:00:00'), 'EEEE, MMM d')}
+          </span>
+          {!isToday && (
+            <button onClick={() => setViewDate(todayISO())} className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-600">
+              Jump to today
+            </button>
+          )}
+        </div>
+        <button
+          onClick={() => setViewDate((d) => format(addDays(new Date(d + 'T00:00:00'), 1), 'yyyy-MM-dd'))}
+          className="flex h-8 w-8 items-center justify-center rounded-full text-gray-500"
+        >
+          ›
+        </button>
       </div>
 
       {(tasks.length > 0 || steps != null) && (
