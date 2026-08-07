@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { format, addDays, subDays } from 'date-fns'
 import { supabase } from '../lib/supabase'
-import { todayISO, weekStartISO } from '../lib/dates'
+import { todayISO, weekStartISO, localTimeToUTC } from '../lib/dates'
 import { rolloverRecurringGoals } from '../lib/goals'
 import { ensureDefaultCategories, CATEGORY_STYLES } from '../lib/categories'
 import { AUTO_METRICS, METRIC_INFO, isAutoMetric, type AutoMetric } from '../lib/metrics'
@@ -20,6 +20,7 @@ export function Today() {
   const [newAutoMetric, setNewAutoMetric] = useState('')
   const [newAutoMetricTarget, setNewAutoMetricTarget] = useState('')
   const [newRecurring, setNewRecurring] = useState(true)
+  const [newReminderTime, setNewReminderTime] = useState('')
   const [loading, setLoading] = useState(true)
   const [metricValues, setMetricValues] = useState<Map<AutoMetric, number>>(new Map())
   const [stepGoal, setStepGoal] = useState<number | null>(null)
@@ -105,21 +106,35 @@ export function Today() {
       data: { user },
     } = await supabase.auth.getUser()
     if (!user) return
-    await supabase.from('daily_tasks').insert({
-      title: newTitle.trim(),
-      user_id: user.id,
-      category_id: newCategoryId || null,
-      goal_series_id: newGoalSeriesId || null,
-      auto_metric: newAutoMetric || null,
-      auto_metric_target: newAutoMetric && newAutoMetricTarget ? Number(newAutoMetricTarget) : null,
-      recurring: newRecurring,
-    })
+    const { data: newTask } = await supabase
+      .from('daily_tasks')
+      .insert({
+        title: newTitle.trim(),
+        user_id: user.id,
+        category_id: newCategoryId || null,
+        goal_series_id: newGoalSeriesId || null,
+        auto_metric: newAutoMetric || null,
+        auto_metric_target: newAutoMetric && newAutoMetricTarget ? Number(newAutoMetricTarget) : null,
+        recurring: newRecurring,
+      })
+      .select()
+      .single()
+    if (newReminderTime && newTask) {
+      await supabase.from('reminders').insert({
+        label: newTask.title,
+        time_of_day: localTimeToUTC(newReminderTime),
+        days_of_week: [0, 1, 2, 3, 4, 5, 6],
+        user_id: user.id,
+        task_id: newTask.id,
+      })
+    }
     setNewTitle('')
     setNewCategoryId('')
     setNewGoalSeriesId('')
     setNewAutoMetric('')
     setNewAutoMetricTarget('')
     setNewRecurring(true)
+    setNewReminderTime('')
     setAddFormOpen(false)
     load()
   }
@@ -418,6 +433,16 @@ export function Today() {
               >
                 One-time
               </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">Remind me at</span>
+              <input
+                value={newReminderTime}
+                onChange={(e) => setNewReminderTime(e.target.value)}
+                type="time"
+                className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+              />
+              <span className="text-sm text-gray-500">if not done</span>
             </div>
             <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
               Add task
