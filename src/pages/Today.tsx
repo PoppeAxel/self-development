@@ -264,6 +264,8 @@ export function Today() {
             const metric = isAutoMetric(task.auto_metric) ? task.auto_metric : null
             const metricInfo = metric ? METRIC_INFO[metric] : null
             const Wrapper = metric ? 'div' : 'button'
+            const effectiveStartDate = task.scheduled_date ?? task.created_at.slice(0, 10)
+            const isLate = !task.recurring && !done && effectiveStartDate < viewDate
             return (
               <li
                 key={task.id}
@@ -304,8 +306,12 @@ export function Today() {
                           {task.auto_metric_target!.toLocaleString()} {metricInfo.unit} — auto-synced
                         </span>
                       )}
-                      {!task.recurring && (
-                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">One-time</span>
+                      {isLate ? (
+                        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-600">Late</span>
+                      ) : (
+                        !task.recurring && (
+                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">One-time</span>
+                        )
                       )}
                     </span>
                   </span>

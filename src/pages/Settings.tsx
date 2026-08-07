@@ -5,7 +5,7 @@ import { localTimeToUTC, utcTimeToLocal } from '../lib/dates'
 import { ensureDefaultCategories, CATEGORY_STYLES } from '../lib/categories'
 import { RefreshButton } from '../components/RefreshButton'
 import { CATEGORY_COLORS } from '../lib/types'
-import type { Category, CategoryColor, Reminder } from '../lib/types'
+import type { Category, CategoryColor, DailyTask, Reminder } from '../lib/types'
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
@@ -23,18 +23,22 @@ export function Settings() {
   const [goalWeight, setGoalWeight] = useState('')
   const [stepGoal, setStepGoal] = useState('')
   const [bodyGoalsStatus, setBodyGoalsStatus] = useState<string | null>(null)
+  const [tasks, setTasks] = useState<DailyTask[]>([])
+  const [newReminderTaskId, setNewReminderTaskId] = useState('')
 
   async function load() {
     await ensureDefaultCategories()
-    const [{ data: reminderRows }, { data: categoryRows }, { data: settingsRow }] = await Promise.all([
+    const [{ data: reminderRows }, { data: categoryRows }, { data: settingsRow }, { data: taskRows }] = await Promise.all([
       supabase.from('reminders').select('*').order('time_of_day'),
       supabase.from('categories').select('*').order('name'),
       supabase.from('user_settings').select('*').maybeSingle(),
+      supabase.from('daily_tasks').select('*').eq('active', true).order('title'),
     ])
     setReminders(reminderRows ?? [])
     setCategories(categoryRows ?? [])
     setGoalWeight(settingsRow?.goal_weight != null ? String(settingsRow.goal_weight) : '')
     setStepGoal(settingsRow?.step_goal != null ? String(settingsRow.step_goal) : '')
+    setTasks(taskRows ?? [])
     setPushOn(await notificationsEnabled())
   }
 
@@ -81,8 +85,10 @@ export function Settings() {
       time_of_day: localTimeToUTC(time),
       days_of_week: [0, 1, 2, 3, 4, 5, 6],
       user_id: user.id,
+      task_id: newReminderTaskId || null,
     })
     setLabel('')
+    setNewReminderTaskId('')
     load()
   }
 
@@ -157,12 +163,18 @@ export function Settings() {
 
       <h2 className="text-sm font-semibold text-gray-500">Reminders</h2>
       <ul className="flex flex-col gap-2">
-        {reminders.map((reminder) => (
+        {reminders.map((reminder) => {
+          const linkedTask = reminder.task_id ? tasks.find((t) => t.id === reminder.task_id) : undefined
+          return (
           <li key={reminder.id} className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
                 <p className="font-medium text-gray-900">{reminder.label}</p>
-                <p className="text-sm text-gray-400">{utcTimeToLocal(reminder.time_of_day)}</p>
+                <p className="text-sm text-gray-400">
+                  {utcTimeToLocal(reminder.time_of_day)}
+                  {linkedTask && ` — only if "${linkedTask.title}" isn't done`}
+                  {reminder.task_id && !linkedTask && ' — linked task no longer active'}
+                </p>
               </div>
               <div className="flex items-center gap-3">
                 <button
@@ -194,7 +206,8 @@ export function Settings() {
               ))}
             </div>
           </li>
-        ))}
+          )
+        })}
       </ul>
 
       <form onSubmit={addReminder} className="flex flex-col gap-2">
@@ -215,6 +228,18 @@ export function Settings() {
             Add reminder
           </button>
         </div>
+        <select
+          value={newReminderTaskId}
+          onChange={(e) => setNewReminderTaskId(e.target.value)}
+          className="rounded-2xl border border-gray-200 bg-white px-3 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+        >
+          <option value="">Always remind (not tied to a task)</option>
+          {tasks.map((t) => (
+            <option key={t.id} value={t.id}>
+              Only if "{t.title}" isn't done
+            </option>
+          ))}
+        </select>
       </form>
 
       <h2 className="text-sm font-semibold text-gray-500">Labels</h2>

@@ -36,10 +36,26 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: error.message }), { status: 500 })
   }
 
-  const due = (reminders ?? []).filter((r) => {
+  const dueByTime = (reminders ?? []).filter((r) => {
     const t = r.time_of_day.slice(0, 5)
     return t >= hhmm(windowStart) && t <= hhmm(now)
   })
+
+  // A reminder tied to a task only fires if that task hasn't been completed yet today.
+  const today = now.toISOString().slice(0, 10)
+  const due = []
+  for (const reminder of dueByTime) {
+    if (reminder.task_id) {
+      const { data: completion } = await supabase
+        .from('task_completions')
+        .select('id')
+        .eq('task_id', reminder.task_id)
+        .eq('date', today)
+        .maybeSingle()
+      if (completion) continue
+    }
+    due.push(reminder)
+  }
 
   let sent = 0
   for (const reminder of due) {

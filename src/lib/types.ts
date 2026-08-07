@@ -61,6 +61,7 @@ export interface Reminder {
   time_of_day: string
   days_of_week: number[]
   enabled: boolean
+  task_id: string | null
 }
 
 export interface UserSettings {
