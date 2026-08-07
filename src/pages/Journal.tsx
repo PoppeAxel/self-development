@@ -13,6 +13,7 @@ export function Journal() {
   const [tab, setTab] = useState<JournalEntryType>('weight')
   const [weight, setWeight] = useState('')
   const [note, setNote] = useState('')
+  const [sleepHours, setSleepHours] = useState('')
 
   async function load() {
     setLoading(true)
@@ -30,6 +31,23 @@ export function Journal() {
       data: { user },
     } = await supabase.auth.getUser()
     if (!user) return
+
+    // sleep_hours is a once-per-day value (like the auto-synced metrics), not a
+    // free-running log like weight/mood/note — update today's entry if it exists.
+    if (type === 'sleep_hours') {
+      const { data: existing } = await supabase
+        .from('journal_entries')
+        .select('id')
+        .eq('type', 'sleep_hours')
+        .eq('date', todayISO())
+        .maybeSingle()
+      if (existing) {
+        await supabase.from('journal_entries').update({ value_numeric: valueNumeric }).eq('id', existing.id)
+        load()
+        return
+      }
+    }
+
     await supabase.from('journal_entries').insert({
       type,
       value_numeric: valueNumeric,
@@ -59,7 +77,7 @@ export function Journal() {
       </div>
 
       <div className="flex gap-2 rounded-2xl bg-gray-100 p-1">
-        {(['weight', 'mood', 'note'] as JournalEntryType[]).map((t) => (
+        {(['weight', 'sleep_hours', 'mood', 'note'] as JournalEntryType[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -67,7 +85,7 @@ export function Journal() {
               tab === t ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500'
             }`}
           >
-            {t}
+            {t === 'sleep_hours' ? 'Sleep' : t}
           </button>
         ))}
       </div>
@@ -87,6 +105,29 @@ export function Journal() {
               if (!weight) return
               addEntry('weight', Number(weight), null)
               setWeight('')
+            }}
+            className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white"
+          >
+            Log
+          </button>
+        </div>
+      )}
+
+      {tab === 'sleep_hours' && (
+        <div className="flex gap-2">
+          <input
+            value={sleepHours}
+            onChange={(e) => setSleepHours(e.target.value)}
+            type="number"
+            step="0.1"
+            placeholder="Hours slept"
+            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+          />
+          <button
+            onClick={() => {
+              if (!sleepHours) return
+              addEntry('sleep_hours', Number(sleepHours), null)
+              setSleepHours('')
             }}
             className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white"
           >
@@ -156,6 +197,7 @@ export function Journal() {
               <span className="text-gray-400">{entry.date}</span>
               <span className="flex-1 px-3 font-medium text-gray-900">
                 {entry.type === 'weight' && `${entry.value_numeric} kg`}
+                {entry.type === 'sleep_hours' && `${entry.value_numeric} hours slept`}
                 {entry.type === 'mood' && entry.value_text}
                 {entry.type === 'note' && entry.value_text}
               </span>
