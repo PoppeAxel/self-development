@@ -12,13 +12,21 @@ type JournalTab = Exclude<JournalEntryType, 'steps'>
 const TABS: JournalTab[] = ['weight', 'sleep_hours', 'mood', 'note']
 const TAB_LABELS: Record<JournalTab, string> = { weight: 'Weight', sleep_hours: 'Sleep', mood: 'Mood', note: 'Notes' }
 
+function formatSleepDuration(hoursDecimal: number): string {
+  const totalMinutes = Math.round(hoursDecimal * 60)
+  const h = Math.floor(totalMinutes / 60)
+  const m = totalMinutes % 60
+  return `${h}h ${m}m slept`
+}
+
 export function Journal() {
   const [entries, setEntries] = useState<JournalEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<JournalTab>('weight')
   const [weight, setWeight] = useState('')
   const [note, setNote] = useState('')
-  const [sleepHours, setSleepHours] = useState('')
+  const [sleepHoursPart, setSleepHoursPart] = useState('')
+  const [sleepMinutesPart, setSleepMinutesPart] = useState('')
 
   async function load() {
     setLoading(true)
@@ -124,18 +132,28 @@ export function Journal() {
       {tab === 'sleep_hours' && (
         <div className="flex gap-2">
           <input
-            value={sleepHours}
-            onChange={(e) => setSleepHours(e.target.value)}
+            value={sleepHoursPart}
+            onChange={(e) => setSleepHoursPart(e.target.value)}
             type="number"
-            step="0.1"
-            placeholder="Hours slept"
+            step="1"
+            placeholder="Hours"
+            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+          />
+          <input
+            value={sleepMinutesPart}
+            onChange={(e) => setSleepMinutesPart(e.target.value)}
+            type="number"
+            step="1"
+            placeholder="Minutes"
             className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
           />
           <button
             onClick={() => {
-              if (!sleepHours) return
-              addEntry('sleep_hours', Number(sleepHours), null)
-              setSleepHours('')
+              if (!sleepHoursPart && !sleepMinutesPart) return
+              const value = (Number(sleepHoursPart) || 0) + (Number(sleepMinutesPart) || 0) / 60
+              addEntry('sleep_hours', Math.round(value * 10000) / 10000, null)
+              setSleepHoursPart('')
+              setSleepMinutesPart('')
             }}
             className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white"
           >
@@ -208,7 +226,7 @@ export function Journal() {
                 <span className="text-gray-400">{entry.date}</span>
                 <span className="flex-1 px-3 font-medium text-gray-900">
                   {entry.type === 'weight' && `${entry.value_numeric} kg`}
-                  {entry.type === 'sleep_hours' && `${entry.value_numeric} hours slept`}
+                  {entry.type === 'sleep_hours' && entry.value_numeric != null && formatSleepDuration(entry.value_numeric)}
                   {entry.type === 'mood' && entry.value_text}
                   {entry.type === 'note' && entry.value_text}
                 </span>
