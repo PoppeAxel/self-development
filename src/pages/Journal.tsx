@@ -67,7 +67,11 @@ export function Journal() {
     .filter((e) => e.type === 'weight' && e.value_numeric !== null)
     .map((e) => ({ date: e.date.slice(5), value: e.value_numeric as number }))
 
-  const recent = [...entries].reverse().slice(0, 20)
+  const recent = entries
+    .filter((e) => e.type === tab)
+    .slice(-20)
+    .reverse()
+  const TAB_LABELS: Record<JournalEntryType, string> = { weight: 'Weight', sleep_hours: 'Sleep', mood: 'Mood', note: 'Notes' }
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
@@ -188,25 +192,29 @@ export function Journal() {
       {loading ? (
         <p className="text-sm text-gray-400">Loading…</p>
       ) : (
-        <ul className="flex flex-col gap-2 pb-4">
-          {recent.map((entry) => (
-            <li
-              key={entry.id}
-              className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 text-sm shadow-sm"
-            >
-              <span className="text-gray-400">{entry.date}</span>
-              <span className="flex-1 px-3 font-medium text-gray-900">
-                {entry.type === 'weight' && `${entry.value_numeric} kg`}
-                {entry.type === 'sleep_hours' && `${entry.value_numeric} hours slept`}
-                {entry.type === 'mood' && entry.value_text}
-                {entry.type === 'note' && entry.value_text}
-              </span>
-              <button onClick={() => remove(entry)} className="text-gray-300">
-                ✕
-              </button>
-            </li>
-          ))}
-        </ul>
+        <>
+          <h2 className="text-sm font-semibold text-gray-500">Recent {TAB_LABELS[tab]}</h2>
+          {recent.length === 0 && <p className="text-sm text-gray-400">Nothing logged yet.</p>}
+          <ul className="flex flex-col gap-2 pb-4">
+            {recent.map((entry) => (
+              <li
+                key={entry.id}
+                className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 text-sm shadow-sm"
+              >
+                <span className="text-gray-400">{entry.date}</span>
+                <span className="flex-1 px-3 font-medium text-gray-900">
+                  {entry.type === 'weight' && `${entry.value_numeric} kg`}
+                  {entry.type === 'sleep_hours' && `${entry.value_numeric} hours slept`}
+                  {entry.type === 'mood' && entry.value_text}
+                  {entry.type === 'note' && entry.value_text}
+                </span>
+                <button onClick={() => remove(entry)} className="text-gray-300">
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   )
