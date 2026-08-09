@@ -179,7 +179,7 @@ export function Journal() {
         </div>
       )}
 
-      {weightSeries.length > 1 && (
+      {tab === 'weight' && weightSeries.length > 1 && (
         <div className="h-48 rounded-3xl border border-gray-100 bg-white p-2 shadow-sm">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={weightSeries}>
