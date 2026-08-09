@@ -7,10 +7,15 @@ import type { JournalEntry, JournalEntryType } from '../lib/types'
 
 const MOODS = ['😞', '😕', '😐', '🙂', '😄']
 
+// steps is ingested via the Garmin sync endpoint, not a manual-entry tab here.
+type JournalTab = Exclude<JournalEntryType, 'steps'>
+const TABS: JournalTab[] = ['weight', 'sleep_hours', 'mood', 'note']
+const TAB_LABELS: Record<JournalTab, string> = { weight: 'Weight', sleep_hours: 'Sleep', mood: 'Mood', note: 'Notes' }
+
 export function Journal() {
   const [entries, setEntries] = useState<JournalEntry[]>([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<JournalEntryType>('weight')
+  const [tab, setTab] = useState<JournalTab>('weight')
   const [weight, setWeight] = useState('')
   const [note, setNote] = useState('')
   const [sleepHours, setSleepHours] = useState('')
@@ -71,7 +76,6 @@ export function Journal() {
     .filter((e) => e.type === tab)
     .slice(-20)
     .reverse()
-  const TAB_LABELS: Record<JournalEntryType, string> = { weight: 'Weight', sleep_hours: 'Sleep', mood: 'Mood', note: 'Notes' }
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
@@ -81,7 +85,7 @@ export function Journal() {
       </div>
 
       <div className="flex gap-2 rounded-2xl bg-gray-100 p-1">
-        {(['weight', 'sleep_hours', 'mood', 'note'] as JournalEntryType[]).map((t) => (
+        {TABS.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
