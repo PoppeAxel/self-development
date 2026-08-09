@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { format, addDays, subDays } from 'date-fns'
+import { format, addDays, subDays, getDay } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { todayISO, weekStartISO, localTimeToUTC, utcTimeToLocal, DAY_LABELS } from '../lib/dates'
 import { rolloverRecurringGoals } from '../lib/goals'
@@ -23,10 +23,12 @@ export function Today() {
   const [newAutoMetric, setNewAutoMetric] = useState('')
   const [newAutoMetricTarget, setNewAutoMetricTarget] = useState('')
   const [newRecurring, setNewRecurring] = useState(true)
+  const [newScheduledDate, setNewScheduledDate] = useState('')
   const [reminderId, setReminderId] = useState<string | null>(null)
   const [reminderTime, setReminderTime] = useState('')
   const [reminderEnabled, setReminderEnabled] = useState(true)
-  const [reminderDays, setReminderDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6])
+  // Empty means "not customized yet" — falls back to defaultReminderDays below.
+  const [reminderDays, setReminderDays] = useState<number[]>([])
   const [loading, setLoading] = useState(true)
   const [metricValues, setMetricValues] = useState<Map<AutoMetric, number>>(new Map())
   const [stepGoal, setStepGoal] = useState<number | null>(null)
@@ -91,7 +93,11 @@ export function Today() {
           .insert(toAutoComplete.map((t) => ({ task_id: t.id, date, user_id: user.id })))
         for (const t of toAutoComplete) completed.add(t.id)
         const oneTimeIds = toAutoComplete.filter((t) => !t.recurring).map((t) => t.id)
-        if (oneTimeIds.length > 0) await supabase.from('daily_tasks').update({ active: false }).in('id', oneTimeIds)
+        if (oneTimeIds.length > 0) {
+          await supabase.from('daily_tasks').update({ active: false }).in('id', oneTimeIds)
+          // A one-time task won't recur, so its reminder shouldn't keep firing on this weekday next week.
+          await supabase.from('reminders').update({ enabled: false }).in('task_id', oneTimeIds)
+        }
       }
     }
 
@@ -118,10 +124,11 @@ export function Today() {
     setNewAutoMetric('')
     setNewAutoMetricTarget('')
     setNewRecurring(true)
+    setNewScheduledDate(viewDate)
     setReminderId(null)
     setReminderTime('')
     setReminderEnabled(true)
-    setReminderDays([0, 1, 2, 3, 4, 5, 6])
+    setReminderDays([])
   }
 
   function openAddForm() {
@@ -137,11 +144,12 @@ export function Today() {
     setNewAutoMetric(task.auto_metric ?? '')
     setNewAutoMetricTarget(task.auto_metric_target != null ? String(task.auto_metric_target) : '')
     setNewRecurring(task.recurring)
+    setNewScheduledDate(task.scheduled_date ?? '')
     const reminder = reminders.find((r) => r.task_id === task.id)
     setReminderId(reminder?.id ?? null)
     setReminderTime(reminder ? utcTimeToLocal(reminder.time_of_day) : '')
     setReminderEnabled(reminder?.enabled ?? true)
-    setReminderDays(reminder?.days_of_week ?? [0, 1, 2, 3, 4, 5, 6])
+    setReminderDays(reminder?.days_of_week ?? [])
     setAddFormOpen(true)
   }
 
@@ -164,7 +172,9 @@ export function Today() {
       auto_metric: newAutoMetric || null,
       auto_metric_target: newAutoMetric && newAutoMetricTarget ? Number(newAutoMetricTarget) : null,
       recurring: newRecurring,
+      scheduled_date: newScheduledDate || null,
     }
+    const finalReminderDays = reminderDays.length ? reminderDays : defaultReminderDays
 
     let taskId: string
     if (editingTask) {
@@ -190,7 +200,7 @@ export function Today() {
             label: newTitle.trim(),
             time_of_day: localTimeToUTC(reminderTime),
             enabled: reminderEnabled,
-            days_of_week: reminderDays,
+            days_of_week: finalReminderDays,
           })
           .eq('id', reminderId)
       }
@@ -198,7 +208,7 @@ export function Today() {
       await supabase.from('reminders').insert({
         label: newTitle.trim(),
         time_of_day: localTimeToUTC(reminderTime),
-        days_of_week: reminderDays,
+        days_of_week: finalReminderDays,
         user_id: user.id,
         task_id: taskId,
       })
@@ -226,7 +236,10 @@ export function Today() {
       setCompletedIds(next)
       await supabase.from('task_completions').delete().eq('task_id', task.id).eq('date', date)
       await bumpLinkedGoal(task, -1)
-      if (!task.recurring) await supabase.from('daily_tasks').update({ active: true }).eq('id', task.id)
+      if (!task.recurring) {
+        await supabase.from('daily_tasks').update({ active: true }).eq('id', task.id)
+        await supabase.from('reminders').update({ enabled: true }).eq('task_id', task.id)
+      }
     } else {
       next.add(task.id)
       setCompletedIds(next)
@@ -238,7 +251,11 @@ export function Today() {
       await bumpLinkedGoal(task, 1)
       // One-time tasks shouldn't reappear tomorrow — archive it now; it stays visible
       // (checked, struck through) for the rest of today since local state is untouched.
-      if (!task.recurring) await supabase.from('daily_tasks').update({ active: false }).eq('id', task.id)
+      if (!task.recurring) {
+        await supabase.from('daily_tasks').update({ active: false }).eq('id', task.id)
+        // Won't recur, so its reminder shouldn't keep firing on this weekday next week.
+        await supabase.from('reminders').update({ enabled: false }).eq('task_id', task.id)
+      }
     }
   }
 
@@ -266,6 +283,12 @@ export function Today() {
   const pct = tasks.length ? (doneCount / tasks.length) * 100 : 0
   const categoryById = new Map(categories.map((c) => [c.id, c]))
   const metricEntryInfo = metricEntryTask && isAutoMetric(metricEntryTask.auto_metric) ? METRIC_INFO[metricEntryTask.auto_metric] : null
+  // Recurring tasks default to reminding every day; a one-time task only has one
+  // relevant day, so default to the weekday it's actually scheduled for.
+  const defaultReminderDays = newRecurring
+    ? [0, 1, 2, 3, 4, 5, 6]
+    : [getDay(new Date((newScheduledDate || viewDate) + 'T00:00:00'))]
+  const activeReminderDays = reminderDays.length ? reminderDays : defaultReminderDays
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
@@ -519,6 +542,15 @@ export function Today() {
                 One-time
               </button>
             </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">Starts on</span>
+              <input
+                value={newScheduledDate}
+                onChange={(e) => setNewScheduledDate(e.target.value)}
+                type="date"
+                className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+              />
+            </div>
             <div className="flex flex-col gap-2 rounded-2xl border border-gray-200 p-3">
               <div className="flex items-center gap-2">
                 <span className="text-sm text-gray-500">Remind me at</span>
@@ -551,9 +583,14 @@ export function Today() {
                       <button
                         key={d}
                         type="button"
-                        onClick={() => setReminderDays((days) => (days.includes(i) ? days.filter((x) => x !== i) : [...days, i].sort()))}
+                        onClick={() =>
+                          setReminderDays((days) => {
+                            const base = days.length ? days : defaultReminderDays
+                            return base.includes(i) ? base.filter((x) => x !== i) : [...base, i].sort()
+                          })
+                        }
                         className={`flex-1 rounded-xl py-1 text-xs font-medium ${
-                          reminderDays.includes(i) ? 'bg-violet-100 text-violet-600' : 'bg-gray-100 text-gray-400'
+                          activeReminderDays.includes(i) ? 'bg-violet-100 text-violet-600' : 'bg-gray-100 text-gray-400'
                         }`}
                       >
                         {d}
