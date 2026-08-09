@@ -1,5 +1,7 @@
 import { format, startOfWeek } from 'date-fns'
 
+export const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
 export function todayISO(): string {
   return format(new Date(), 'yyyy-MM-dd')
 }

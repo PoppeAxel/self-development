@@ -1,31 +1,40 @@
 import { useEffect, useState } from 'react'
 import { format, addDays, subDays } from 'date-fns'
 import { supabase } from '../lib/supabase'
-import { todayISO, weekStartISO, localTimeToUTC } from '../lib/dates'
+import { todayISO, weekStartISO, localTimeToUTC, utcTimeToLocal, DAY_LABELS } from '../lib/dates'
 import { rolloverRecurringGoals } from '../lib/goals'
 import { ensureDefaultCategories, CATEGORY_STYLES } from '../lib/categories'
-import { AUTO_METRICS, METRIC_INFO, isAutoMetric, type AutoMetric } from '../lib/metrics'
+import { AUTO_METRICS, METRIC_INFO, isAutoMetric, upsertMetricValue, type AutoMetric } from '../lib/metrics'
 import { ProgressRing } from '../components/ProgressRing'
 import { RefreshButton } from '../components/RefreshButton'
-import type { Category, DailyTask, WeeklyGoal } from '../lib/types'
+import { ConfirmDialog } from '../components/ConfirmDialog'
+import type { Category, DailyTask, Reminder, WeeklyGoal } from '../lib/types'
 
 export function Today() {
   const [tasks, setTasks] = useState<DailyTask[]>([])
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set())
   const [categories, setCategories] = useState<Category[]>([])
   const [weekGoals, setWeekGoals] = useState<WeeklyGoal[]>([])
+  const [reminders, setReminders] = useState<Reminder[]>([])
+  const [editingTask, setEditingTask] = useState<DailyTask | null>(null)
   const [newTitle, setNewTitle] = useState('')
   const [newCategoryId, setNewCategoryId] = useState('')
   const [newGoalSeriesId, setNewGoalSeriesId] = useState('')
   const [newAutoMetric, setNewAutoMetric] = useState('')
   const [newAutoMetricTarget, setNewAutoMetricTarget] = useState('')
   const [newRecurring, setNewRecurring] = useState(true)
-  const [newReminderTime, setNewReminderTime] = useState('')
+  const [reminderId, setReminderId] = useState<string | null>(null)
+  const [reminderTime, setReminderTime] = useState('')
+  const [reminderEnabled, setReminderEnabled] = useState(true)
+  const [reminderDays, setReminderDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6])
   const [loading, setLoading] = useState(true)
   const [metricValues, setMetricValues] = useState<Map<AutoMetric, number>>(new Map())
   const [stepGoal, setStepGoal] = useState<number | null>(null)
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [addFormOpen, setAddFormOpen] = useState(false)
+  const [confirmTask, setConfirmTask] = useState<DailyTask | null>(null)
+  const [metricEntryTask, setMetricEntryTask] = useState<DailyTask | null>(null)
+  const [metricEntryValue, setMetricEntryValue] = useState('')
   const [viewDate, setViewDate] = useState(todayISO())
   const date = viewDate
   const weekStart = weekStartISO(new Date(viewDate + 'T00:00:00'))
@@ -36,7 +45,7 @@ export function Today() {
     setLoading(true)
     await ensureDefaultCategories()
     await rolloverRecurringGoals()
-    const [{ data: taskRows }, { data: completionRows }, { data: categoryRows }, { data: goalRows }, { data: metricRows }, { data: settingsRow }] =
+    const [{ data: taskRows }, { data: completionRows }, { data: categoryRows }, { data: goalRows }, { data: metricRows }, { data: settingsRow }, { data: reminderRows }] =
       await Promise.all([
         supabase
           .from('daily_tasks')
@@ -56,6 +65,7 @@ export function Today() {
           )
           .eq('date', date),
         supabase.from('user_settings').select('*').maybeSingle(),
+        supabase.from('reminders').select('*'),
       ])
     const allTasks = taskRows ?? []
     const completed = new Set((completionRows ?? []).map((r) => r.task_id))
@@ -89,6 +99,7 @@ export function Today() {
     setCompletedIds(completed)
     setCategories(categoryRows ?? [])
     setWeekGoals(goalRows ?? [])
+    setReminders(reminderRows ?? [])
     setMetricValues(todaysMetrics)
     setStepGoal(settingsRow?.step_goal ?? null)
     setLoading(false)
@@ -99,43 +110,101 @@ export function Today() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewDate])
 
-  async function addTask(e: React.FormEvent) {
-    e.preventDefault()
-    if (!newTitle.trim()) return
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-    if (!user) return
-    const { data: newTask } = await supabase
-      .from('daily_tasks')
-      .insert({
-        title: newTitle.trim(),
-        user_id: user.id,
-        category_id: newCategoryId || null,
-        goal_series_id: newGoalSeriesId || null,
-        auto_metric: newAutoMetric || null,
-        auto_metric_target: newAutoMetric && newAutoMetricTarget ? Number(newAutoMetricTarget) : null,
-        recurring: newRecurring,
-      })
-      .select()
-      .single()
-    if (newReminderTime && newTask) {
-      await supabase.from('reminders').insert({
-        label: newTask.title,
-        time_of_day: localTimeToUTC(newReminderTime),
-        days_of_week: [0, 1, 2, 3, 4, 5, 6],
-        user_id: user.id,
-        task_id: newTask.id,
-      })
-    }
+  function resetForm() {
+    setEditingTask(null)
     setNewTitle('')
     setNewCategoryId('')
     setNewGoalSeriesId('')
     setNewAutoMetric('')
     setNewAutoMetricTarget('')
     setNewRecurring(true)
-    setNewReminderTime('')
+    setReminderId(null)
+    setReminderTime('')
+    setReminderEnabled(true)
+    setReminderDays([0, 1, 2, 3, 4, 5, 6])
+  }
+
+  function openAddForm() {
+    resetForm()
+    setAddFormOpen(true)
+  }
+
+  function openEditForm(task: DailyTask) {
+    setEditingTask(task)
+    setNewTitle(task.title)
+    setNewCategoryId(task.category_id ?? '')
+    setNewGoalSeriesId(task.goal_series_id ?? '')
+    setNewAutoMetric(task.auto_metric ?? '')
+    setNewAutoMetricTarget(task.auto_metric_target != null ? String(task.auto_metric_target) : '')
+    setNewRecurring(task.recurring)
+    const reminder = reminders.find((r) => r.task_id === task.id)
+    setReminderId(reminder?.id ?? null)
+    setReminderTime(reminder ? utcTimeToLocal(reminder.time_of_day) : '')
+    setReminderEnabled(reminder?.enabled ?? true)
+    setReminderDays(reminder?.days_of_week ?? [0, 1, 2, 3, 4, 5, 6])
+    setAddFormOpen(true)
+  }
+
+  function closeForm() {
     setAddFormOpen(false)
+    resetForm()
+  }
+
+  async function submitForm(e: React.FormEvent) {
+    e.preventDefault()
+    if (!newTitle.trim()) return
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    const payload = {
+      title: newTitle.trim(),
+      category_id: newCategoryId || null,
+      goal_series_id: newGoalSeriesId || null,
+      auto_metric: newAutoMetric || null,
+      auto_metric_target: newAutoMetric && newAutoMetricTarget ? Number(newAutoMetricTarget) : null,
+      recurring: newRecurring,
+    }
+
+    let taskId: string
+    if (editingTask) {
+      await supabase.from('daily_tasks').update(payload).eq('id', editingTask.id)
+      taskId = editingTask.id
+    } else {
+      const { data: newTask } = await supabase
+        .from('daily_tasks')
+        .insert({ ...payload, user_id: user.id })
+        .select()
+        .single()
+      if (!newTask) return
+      taskId = newTask.id
+    }
+
+    if (reminderId) {
+      if (!reminderTime) {
+        await supabase.from('reminders').delete().eq('id', reminderId)
+      } else {
+        await supabase
+          .from('reminders')
+          .update({
+            label: newTitle.trim(),
+            time_of_day: localTimeToUTC(reminderTime),
+            enabled: reminderEnabled,
+            days_of_week: reminderDays,
+          })
+          .eq('id', reminderId)
+      }
+    } else if (reminderTime) {
+      await supabase.from('reminders').insert({
+        label: newTitle.trim(),
+        time_of_day: localTimeToUTC(reminderTime),
+        days_of_week: reminderDays,
+        user_id: user.id,
+        task_id: taskId,
+      })
+    }
+
+    closeForm()
     load()
   }
 
@@ -173,6 +242,21 @@ export function Today() {
     }
   }
 
+  function openMetricEntry(task: DailyTask) {
+    if (!isAutoMetric(task.auto_metric)) return
+    setMetricEntryTask(task)
+    setMetricEntryValue(String(metricValues.get(task.auto_metric) ?? ''))
+  }
+
+  async function saveMetricEntry() {
+    if (!metricEntryTask || !isAutoMetric(metricEntryTask.auto_metric)) return
+    const value = Number(metricEntryValue)
+    if (!metricEntryValue || Number.isNaN(value)) return
+    await upsertMetricValue(metricEntryTask.auto_metric, date, value)
+    setMetricEntryTask(null)
+    load()
+  }
+
   async function removeTask(task: DailyTask) {
     await supabase.from('daily_tasks').update({ active: false }).eq('id', task.id)
     load()
@@ -181,6 +265,7 @@ export function Today() {
   const doneCount = tasks.filter((t) => completedIds.has(t.id)).length
   const pct = tasks.length ? (doneCount / tasks.length) * 100 : 0
   const categoryById = new Map(categories.map((c) => [c.id, c]))
+  const metricEntryInfo = metricEntryTask && isAutoMetric(metricEntryTask.auto_metric) ? METRIC_INFO[metricEntryTask.auto_metric] : null
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
@@ -278,7 +363,6 @@ export function Today() {
             const goal = task.goal_series_id ? weekGoals.find((g) => g.series_id === task.goal_series_id) : undefined
             const metric = isAutoMetric(task.auto_metric) ? task.auto_metric : null
             const metricInfo = metric ? METRIC_INFO[metric] : null
-            const Wrapper = metric ? 'div' : 'button'
             const effectiveStartDate = task.scheduled_date ?? task.created_at.slice(0, 10)
             const isLate = !task.recurring && !done && effectiveStartDate < viewDate
             return (
@@ -287,8 +371,8 @@ export function Today() {
                 className="flex items-center justify-between overflow-hidden rounded-3xl border border-gray-100 bg-white shadow-sm"
               >
                 <span className={`h-full w-1.5 self-stretch ${style.dot}`} />
-                <Wrapper
-                  onClick={metric ? undefined : () => toggle(task)}
+                <button
+                  onClick={() => (metric ? openMetricEntry(task) : toggle(task))}
                   className="flex flex-1 items-center gap-3 px-4 py-3.5 text-left"
                 >
                   <span
@@ -318,7 +402,7 @@ export function Today() {
                       {metric && metricInfo && (
                         <span className="text-[11px] text-gray-400">
                           {metricInfo.icon} {(metricValues.get(metric) ?? 0).toLocaleString()}/
-                          {task.auto_metric_target!.toLocaleString()} {metricInfo.unit} — auto-synced
+                          {task.auto_metric_target!.toLocaleString()} {metricInfo.unit} — tap to set manually
                         </span>
                       )}
                       {isLate ? (
@@ -330,8 +414,11 @@ export function Today() {
                       )}
                     </span>
                   </span>
-                </Wrapper>
-                <button onClick={() => removeTask(task)} className="px-4 text-gray-300">
+                </button>
+                <button onClick={() => openEditForm(task)} className="px-2 text-gray-300" aria-label="Edit task">
+                  ✎
+                </button>
+                <button onClick={() => setConfirmTask(task)} className="px-4 text-gray-300" aria-label="Remove task">
                   ✕
                 </button>
               </li>
@@ -340,7 +427,7 @@ export function Today() {
         </ul>
       )}
       <button
-        onClick={() => setAddFormOpen(true)}
+        onClick={openAddForm}
         className="rounded-2xl border-2 border-dashed border-gray-200 py-3 text-sm font-semibold text-violet-600"
       >
         + Add task
@@ -349,15 +436,12 @@ export function Today() {
       {addFormOpen && (
         <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
           <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-gray-900">New task</h2>
-            <button
-              onClick={() => setAddFormOpen(false)}
-              className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
-            >
+            <h2 className="text-lg font-bold text-gray-900">{editingTask ? 'Edit task' : 'New task'}</h2>
+            <button onClick={closeForm} className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600">
               Close ✕
             </button>
           </div>
-          <form onSubmit={addTask} className="flex flex-1 flex-col gap-2 overflow-y-auto p-4">
+          <form onSubmit={submitForm} className="flex flex-1 flex-col gap-2 overflow-y-auto p-4">
             <input
               autoFocus
               value={newTitle}
@@ -434,22 +518,103 @@ export function Today() {
                 One-time
               </button>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-500">Remind me at</span>
-              <input
-                value={newReminderTime}
-                onChange={(e) => setNewReminderTime(e.target.value)}
-                type="time"
-                className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-violet-400"
-              />
-              <span className="text-sm text-gray-500">if not done</span>
+            <div className="flex flex-col gap-2 rounded-2xl border border-gray-200 p-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-500">Remind me at</span>
+                <input
+                  value={reminderTime}
+                  onChange={(e) => setReminderTime(e.target.value)}
+                  type="time"
+                  className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+                />
+                <span className="text-sm text-gray-500">if not done</span>
+              </div>
+              {reminderTime && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-500">Reminder enabled</span>
+                    <button
+                      type="button"
+                      onClick={() => setReminderEnabled((v) => !v)}
+                      className={`h-6 w-11 rounded-full transition ${reminderEnabled ? 'bg-violet-600' : 'bg-gray-200'}`}
+                    >
+                      <span
+                        className={`block h-5 w-5 translate-y-0.5 rounded-full bg-white transition ${
+                          reminderEnabled ? 'translate-x-5' : 'translate-x-0.5'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  <div className="flex gap-1">
+                    {DAY_LABELS.map((d, i) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setReminderDays((days) => (days.includes(i) ? days.filter((x) => x !== i) : [...days, i].sort()))}
+                        className={`flex-1 rounded-xl py-1 text-xs font-medium ${
+                          reminderDays.includes(i) ? 'bg-violet-100 text-violet-600' : 'bg-gray-100 text-gray-400'
+                        }`}
+                      >
+                        {d}
+                      </button>
+                    ))}
+                  </div>
+                  {reminderId && (
+                    <button type="button" onClick={() => setReminderTime('')} className="text-left text-sm font-medium text-rose-600">
+                      Delete reminder
+                    </button>
+                  )}
+                </>
+              )}
             </div>
             <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
-              Add task
+              {editingTask ? 'Save changes' : 'Add task'}
             </button>
           </form>
         </div>
       )}
+
+      {metricEntryTask && metricEntryInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6" onClick={() => setMetricEntryTask(null)}>
+          <div className="w-full max-w-xs rounded-3xl bg-white p-5 shadow-lg" onClick={(e) => e.stopPropagation()}>
+            <p className="font-semibold text-gray-900">{metricEntryTask.title}</p>
+            <p className="mt-1 text-sm text-gray-500">
+              Enter {isToday ? "today's" : "that day's"} {metricEntryInfo.label.toLowerCase()} if it didn't sync automatically.
+            </p>
+            <input
+              autoFocus
+              value={metricEntryValue}
+              onChange={(e) => setMetricEntryValue(e.target.value)}
+              type="number"
+              placeholder={`e.g. ${metricEntryTask.auto_metric_target ?? ''} ${metricEntryInfo.unit}`}
+              className="mt-3 w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+            />
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={() => setMetricEntryTask(null)}
+                className="flex-1 rounded-2xl bg-gray-100 px-4 py-2.5 font-medium text-gray-600"
+              >
+                Cancel
+              </button>
+              <button onClick={saveMetricEntry} className="flex-1 rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={confirmTask !== null}
+        title={`Remove "${confirmTask?.title ?? ''}"?`}
+        message="This archives the task — it'll no longer show up in your daily list."
+        confirmLabel="Remove"
+        onConfirm={() => {
+          if (confirmTask) removeTask(confirmTask)
+          setConfirmTask(null)
+        }}
+        onCancel={() => setConfirmTask(null)}
+      />
     </div>
   )
 }

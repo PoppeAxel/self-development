@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { enableNotifications, notificationsEnabled } from '../lib/push'
-import { localTimeToUTC, utcTimeToLocal } from '../lib/dates'
+import { localTimeToUTC, utcTimeToLocal, DAY_LABELS } from '../lib/dates'
 import { ensureDefaultCategories, CATEGORY_STYLES } from '../lib/categories'
 import { RefreshButton } from '../components/RefreshButton'
 import { CATEGORY_COLORS } from '../lib/types'
 import type { Category, CategoryColor, DailyTask, Reminder } from '../lib/types'
-
-const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 export function Settings() {
   const [reminders, setReminders] = useState<Reminder[]>([])

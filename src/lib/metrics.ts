@@ -1,3 +1,4 @@
+import { supabase } from './supabase'
 import type { JournalEntryType } from './types'
 
 // Registry of synced metrics a daily task can auto-complete against. Adding a new one
@@ -14,4 +15,32 @@ export const METRIC_INFO: Record<AutoMetric, { label: string; journalType: Journ
 
 export function isAutoMetric(value: string | null): value is AutoMetric {
   return value != null && (AUTO_METRICS as readonly string[]).includes(value)
+}
+
+// Manually set a synced metric's value for a given day, e.g. when Garmin/phone
+// failed to record steps. Upserts by (type, date), same shape as the auto sync
+// writes, so it flows through the normal auto-complete + Stats logic afterward.
+export async function upsertMetricValue(metric: AutoMetric, date: string, value: number) {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return
+  const journalType = METRIC_INFO[metric].journalType
+  const { data: existing } = await supabase
+    .from('journal_entries')
+    .select('id')
+    .eq('type', journalType)
+    .eq('date', date)
+    .maybeSingle()
+  if (existing) {
+    await supabase.from('journal_entries').update({ value_numeric: value }).eq('id', existing.id)
+  } else {
+    await supabase.from('journal_entries').insert({
+      type: journalType,
+      value_numeric: value,
+      value_text: null,
+      date,
+      user_id: user.id,
+    })
+  }
 }

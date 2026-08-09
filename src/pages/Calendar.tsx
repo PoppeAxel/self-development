@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
 import { CATEGORY_STYLES } from '../lib/categories'
 import { RefreshButton } from '../components/RefreshButton'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import type { Category, DailyTask } from '../lib/types'
 
 export function Calendar() {
@@ -15,6 +16,7 @@ export function Calendar() {
   const [newCategoryId, setNewCategoryId] = useState('')
   const [newRecurring, setNewRecurring] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [confirmTask, setConfirmTask] = useState<DailyTask | null>(null)
 
   async function load() {
     setLoading(true)
@@ -163,7 +165,7 @@ export function Calendar() {
                       <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">One-time</span>
                     )}
                   </div>
-                  <button onClick={() => removeTask(task)} className="px-4 text-gray-300">
+                  <button onClick={() => setConfirmTask(task)} className="px-4 text-gray-300">
                     ✕
                   </button>
                 </li>
@@ -207,6 +209,18 @@ export function Calendar() {
           Schedule task
         </button>
       </form>
+
+      <ConfirmDialog
+        open={confirmTask !== null}
+        title={`Remove "${confirmTask?.title ?? ''}"?`}
+        message="This archives the task — it'll no longer show up on this day."
+        confirmLabel="Remove"
+        onConfirm={() => {
+          if (confirmTask) removeTask(confirmTask)
+          setConfirmTask(null)
+        }}
+        onCancel={() => setConfirmTask(null)}
+      />
     </div>
   )
 }
