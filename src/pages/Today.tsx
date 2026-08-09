@@ -401,8 +401,9 @@ export function Today() {
                       )}
                       {metric && metricInfo && (
                         <span className="text-[11px] text-gray-400">
-                          {metricInfo.icon} {(metricValues.get(metric) ?? 0).toLocaleString()}/
-                          {task.auto_metric_target!.toLocaleString()} {metricInfo.unit} — tap to set manually
+                          {metricInfo.icon} {(metricValues.get(metric) ?? 0).toLocaleString()}
+                          {task.auto_metric_target != null && `/${task.auto_metric_target.toLocaleString()}`} {metricInfo.unit} — tap to
+                          set manually
                         </span>
                       )}
                       {isLate ? (
