@@ -87,7 +87,6 @@ export function Journal() {
   // Force whole-hour Y-axis ticks — recharts' auto ticks land on awkward
   // fractional-hour values otherwise, which reads as misleading for a duration.
   const sleepYMax = Math.ceil(Math.max(RECOMMENDED_SLEEP_HOURS, ...sleepSeries.map((s) => s.value))) + 1
-  const sleepTicks = Array.from({ length: sleepYMax + 1 }, (_, i) => i)
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
@@ -221,7 +220,7 @@ export function Journal() {
             <BarChart data={sleepSeries} margin={{ top: 16, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
               <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
-              <YAxis stroke="#9ca3af" fontSize={11} domain={[0, sleepYMax]} ticks={sleepTicks} allowDecimals={false} />
+              <YAxis stroke="#9ca3af" fontSize={11} domain={[0, sleepYMax]} tickCount={sleepYMax + 1} allowDecimals={false} />
               <Tooltip
                 contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }}
                 formatter={(value) => [formatSleepDuration(Number(value)), 'Slept']}
