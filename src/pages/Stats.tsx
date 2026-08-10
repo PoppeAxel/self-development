@@ -5,7 +5,16 @@ import { supabase } from '../lib/supabase'
 import { todayISO, weekStartISO } from '../lib/dates'
 import { CATEGORY_STYLES } from '../lib/categories'
 import { RefreshButton } from '../components/RefreshButton'
+import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
 import type { Category, DailyTask, WeeklyGoal } from '../lib/types'
+
+interface WeeklySleep {
+  weekStart: string
+  avg: number
+  min: number
+  max: number
+  nights: number
+}
 
 interface Streak {
   task: DailyTask
@@ -121,6 +130,7 @@ export function Stats() {
   const [stepsSeries, setStepsSeries] = useState<{ date: string; value: number }[]>([])
   const [stepGoal, setStepGoal] = useState<number | null>(null)
   const [stepsExpanded, setStepsExpanded] = useState(false)
+  const [weeklySleep, setWeeklySleep] = useState<WeeklySleep[]>([])
 
   async function load() {
     setLoading(true)
@@ -136,6 +146,7 @@ export function Stats() {
         { data: weightEntries },
         { data: settings },
         { data: stepEntries },
+        { data: sleepEntries },
       ] = await Promise.all([
         supabase.from('daily_tasks').select('*').eq('active', true),
         supabase.from('task_completions').select('task_id, date').gte('date', since),
@@ -145,6 +156,7 @@ export function Stats() {
         supabase.from('journal_entries').select('date, value_numeric').eq('type', 'weight').order('date').limit(200),
         supabase.from('user_settings').select('*').maybeSingle(),
         supabase.from('journal_entries').select('date, value_numeric').eq('type', 'steps').gte('date', since).order('date'),
+        supabase.from('journal_entries').select('date, value_numeric').eq('type', 'sleep_hours').order('date').limit(200),
       ])
 
       setWeightSeries(
@@ -158,6 +170,28 @@ export function Stats() {
         (stepEntries ?? [])
           .filter((e) => e.value_numeric !== null)
           .map((e) => ({ date: e.date.slice(5), value: e.value_numeric as number })),
+      )
+
+      // Sleep grouped into Mon–Sun weeks (same week boundary as weekly goals).
+      const sleepByWeek = new Map<string, number[]>()
+      for (const e of sleepEntries ?? []) {
+        if (e.value_numeric == null) continue
+        const wk = weekStartISO(parseISO(e.date))
+        const arr = sleepByWeek.get(wk) ?? []
+        arr.push(e.value_numeric)
+        sleepByWeek.set(wk, arr)
+      }
+      setWeeklySleep(
+        [...sleepByWeek.entries()]
+          .map(([weekStart, values]) => ({
+            weekStart,
+            avg: values.reduce((a, b) => a + b, 0) / values.length,
+            min: Math.min(...values),
+            max: Math.max(...values),
+            nights: values.length,
+          }))
+          .sort((a, b) => b.weekStart.localeCompare(a.weekStart))
+          .slice(0, 12),
       )
 
       const activeTasks = tasks ?? []
@@ -286,6 +320,35 @@ export function Stats() {
           <div className="flex-1 px-2 pb-4">
             <StepsChart data={stepsSeries} stepGoal={stepGoal} height={window.innerHeight - 120} />
           </div>
+        </div>
+      )}
+
+      {weeklySleep.length > 0 && (
+        <div>
+          <h2 className="mb-2 text-sm font-semibold text-gray-500">Sleep — weekly average</h2>
+          <ul className="flex flex-col gap-2">
+            {weeklySleep.map((week) => {
+              const metGoal = week.avg >= RECOMMENDED_SLEEP_HOURS
+              return (
+                <li key={week.weekStart} className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-500">Week of {week.weekStart}</span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                        metGoal ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
+                      }`}
+                    >
+                      {formatSleepDuration(week.avg)} avg
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-400">
+                    {formatSleepDuration(week.min)} – {formatSleepDuration(week.max)} · {week.nights} night{week.nights === 1 ? '' : 's'}{' '}
+                    logged
+                  </p>
+                </li>
+              )
+            })}
+          </ul>
         </div>
       )}
 

@@ -3,6 +3,7 @@ import { LineChart, Line, BarChart, Bar, ReferenceLine, XAxis, YAxis, Tooltip, R
 import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
 import { RefreshButton } from '../components/RefreshButton'
+import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
 import type { JournalEntry, JournalEntryType } from '../lib/types'
 
 const MOODS = ['😞', '😕', '😐', '🙂', '😄']
@@ -11,15 +12,6 @@ const MOODS = ['😞', '😕', '😐', '🙂', '😄']
 type JournalTab = Exclude<JournalEntryType, 'steps'>
 const TABS: JournalTab[] = ['weight', 'sleep_hours', 'mood', 'note']
 const TAB_LABELS: Record<JournalTab, string> = { weight: 'Weight', sleep_hours: 'Sleep', mood: 'Mood', note: 'Notes' }
-
-const RECOMMENDED_SLEEP_HOURS = 8
-
-function formatSleepDuration(hoursDecimal: number): string {
-  const totalMinutes = Math.round(hoursDecimal * 60)
-  const h = Math.floor(totalMinutes / 60)
-  const m = totalMinutes % 60
-  return `${h}h ${m}m slept`
-}
 
 export function Journal() {
   const [entries, setEntries] = useState<JournalEntry[]>([])
@@ -91,6 +83,11 @@ export function Journal() {
     .filter((e) => e.type === tab)
     .slice(-20)
     .reverse()
+
+  // Force whole-hour Y-axis ticks — recharts' auto ticks land on awkward
+  // fractional-hour values otherwise, which reads as misleading for a duration.
+  const sleepYMax = Math.ceil(Math.max(RECOMMENDED_SLEEP_HOURS, ...sleepSeries.map((s) => s.value))) + 1
+  const sleepTicks = Array.from({ length: sleepYMax + 1 }, (_, i) => i)
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
@@ -224,7 +221,7 @@ export function Journal() {
             <BarChart data={sleepSeries} margin={{ top: 16, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
               <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
-              <YAxis stroke="#9ca3af" fontSize={11} domain={[0, (dataMax: number) => Math.max(dataMax, RECOMMENDED_SLEEP_HOURS) + 1]} />
+              <YAxis stroke="#9ca3af" fontSize={11} domain={[0, sleepYMax]} ticks={sleepTicks} allowDecimals={false} />
               <Tooltip
                 contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }}
                 formatter={(value) => [formatSleepDuration(Number(value)), 'Slept']}
@@ -258,7 +255,7 @@ export function Journal() {
                 <span className="text-gray-400">{entry.date}</span>
                 <span className="flex-1 px-3 font-medium text-gray-900">
                   {entry.type === 'weight' && `${entry.value_numeric} kg`}
-                  {entry.type === 'sleep_hours' && entry.value_numeric != null && formatSleepDuration(entry.value_numeric)}
+                  {entry.type === 'sleep_hours' && entry.value_numeric != null && `${formatSleepDuration(entry.value_numeric)} slept`}
                   {entry.type === 'mood' && entry.value_text}
                   {entry.type === 'note' && entry.value_text}
                 </span>
