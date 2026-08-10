@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { LineChart, Line, BarChart, Bar, ReferenceLine, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
 import { RefreshButton } from '../components/RefreshButton'
-import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
+import { formatSleepDuration } from '../lib/sleep'
 import type { JournalEntry, JournalEntryType } from '../lib/types'
 
 const MOODS = ['😞', '😕', '😐', '🙂', '😄']
@@ -219,14 +219,6 @@ export function Journal() {
               <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
               <YAxis stroke="#9ca3af" fontSize={11} />
               <Tooltip contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }} />
-              <ReferenceLine
-                y={RECOMMENDED_SLEEP_HOURS}
-                stroke="#059669"
-                strokeWidth={2}
-                strokeDasharray="6 4"
-                ifOverflow="extendDomain"
-                label={{ value: `${RECOMMENDED_SLEEP_HOURS}h recommended`, fontSize: 12, fontWeight: 600, fill: '#059669', position: 'insideTopLeft' }}
-              />
               <Bar dataKey="value" fill="#6366f1" />
             </BarChart>
           </ResponsiveContainer>
