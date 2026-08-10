@@ -227,7 +227,7 @@ export function Journal() {
                 ifOverflow="extendDomain"
                 label={{ value: `${RECOMMENDED_SLEEP_HOURS}h recommended`, fontSize: 12, fontWeight: 600, fill: '#059669', position: 'insideTopLeft' }}
               />
-              <Bar dataKey="value" fill="#6366f1" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="value" fill="#6366f1" />
             </BarChart>
           </ResponsiveContainer>
         </div>
