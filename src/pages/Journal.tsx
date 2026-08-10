@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+import { LineChart, Line, BarChart, Bar, ReferenceLine, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
 import { RefreshButton } from '../components/RefreshButton'
@@ -11,6 +11,8 @@ const MOODS = ['😞', '😕', '😐', '🙂', '😄']
 type JournalTab = Exclude<JournalEntryType, 'steps'>
 const TABS: JournalTab[] = ['weight', 'sleep_hours', 'mood', 'note']
 const TAB_LABELS: Record<JournalTab, string> = { weight: 'Weight', sleep_hours: 'Sleep', mood: 'Mood', note: 'Notes' }
+
+const RECOMMENDED_SLEEP_HOURS = 8
 
 function formatSleepDuration(hoursDecimal: number): string {
   const totalMinutes = Math.round(hoursDecimal * 60)
@@ -78,6 +80,11 @@ export function Journal() {
 
   const weightSeries = entries
     .filter((e) => e.type === 'weight' && e.value_numeric !== null)
+    .map((e) => ({ date: e.date.slice(5), value: e.value_numeric as number }))
+
+  const sleepSeries = entries
+    .filter((e) => e.type === 'sleep_hours' && e.value_numeric !== null)
+    .slice(-14)
     .map((e) => ({ date: e.date.slice(5), value: e.value_numeric as number }))
 
   const recent = entries
@@ -207,6 +214,31 @@ export function Journal() {
               <Tooltip contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }} />
               <Line type="monotone" dataKey="value" stroke="#7c3aed" strokeWidth={2.5} dot={false} />
             </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {tab === 'sleep_hours' && sleepSeries.length > 0 && (
+        <div className="h-48 rounded-3xl border border-gray-100 bg-white p-2 shadow-sm">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={sleepSeries} margin={{ top: 16, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
+              <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
+              <YAxis stroke="#9ca3af" fontSize={11} domain={[0, (dataMax: number) => Math.max(dataMax, RECOMMENDED_SLEEP_HOURS) + 1]} />
+              <Tooltip
+                contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }}
+                formatter={(value) => [formatSleepDuration(Number(value)), 'Slept']}
+              />
+              <ReferenceLine
+                y={RECOMMENDED_SLEEP_HOURS}
+                stroke="#059669"
+                strokeWidth={2}
+                strokeDasharray="6 4"
+                ifOverflow="extendDomain"
+                label={{ value: `${RECOMMENDED_SLEEP_HOURS}h recommended`, fontSize: 12, fontWeight: 600, fill: '#059669', position: 'insideTopLeft' }}
+              />
+              <Bar dataKey="value" fill="#6366f1" radius={[4, 4, 0, 0]} />
+            </BarChart>
           </ResponsiveContainer>
         </div>
       )}
