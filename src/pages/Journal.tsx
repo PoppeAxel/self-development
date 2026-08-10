@@ -137,7 +137,7 @@ export function Journal() {
             type="number"
             step="1"
             placeholder="Hours"
-            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+            className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
           />
           <input
             value={sleepMinutesPart}
@@ -145,7 +145,7 @@ export function Journal() {
             type="number"
             step="1"
             placeholder="Minutes"
-            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+            className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
           />
           <button
             onClick={() => {
@@ -155,7 +155,7 @@ export function Journal() {
               setSleepHoursPart('')
               setSleepMinutesPart('')
             }}
-            className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white"
+            className="shrink-0 rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white"
           >
             Log
           </button>
