@@ -213,7 +213,7 @@ export function Journal() {
 
       {tab === 'sleep_hours' && sleepSeries.length > 0 && (
         <div className="h-48 rounded-3xl border border-gray-100 bg-white p-2 shadow-sm">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height={176}>
             <BarChart data={sleepSeries} margin={{ top: 16, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
               <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
