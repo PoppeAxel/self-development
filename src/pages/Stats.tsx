@@ -87,7 +87,7 @@ function StepsChart({
             label={{ value: `Goal ${stepGoal.toLocaleString()}`, fontSize: 12, fontWeight: 600, fill: '#0284c7', position: 'insideTopLeft' }}
           />
         )}
-        <Bar dataKey="value" fill="#38bdf8" radius={[4, 4, 0, 0]} />
+        <Bar dataKey="value" fill="#38bdf8" radius={[4, 4, 0, 0]} isAnimationActive={false} />
       </BarChart>
     </ResponsiveContainer>
   )
@@ -361,7 +361,7 @@ export function Stats() {
               <XAxis dataKey="date" stroke="#9ca3af" fontSize={9} interval={4} />
               <YAxis stroke="#9ca3af" fontSize={10} domain={[0, 100]} />
               <Tooltip contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }} />
-              <Bar dataKey="pct" fill="#7c3aed" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="pct" fill="#7c3aed" radius={[4, 4, 0, 0]} isAnimationActive={false} />
             </BarChart>
           </ResponsiveContainer>
         </div>

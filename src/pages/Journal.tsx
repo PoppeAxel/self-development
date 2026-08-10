@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+import { LineChart, Line, BarChart, Bar, ReferenceLine, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
 import { RefreshButton } from '../components/RefreshButton'
-import { formatSleepDuration } from '../lib/sleep'
+import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
 import type { JournalEntry, JournalEntryType } from '../lib/types'
 
 const MOODS = ['😞', '😕', '😐', '🙂', '😄']
@@ -84,6 +84,9 @@ export function Journal() {
     .slice(-20)
     .reverse()
 
+  // Force whole-hour Y-axis ticks — recharts' auto ticks land on awkward
+  // fractional-hour values otherwise, which reads as misleading for a duration.
+  const sleepYMax = Math.ceil(Math.max(RECOMMENDED_SLEEP_HOURS, ...sleepSeries.map((s) => s.value))) + 1
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
@@ -213,13 +216,24 @@ export function Journal() {
 
       {tab === 'sleep_hours' && sleepSeries.length > 0 && (
         <div className="h-48 rounded-3xl border border-gray-100 bg-white p-2 shadow-sm">
-          <ResponsiveContainer width="100%" height={176}>
+          <ResponsiveContainer width="100%" height="100%">
             <BarChart data={sleepSeries} margin={{ top: 16, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
               <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
-              <YAxis stroke="#9ca3af" fontSize={11} />
-              <Tooltip contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }} />
-              <Bar dataKey="value" fill="#6366f1" isAnimationActive={false} />
+              <YAxis stroke="#9ca3af" fontSize={11} domain={[0, sleepYMax]} tickCount={sleepYMax + 1} allowDecimals={false} />
+              <Tooltip
+                contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }}
+                formatter={(value) => [formatSleepDuration(Number(value)), 'Slept']}
+              />
+              <ReferenceLine
+                y={RECOMMENDED_SLEEP_HOURS}
+                stroke="#059669"
+                strokeWidth={2}
+                strokeDasharray="6 4"
+                ifOverflow="extendDomain"
+                label={{ value: `${RECOMMENDED_SLEEP_HOURS}h recommended`, fontSize: 12, fontWeight: 600, fill: '#059669', position: 'insideTopLeft' }}
+              />
+              <Bar dataKey="value" fill="#6366f1" radius={[4, 4, 0, 0]} isAnimationActive={false} />
             </BarChart>
           </ResponsiveContainer>
         </div>
