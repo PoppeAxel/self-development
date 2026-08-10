@@ -219,7 +219,7 @@ export function Journal() {
               <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
               <YAxis stroke="#9ca3af" fontSize={11} />
               <Tooltip contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }} />
-              <Bar dataKey="value" fill="#6366f1" />
+              <Bar dataKey="value" fill="#6366f1" isAnimationActive={false} />
             </BarChart>
           </ResponsiveContainer>
         </div>
