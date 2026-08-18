@@ -69,3 +69,16 @@ export interface UserSettings {
   goal_weight: number | null
   step_goal: number | null
 }
+
+export interface Workout {
+  id: string
+  user_id: string
+  strava_id: number
+  sport_type: string
+  name: string
+  date: string
+  duration_seconds: number
+  distance_meters: number | null
+  calories: number | null
+  created_at: string
+}

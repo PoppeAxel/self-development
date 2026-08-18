@@ -9,7 +9,11 @@ import { Journal } from './pages/Journal'
 import { Settings } from './pages/Settings'
 
 function Shell() {
-  const [tab, setTab] = useState<Tab>('today')
+  // Strava redirects back here with ?code=... after connecting — land on Settings so the
+  // "Connected" confirmation is immediately visible.
+  const [tab, setTab] = useState<Tab>(() =>
+    new URLSearchParams(window.location.search).has('code') ? 'settings' : 'today',
+  )
 
   return (
     <div className="flex min-h-full flex-col">

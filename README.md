@@ -80,9 +80,38 @@ In Vercel: **New Project** → import the repo → it auto-detects Vite. Add the
 5. Add a reminder in Settings (e.g. "Log your weight" at 20:00) — it'll arrive as a push notification within
    15 minutes of the scheduled time.
 
+## 9. Connect Strava (optional)
+Syncs your Strava workouts into the Journal's Workouts tab automatically, every 3 hours,
+via a Supabase Edge Function on `pg_cron` — no app needing to stay open.
+
+1. Register a free API app at [strava.com/settings/api](https://www.strava.com/settings/api).
+   Set **Authorization Callback Domain** to your Vercel domain (e.g. `self-development-smoky.vercel.app`).
+   Note the **Client ID** and **Client Secret**.
+2. Add the Client ID to `.env.local` (and Vercel's env vars) as `VITE_STRAVA_CLIENT_ID`.
+3. Deploy the two Strava edge functions:
+   ```bash
+   supabase functions deploy strava-oauth-callback
+   supabase functions deploy sync-strava-workouts --no-verify-jwt
+   ```
+   (`strava-oauth-callback` keeps the default JWT verification since it's called by the
+   already-logged-in app, not an external caller — unlike the other functions here.)
+4. Set the Strava secrets:
+   ```bash
+   supabase secrets set STRAVA_CLIENT_ID=<client-id>
+   supabase secrets set STRAVA_CLIENT_SECRET=<client-secret>
+   ```
+5. Run `supabase db push` to apply `0012_strava_workouts.sql` (tables) and
+   `0013_strava_cron.sql` (the sync schedule — reuses the same `cron_secret` Vault entry
+   from step 5, no new one needed).
+6. In the app: **Settings → Connect Strava**, approve access. First sync pulls the last
+   14 days; after that it only pulls what's new.
+
 ## Project structure
-- `src/pages/` — Today (daily tasks), Goals (weekly goals), Journal (weight/mood/notes), Settings (reminders)
-- `src/lib/` — Supabase client, types, date helpers, push subscription helper
+- `src/pages/` — Today (daily tasks), Calendar, Goals (weekly goals), Journal
+  (weight/sleep/steps/workouts/mood/notes), Settings (reminders, integrations)
+- `src/lib/` — Supabase client, types, date helpers, push subscription helper, Strava OAuth helper
 - `src/sw.ts` — custom service worker (push + notification click handling)
-- `supabase/migrations/` — database schema and cron schedule
+- `supabase/migrations/` — database schema and cron schedules
 - `supabase/functions/send-reminders/` — edge function that sends due push notifications
+- `supabase/functions/strava-oauth-callback/`, `supabase/functions/sync-strava-workouts/` —
+  Strava OAuth handshake and recurring workout sync

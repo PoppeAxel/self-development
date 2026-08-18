@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { enableNotifications, notificationsEnabled } from '../lib/push'
+import { connectStrava, stravaConnected, handleStravaOAuthRedirect } from '../lib/strava'
 import { localTimeToUTC, utcTimeToLocal, DAY_LABELS } from '../lib/dates'
 import { ensureDefaultCategories, CATEGORY_STYLES } from '../lib/categories'
 import { RefreshButton } from '../components/RefreshButton'
@@ -23,6 +24,8 @@ export function Settings() {
   const [bodyGoalsStatus, setBodyGoalsStatus] = useState<string | null>(null)
   const [tasks, setTasks] = useState<DailyTask[]>([])
   const [newReminderTaskId, setNewReminderTaskId] = useState('')
+  const [stravaOn, setStravaOn] = useState(false)
+  const [stravaStatus, setStravaStatus] = useState<string | null>(null)
 
   async function load() {
     await ensureDefaultCategories()
@@ -38,9 +41,16 @@ export function Settings() {
     setStepGoal(settingsRow?.step_goal != null ? String(settingsRow.step_goal) : '')
     setTasks(taskRows ?? [])
     setPushOn(await notificationsEnabled())
+    setStravaOn(await stravaConnected())
   }
 
   useEffect(() => {
+    handleStravaOAuthRedirect().then((result) => {
+      if (result.handled) {
+        setStravaStatus(result.ok ? 'Strava connected.' : (result.reason ?? 'Failed to connect Strava.'))
+        if (result.ok) setStravaOn(true)
+      }
+    })
     load()
   }, [])
 
@@ -157,6 +167,19 @@ export function Settings() {
           </button>
         )}
         {status && <p className="mt-2 text-sm text-gray-400">{status}</p>}
+      </div>
+
+      <div className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
+        <p className="font-semibold text-gray-900">Strava</p>
+        <p className="mt-1 text-sm text-gray-500">
+          {stravaOn ? 'Connected — workouts sync automatically every few hours.' : 'Connect to sync your workouts into the Journal.'}
+        </p>
+        {!stravaOn && (
+          <button onClick={connectStrava} className="mt-3 rounded-2xl bg-orange-500 px-4 py-2 font-semibold text-white">
+            Connect Strava
+          </button>
+        )}
+        {stravaStatus && <p className="mt-2 text-sm text-gray-400">{stravaStatus}</p>}
       </div>
 
       <h2 className="text-sm font-semibold text-gray-500">Reminders</h2>

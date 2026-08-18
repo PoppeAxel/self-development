@@ -5,14 +5,24 @@ import { supabase } from '../lib/supabase'
 import { todayISO, weekStartISO } from '../lib/dates'
 import { RefreshButton } from '../components/RefreshButton'
 import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
-import type { JournalEntry, JournalEntryType } from '../lib/types'
+import { formatWorkoutDuration, formatWorkoutDistance } from '../lib/workouts'
+import type { JournalEntry, JournalEntryType, Workout } from '../lib/types'
 
 const MOODS = ['😞', '😕', '😐', '🙂', '😄']
 
-// steps has no manual-entry form (Garmin-only) but still gets a read-only tab for its chart.
-type JournalTab = JournalEntryType
-const TABS: JournalTab[] = ['weight', 'sleep_hours', 'steps', 'mood', 'note']
-const TAB_LABELS: Record<JournalTab, string> = { weight: 'Weight', sleep_hours: 'Sleep', steps: 'Steps', mood: 'Mood', note: 'Notes' }
+// steps/workouts have no manual-entry form (synced from Garmin/Strava) but still get a
+// read-only tab for their chart. 'workouts' isn't a JournalEntryType — it lives in its own
+// table, not journal_entries — so the tab union extends past that type.
+type JournalTab = JournalEntryType | 'workouts'
+const TABS: JournalTab[] = ['weight', 'sleep_hours', 'steps', 'workouts', 'mood', 'note']
+const TAB_LABELS: Record<JournalTab, string> = {
+  weight: 'Weight',
+  sleep_hours: 'Sleep',
+  steps: 'Steps',
+  workouts: 'Workouts',
+  mood: 'Mood',
+  note: 'Notes',
+}
 
 interface WeeklySleep {
   weekStart: string
@@ -77,6 +87,23 @@ function StepsChart({ data, stepGoal, height }: { data: { date: string; value: n
   )
 }
 
+function WorkoutsChart({ data, height }: { data: { date: string; minutes: number }[]; height: number }) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
+        <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
+        <YAxis stroke="#9ca3af" fontSize={11} />
+        <Tooltip
+          contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }}
+          formatter={(value) => [`${value} min`, 'Trained']}
+        />
+        <Bar dataKey="minutes" fill="#f97316" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+      </BarChart>
+    </ResponsiveContainer>
+  )
+}
+
 export function Journal() {
   const [entries, setEntries] = useState<JournalEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -89,16 +116,20 @@ export function Journal() {
   const [stepGoal, setStepGoal] = useState<number | null>(null)
   const [weightExpanded, setWeightExpanded] = useState(false)
   const [stepsExpanded, setStepsExpanded] = useState(false)
+  const [workouts, setWorkouts] = useState<Workout[]>([])
+  const [workoutsExpanded, setWorkoutsExpanded] = useState(false)
 
   async function load() {
     setLoading(true)
-    const [{ data }, { data: settingsRow }] = await Promise.all([
+    const [{ data }, { data: settingsRow }, { data: workoutRows }] = await Promise.all([
       supabase.from('journal_entries').select('*').order('date', { ascending: true }).limit(200),
       supabase.from('user_settings').select('*').maybeSingle(),
+      supabase.from('workouts').select('*').order('date', { ascending: true }).limit(200),
     ])
     setEntries(data ?? [])
     setGoalWeight(settingsRow?.goal_weight != null ? Number(settingsRow.goal_weight) : null)
     setStepGoal(settingsRow?.step_goal != null ? Number(settingsRow.step_goal) : null)
+    setWorkouts(workoutRows ?? [])
     setLoading(false)
   }
 
@@ -143,6 +174,11 @@ export function Journal() {
     await supabase.from('journal_entries').delete().eq('id', entry.id)
   }
 
+  async function removeWorkout(workout: Workout) {
+    setWorkouts((ws) => ws.filter((w) => w.id !== workout.id))
+    await supabase.from('workouts').delete().eq('id', workout.id)
+  }
+
   const weightSeries = entries
     .filter((e) => e.type === 'weight' && e.value_numeric !== null)
     .map((e) => ({ date: e.date.slice(5), value: e.value_numeric as number }))
@@ -185,6 +221,19 @@ export function Journal() {
     }))
     .sort((a, b) => b.weekStart.localeCompare(a.weekStart))
     .slice(0, 12)
+
+  // Total training minutes per Mon–Sun week, last 12 weeks.
+  const workoutMinutesByWeek = new Map<string, number>()
+  for (const w of workouts) {
+    const wk = weekStartISO(parseISO(w.date))
+    workoutMinutesByWeek.set(wk, (workoutMinutesByWeek.get(wk) ?? 0) + Math.round(w.duration_seconds / 60))
+  }
+  const weeklyWorkoutMinutes = [...workoutMinutesByWeek.entries()]
+    .map(([weekStart, minutes]) => ({ date: weekStart.slice(5), minutes }))
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-12)
+
+  const recentWorkouts = [...workouts].reverse().slice(0, 20)
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
@@ -264,6 +313,8 @@ export function Journal() {
       )}
 
       {tab === 'steps' && <p className="text-sm text-gray-400">Synced automatically from Garmin — nothing to log here.</p>}
+
+      {tab === 'workouts' && <p className="text-sm text-gray-400">Synced automatically from Strava — nothing to log here.</p>}
 
       {tab === 'mood' && (
         <div className="flex justify-between rounded-3xl border border-gray-100 bg-white p-3 shadow-sm">
@@ -400,8 +451,66 @@ export function Journal() {
         </div>
       )}
 
+      {tab === 'workouts' && weeklyWorkoutMinutes.length > 1 && (
+        <button
+          onClick={() => setWorkoutsExpanded(true)}
+          className="block w-full rounded-3xl border border-gray-100 bg-white p-2 text-left shadow-sm"
+        >
+          <WorkoutsChart data={weeklyWorkoutMinutes} height={192} />
+        </button>
+      )}
+
+      {workoutsExpanded && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+          <div className="flex items-center justify-between px-4 pt-4">
+            <h2 className="text-lg font-bold text-gray-900">Workouts</h2>
+            <button
+              onClick={() => setWorkoutsExpanded(false)}
+              className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
+            >
+              Close ✕
+            </button>
+          </div>
+          <div className="flex-1 px-2 pb-4">
+            <WorkoutsChart data={weeklyWorkoutMinutes} height={window.innerHeight - 120} />
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <p className="text-sm text-gray-400">Loading…</p>
+      ) : tab === 'workouts' ? (
+        <>
+          <h2 className="text-sm font-semibold text-gray-500">Recent Workouts</h2>
+          {recentWorkouts.length === 0 && <p className="text-sm text-gray-400">Nothing synced yet.</p>}
+          <ul className="flex flex-col gap-2 pb-4">
+            {recentWorkouts.map((workout) => {
+              const distance = formatWorkoutDistance(workout.distance_meters)
+              return (
+                <li
+                  key={workout.id}
+                  className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 text-sm shadow-sm"
+                >
+                  <span className="text-gray-400">{workout.date}</span>
+                  <span className="flex-1 px-3">
+                    <span className="font-medium text-gray-900">{workout.name}</span>
+                    <span className="ml-2 rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-medium text-orange-600">
+                      {workout.sport_type}
+                    </span>
+                    <span className="block text-[11px] text-gray-400">
+                      {formatWorkoutDuration(workout.duration_seconds)}
+                      {distance && ` · ${distance}`}
+                      {workout.calories != null && ` · ${workout.calories} cal`}
+                    </span>
+                  </span>
+                  <button onClick={() => removeWorkout(workout)} className="text-gray-300">
+                    ✕
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </>
       ) : (
         <>
           <h2 className="text-sm font-semibold text-gray-500">Recent {TAB_LABELS[tab]}</h2>
