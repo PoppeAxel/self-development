@@ -1,17 +1,81 @@
 import { useEffect, useState } from 'react'
 import { LineChart, Line, BarChart, Bar, ReferenceLine, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+import { parseISO } from 'date-fns'
 import { supabase } from '../lib/supabase'
-import { todayISO } from '../lib/dates'
+import { todayISO, weekStartISO } from '../lib/dates'
 import { RefreshButton } from '../components/RefreshButton'
 import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
 import type { JournalEntry, JournalEntryType } from '../lib/types'
 
 const MOODS = ['😞', '😕', '😐', '🙂', '😄']
 
-// steps is ingested via the Garmin sync endpoint, not a manual-entry tab here.
-type JournalTab = Exclude<JournalEntryType, 'steps'>
-const TABS: JournalTab[] = ['weight', 'sleep_hours', 'mood', 'note']
-const TAB_LABELS: Record<JournalTab, string> = { weight: 'Weight', sleep_hours: 'Sleep', mood: 'Mood', note: 'Notes' }
+// steps has no manual-entry form (Garmin-only) but still gets a read-only tab for its chart.
+type JournalTab = JournalEntryType
+const TABS: JournalTab[] = ['weight', 'sleep_hours', 'steps', 'mood', 'note']
+const TAB_LABELS: Record<JournalTab, string> = { weight: 'Weight', sleep_hours: 'Sleep', steps: 'Steps', mood: 'Mood', note: 'Notes' }
+
+interface WeeklySleep {
+  weekStart: string
+  avg: number
+  min: number
+  max: number
+  nights: number
+}
+
+function WeightChart({ data, goalWeight, height }: { data: { date: string; value: number }[]; goalWeight: number | null; height: number }) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <LineChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
+        <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
+        <YAxis
+          stroke="#9ca3af"
+          fontSize={11}
+          domain={[
+            (dataMin: number) => Math.floor(Math.min(dataMin, goalWeight ?? dataMin) - 2),
+            (dataMax: number) => Math.ceil(Math.max(dataMax, goalWeight ?? dataMax) + 2),
+          ]}
+        />
+        <Tooltip contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }} />
+        {goalWeight != null && (
+          <ReferenceLine
+            y={goalWeight}
+            stroke="#059669"
+            strokeWidth={2}
+            strokeDasharray="6 4"
+            ifOverflow="extendDomain"
+            label={{ value: `Goal ${goalWeight}kg`, fontSize: 12, fontWeight: 600, fill: '#059669', position: 'insideTopLeft' }}
+          />
+        )}
+        <Line type="monotone" dataKey="value" stroke="#7c3aed" strokeWidth={2.5} dot={{ r: 3, fill: '#7c3aed' }} isAnimationActive={false} />
+      </LineChart>
+    </ResponsiveContainer>
+  )
+}
+
+function StepsChart({ data, stepGoal, height }: { data: { date: string; value: number }[]; stepGoal: number | null; height: number }) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
+        <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
+        <YAxis stroke="#9ca3af" fontSize={11} />
+        <Tooltip contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }} />
+        {stepGoal != null && (
+          <ReferenceLine
+            y={stepGoal}
+            stroke="#0284c7"
+            strokeWidth={2}
+            strokeDasharray="6 4"
+            ifOverflow="extendDomain"
+            label={{ value: `Goal ${stepGoal.toLocaleString()}`, fontSize: 12, fontWeight: 600, fill: '#0284c7', position: 'insideTopLeft' }}
+          />
+        )}
+        <Bar dataKey="value" fill="#38bdf8" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+      </BarChart>
+    </ResponsiveContainer>
+  )
+}
 
 export function Journal() {
   const [entries, setEntries] = useState<JournalEntry[]>([])
@@ -21,11 +85,20 @@ export function Journal() {
   const [note, setNote] = useState('')
   const [sleepHoursPart, setSleepHoursPart] = useState('')
   const [sleepMinutesPart, setSleepMinutesPart] = useState('')
+  const [goalWeight, setGoalWeight] = useState<number | null>(null)
+  const [stepGoal, setStepGoal] = useState<number | null>(null)
+  const [weightExpanded, setWeightExpanded] = useState(false)
+  const [stepsExpanded, setStepsExpanded] = useState(false)
 
   async function load() {
     setLoading(true)
-    const { data } = await supabase.from('journal_entries').select('*').order('date', { ascending: true }).limit(200)
+    const [{ data }, { data: settingsRow }] = await Promise.all([
+      supabase.from('journal_entries').select('*').order('date', { ascending: true }).limit(200),
+      supabase.from('user_settings').select('*').maybeSingle(),
+    ])
     setEntries(data ?? [])
+    setGoalWeight(settingsRow?.goal_weight != null ? Number(settingsRow.goal_weight) : null)
+    setStepGoal(settingsRow?.step_goal != null ? Number(settingsRow.step_goal) : null)
     setLoading(false)
   }
 
@@ -79,6 +152,11 @@ export function Journal() {
     .slice(-14)
     .map((e) => ({ date: e.date.slice(5), value: e.value_numeric as number }))
 
+  const stepsSeries = entries
+    .filter((e) => e.type === 'steps' && e.value_numeric !== null)
+    .slice(-30)
+    .map((e) => ({ date: e.date.slice(5), value: e.value_numeric as number }))
+
   const recent = entries
     .filter((e) => e.type === tab)
     .slice(-20)
@@ -87,6 +165,26 @@ export function Journal() {
   // Force whole-hour Y-axis ticks — recharts' auto ticks land on awkward
   // fractional-hour values otherwise, which reads as misleading for a duration.
   const sleepYMax = Math.ceil(Math.max(RECOMMENDED_SLEEP_HOURS, ...sleepSeries.map((s) => s.value))) + 1
+
+  // Sleep grouped into Mon–Sun weeks.
+  const sleepByWeek = new Map<string, number[]>()
+  for (const e of entries) {
+    if (e.type !== 'sleep_hours' || e.value_numeric == null) continue
+    const wk = weekStartISO(parseISO(e.date))
+    const arr = sleepByWeek.get(wk) ?? []
+    arr.push(e.value_numeric)
+    sleepByWeek.set(wk, arr)
+  }
+  const weeklySleep: WeeklySleep[] = [...sleepByWeek.entries()]
+    .map(([weekStart, values]) => ({
+      weekStart,
+      avg: values.reduce((a, b) => a + b, 0) / values.length,
+      min: Math.min(...values),
+      max: Math.max(...values),
+      nights: values.length,
+    }))
+    .sort((a, b) => b.weekStart.localeCompare(a.weekStart))
+    .slice(0, 12)
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
@@ -100,11 +198,11 @@ export function Journal() {
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`flex-1 rounded-xl px-3 py-2 text-sm font-medium capitalize transition ${
+            className={`flex-1 rounded-xl px-2 py-2 text-sm font-medium transition ${
               tab === t ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500'
             }`}
           >
-            {t === 'sleep_hours' ? 'Sleep' : t}
+            {TAB_LABELS[t]}
           </button>
         ))}
       </div>
@@ -165,6 +263,8 @@ export function Journal() {
         </div>
       )}
 
+      {tab === 'steps' && <p className="text-sm text-gray-400">Synced automatically from Garmin — nothing to log here.</p>}
+
       {tab === 'mood' && (
         <div className="flex justify-between rounded-3xl border border-gray-100 bg-white p-3 shadow-sm">
           {MOODS.map((emoji, i) => (
@@ -201,16 +301,25 @@ export function Journal() {
       )}
 
       {tab === 'weight' && weightSeries.length > 1 && (
-        <div className="h-48 rounded-3xl border border-gray-100 bg-white p-2 shadow-sm">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={weightSeries}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
-              <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
-              <YAxis stroke="#9ca3af" fontSize={11} domain={['dataMin - 1', 'dataMax + 1']} />
-              <Tooltip contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }} />
-              <Line type="monotone" dataKey="value" stroke="#7c3aed" strokeWidth={2.5} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
+        <button
+          onClick={() => setWeightExpanded(true)}
+          className="block w-full rounded-3xl border border-gray-100 bg-white p-2 text-left shadow-sm"
+        >
+          <WeightChart data={weightSeries} goalWeight={goalWeight} height={192} />
+        </button>
+      )}
+
+      {weightExpanded && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+          <div className="flex items-center justify-between px-4 pt-4">
+            <h2 className="text-lg font-bold text-gray-900">Weight</h2>
+            <button onClick={() => setWeightExpanded(false)} className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600">
+              Close ✕
+            </button>
+          </div>
+          <div className="flex-1 px-2 pb-4">
+            <WeightChart data={weightSeries} goalWeight={goalWeight} height={window.innerHeight - 120} />
+          </div>
         </div>
       )}
 
@@ -239,6 +348,58 @@ export function Journal() {
         </div>
       )}
 
+      {tab === 'sleep_hours' && weeklySleep.length > 0 && (
+        <div>
+          <h2 className="mb-2 text-sm font-semibold text-gray-500">Weekly average</h2>
+          <ul className="flex flex-col gap-2">
+            {weeklySleep.map((week) => {
+              const metGoal = week.avg >= RECOMMENDED_SLEEP_HOURS
+              return (
+                <li key={week.weekStart} className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-500">Week of {week.weekStart}</span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                        metGoal ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
+                      }`}
+                    >
+                      {formatSleepDuration(week.avg)} avg
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-400">
+                    {formatSleepDuration(week.min)} – {formatSleepDuration(week.max)} · {week.nights} night{week.nights === 1 ? '' : 's'}{' '}
+                    logged
+                  </p>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+
+      {tab === 'steps' && stepsSeries.length > 1 && (
+        <button
+          onClick={() => setStepsExpanded(true)}
+          className="block w-full rounded-3xl border border-gray-100 bg-white p-2 text-left shadow-sm"
+        >
+          <StepsChart data={stepsSeries} stepGoal={stepGoal} height={192} />
+        </button>
+      )}
+
+      {stepsExpanded && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+          <div className="flex items-center justify-between px-4 pt-4">
+            <h2 className="text-lg font-bold text-gray-900">Steps</h2>
+            <button onClick={() => setStepsExpanded(false)} className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600">
+              Close ✕
+            </button>
+          </div>
+          <div className="flex-1 px-2 pb-4">
+            <StepsChart data={stepsSeries} stepGoal={stepGoal} height={window.innerHeight - 120} />
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <p className="text-sm text-gray-400">Loading…</p>
       ) : (
@@ -255,6 +416,7 @@ export function Journal() {
                 <span className="flex-1 px-3 font-medium text-gray-900">
                   {entry.type === 'weight' && `${entry.value_numeric} kg`}
                   {entry.type === 'sleep_hours' && entry.value_numeric != null && `${formatSleepDuration(entry.value_numeric)} slept`}
+                  {entry.type === 'steps' && entry.value_numeric != null && `${entry.value_numeric.toLocaleString()} steps`}
                   {entry.type === 'mood' && entry.value_text}
                   {entry.type === 'note' && entry.value_text}
                 </span>
