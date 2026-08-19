@@ -5,26 +5,24 @@ import { supabase } from '../lib/supabase'
 import { todayISO, weekStartISO } from '../lib/dates'
 import { RefreshButton } from '../components/RefreshButton'
 import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
-import { formatWorkoutDuration, formatWorkoutDistance } from '../lib/workouts'
+import { formatWorkoutDuration, formatWorkoutDistance, isStrengthWorkout } from '../lib/workouts'
 import type { JournalEntry, JournalEntryType, Workout } from '../lib/types'
 
-const MOODS = ['😞', '😕', '😐', '🙂', '😄']
-
-// steps/workouts have no manual-entry form (synced from Garmin/Strava) but still get a
-// read-only tab for their chart. 'workouts' isn't a JournalEntryType — it lives in its own
-// table, not journal_entries — so the tab union extends past that type. cardio_minutes /
-// strength_minutes are excluded: they're derived daily totals written purely so a task's
-// auto_metric can match against them (see src/lib/metrics.ts), not something to browse
-// directly — Workouts already covers that data with richer detail.
-type JournalTab = Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes'> | 'workouts'
-const TABS: JournalTab[] = ['weight', 'sleep_hours', 'steps', 'workouts', 'mood', 'note']
+// steps/cardio/strength have no manual-entry form (synced from Garmin/Strava) but still
+// get a read-only tab for their chart. 'cardio'/'strength' aren't JournalEntryTypes — they
+// come from the workouts table, split by sport_type — so the tab union extends past that
+// type. cardio_minutes/strength_minutes (the derived daily totals journal_entries stores
+// purely for auto_metric matching, see src/lib/metrics.ts) are excluded here since Cardio/
+// Strength already cover that data with richer detail. Mood/Notes are dropped for now —
+// not deleted, just off the tab bar.
+type JournalTab = Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes' | 'mood' | 'note'> | 'cardio' | 'strength'
+const TABS: JournalTab[] = ['weight', 'sleep_hours', 'steps', 'cardio', 'strength']
 const TAB_LABELS: Record<JournalTab, string> = {
   weight: 'Weight',
   sleep_hours: 'Sleep',
   steps: 'Steps',
-  workouts: 'Workouts',
-  mood: 'Mood',
-  note: 'Notes',
+  cardio: 'Cardio',
+  strength: 'Strength',
 }
 
 interface WeeklySleep {
@@ -90,7 +88,7 @@ function StepsChart({ data, stepGoal, height }: { data: { date: string; value: n
   )
 }
 
-function WorkoutsChart({ data, height }: { data: { date: string; minutes: number }[]; height: number }) {
+function WorkoutsChart({ data, color, height }: { data: { date: string; minutes: number }[]; color: string; height: number }) {
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
@@ -101,10 +99,22 @@ function WorkoutsChart({ data, height }: { data: { date: string; minutes: number
           contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }}
           formatter={(value) => [`${value} min`, 'Trained']}
         />
-        <Bar dataKey="minutes" fill="#f97316" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+        <Bar dataKey="minutes" fill={color} radius={[4, 4, 0, 0]} isAnimationActive={false} />
       </BarChart>
     </ResponsiveContainer>
   )
+}
+
+function weeklyMinutes(workouts: Workout[]): { date: string; minutes: number }[] {
+  const byWeek = new Map<string, number>()
+  for (const w of workouts) {
+    const wk = weekStartISO(parseISO(w.date))
+    byWeek.set(wk, (byWeek.get(wk) ?? 0) + Math.round(w.duration_seconds / 60))
+  }
+  return [...byWeek.entries()]
+    .map(([weekStart, minutes]) => ({ date: weekStart.slice(5), minutes }))
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-12)
 }
 
 export function Journal() {
@@ -112,7 +122,6 @@ export function Journal() {
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<JournalTab>('weight')
   const [weight, setWeight] = useState('')
-  const [note, setNote] = useState('')
   const [sleepHoursPart, setSleepHoursPart] = useState('')
   const [sleepMinutesPart, setSleepMinutesPart] = useState('')
   const [goalWeight, setGoalWeight] = useState<number | null>(null)
@@ -120,7 +129,8 @@ export function Journal() {
   const [weightExpanded, setWeightExpanded] = useState(false)
   const [stepsExpanded, setStepsExpanded] = useState(false)
   const [workouts, setWorkouts] = useState<Workout[]>([])
-  const [workoutsExpanded, setWorkoutsExpanded] = useState(false)
+  const [cardioExpanded, setCardioExpanded] = useState(false)
+  const [strengthExpanded, setStrengthExpanded] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -147,7 +157,7 @@ export function Journal() {
     if (!user) return
 
     // sleep_hours is a once-per-day value (like the auto-synced metrics), not a
-    // free-running log like weight/mood/note — update today's entry if it exists.
+    // free-running log like weight — update today's entry if it exists.
     if (type === 'sleep_hours') {
       const { data: existing } = await supabase
         .from('journal_entries')
@@ -225,18 +235,12 @@ export function Journal() {
     .sort((a, b) => b.weekStart.localeCompare(a.weekStart))
     .slice(0, 12)
 
-  // Total training minutes per Mon–Sun week, last 12 weeks.
-  const workoutMinutesByWeek = new Map<string, number>()
-  for (const w of workouts) {
-    const wk = weekStartISO(parseISO(w.date))
-    workoutMinutesByWeek.set(wk, (workoutMinutesByWeek.get(wk) ?? 0) + Math.round(w.duration_seconds / 60))
-  }
-  const weeklyWorkoutMinutes = [...workoutMinutesByWeek.entries()]
-    .map(([weekStart, minutes]) => ({ date: weekStart.slice(5), minutes }))
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(-12)
-
-  const recentWorkouts = [...workouts].reverse().slice(0, 20)
+  const cardioWorkouts = workouts.filter((w) => !isStrengthWorkout(w.sport_type))
+  const strengthWorkouts = workouts.filter((w) => isStrengthWorkout(w.sport_type))
+  const weeklyCardioMinutes = weeklyMinutes(cardioWorkouts)
+  const weeklyStrengthMinutes = weeklyMinutes(strengthWorkouts)
+  const recentCardioWorkouts = [...cardioWorkouts].reverse().slice(0, 20)
+  const recentStrengthWorkouts = [...strengthWorkouts].reverse().slice(0, 20)
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
@@ -317,41 +321,8 @@ export function Journal() {
 
       {tab === 'steps' && <p className="text-sm text-gray-400">Synced automatically from Garmin — nothing to log here.</p>}
 
-      {tab === 'workouts' && <p className="text-sm text-gray-400">Synced automatically from Strava — nothing to log here.</p>}
-
-      {tab === 'mood' && (
-        <div className="flex justify-between rounded-3xl border border-gray-100 bg-white p-3 shadow-sm">
-          {MOODS.map((emoji, i) => (
-            <button
-              key={emoji}
-              onClick={() => addEntry('mood', i + 1, emoji)}
-              className="rounded-2xl px-3 py-2 text-2xl hover:bg-violet-50"
-            >
-              {emoji}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {tab === 'note' && (
-        <div className="flex gap-2">
-          <input
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="Write a note…"
-            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
-          />
-          <button
-            onClick={() => {
-              if (!note.trim()) return
-              addEntry('note', null, note.trim())
-              setNote('')
-            }}
-            className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white"
-          >
-            Save
-          </button>
-        </div>
+      {(tab === 'cardio' || tab === 'strength') && (
+        <p className="text-sm text-gray-400">Synced automatically from Strava — nothing to log here.</p>
       )}
 
       {tab === 'weight' && weightSeries.length > 1 && (
@@ -454,65 +425,94 @@ export function Journal() {
         </div>
       )}
 
-      {tab === 'workouts' && weeklyWorkoutMinutes.length > 1 && (
+      {tab === 'cardio' && weeklyCardioMinutes.length > 1 && (
         <button
-          onClick={() => setWorkoutsExpanded(true)}
+          onClick={() => setCardioExpanded(true)}
           className="block w-full rounded-3xl border border-gray-100 bg-white p-2 text-left shadow-sm"
         >
-          <WorkoutsChart data={weeklyWorkoutMinutes} height={192} />
+          <WorkoutsChart data={weeklyCardioMinutes} color="#f97316" height={192} />
         </button>
       )}
 
-      {workoutsExpanded && (
+      {cardioExpanded && (
         <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
           <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-gray-900">Workouts</h2>
+            <h2 className="text-lg font-bold text-gray-900">Cardio</h2>
+            <button onClick={() => setCardioExpanded(false)} className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600">
+              Close ✕
+            </button>
+          </div>
+          <div className="flex-1 px-2 pb-4">
+            <WorkoutsChart data={weeklyCardioMinutes} color="#f97316" height={window.innerHeight - 120} />
+          </div>
+        </div>
+      )}
+
+      {tab === 'strength' && weeklyStrengthMinutes.length > 1 && (
+        <button
+          onClick={() => setStrengthExpanded(true)}
+          className="block w-full rounded-3xl border border-gray-100 bg-white p-2 text-left shadow-sm"
+        >
+          <WorkoutsChart data={weeklyStrengthMinutes} color="#e11d48" height={192} />
+        </button>
+      )}
+
+      {strengthExpanded && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+          <div className="flex items-center justify-between px-4 pt-4">
+            <h2 className="text-lg font-bold text-gray-900">Strength</h2>
             <button
-              onClick={() => setWorkoutsExpanded(false)}
+              onClick={() => setStrengthExpanded(false)}
               className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
             >
               Close ✕
             </button>
           </div>
           <div className="flex-1 px-2 pb-4">
-            <WorkoutsChart data={weeklyWorkoutMinutes} height={window.innerHeight - 120} />
+            <WorkoutsChart data={weeklyStrengthMinutes} color="#e11d48" height={window.innerHeight - 120} />
           </div>
         </div>
       )}
 
       {loading ? (
         <p className="text-sm text-gray-400">Loading…</p>
-      ) : tab === 'workouts' ? (
+      ) : tab === 'cardio' || tab === 'strength' ? (
         <>
-          <h2 className="text-sm font-semibold text-gray-500">Recent Workouts</h2>
-          {recentWorkouts.length === 0 && <p className="text-sm text-gray-400">Nothing synced yet.</p>}
-          <ul className="flex flex-col gap-2 pb-4">
-            {recentWorkouts.map((workout) => {
-              const distance = formatWorkoutDistance(workout.distance_meters)
-              return (
-                <li
-                  key={workout.id}
-                  className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 text-sm shadow-sm"
-                >
-                  <span className="text-gray-400">{workout.date}</span>
-                  <span className="flex-1 px-3">
-                    <span className="font-medium text-gray-900">{workout.name}</span>
-                    <span className="ml-2 rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-medium text-orange-600">
-                      {workout.sport_type}
-                    </span>
-                    <span className="block text-[11px] text-gray-400">
-                      {formatWorkoutDuration(workout.duration_seconds)}
-                      {distance && ` · ${distance}`}
-                      {workout.calories != null && ` · ${workout.calories} cal`}
-                    </span>
-                  </span>
-                  <button onClick={() => removeWorkout(workout)} className="text-gray-300">
-                    ✕
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
+          <h2 className="text-sm font-semibold text-gray-500">Recent {TAB_LABELS[tab]}</h2>
+          {(() => {
+            const list = tab === 'cardio' ? recentCardioWorkouts : recentStrengthWorkouts
+            const badgeStyle = tab === 'cardio' ? 'bg-orange-100 text-orange-600' : 'bg-rose-100 text-rose-600'
+            return (
+              <>
+                {list.length === 0 && <p className="text-sm text-gray-400">Nothing synced yet.</p>}
+                <ul className="flex flex-col gap-2 pb-4">
+                  {list.map((workout) => {
+                    const distance = formatWorkoutDistance(workout.distance_meters)
+                    return (
+                      <li
+                        key={workout.id}
+                        className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 text-sm shadow-sm"
+                      >
+                        <span className="text-gray-400">{workout.date}</span>
+                        <span className="flex-1 px-3">
+                          <span className="font-medium text-gray-900">{workout.name}</span>
+                          <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-medium ${badgeStyle}`}>{workout.sport_type}</span>
+                          <span className="block text-[11px] text-gray-400">
+                            {formatWorkoutDuration(workout.duration_seconds)}
+                            {distance && ` · ${distance}`}
+                            {workout.calories != null && ` · ${workout.calories} cal`}
+                          </span>
+                        </span>
+                        <button onClick={() => removeWorkout(workout)} className="text-gray-300">
+                          ✕
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </>
+            )
+          })()}
         </>
       ) : (
         <>
@@ -529,8 +529,6 @@ export function Journal() {
                   {entry.type === 'weight' && `${entry.value_numeric} kg`}
                   {entry.type === 'sleep_hours' && entry.value_numeric != null && `${formatSleepDuration(entry.value_numeric)} slept`}
                   {entry.type === 'steps' && entry.value_numeric != null && `${entry.value_numeric.toLocaleString()} steps`}
-                  {entry.type === 'mood' && entry.value_text}
-                  {entry.type === 'note' && entry.value_text}
                 </span>
                 <button onClick={() => remove(entry)} className="text-gray-300">
                   ✕
