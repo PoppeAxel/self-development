@@ -4,6 +4,7 @@ import { parseISO } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { todayISO, weekStartISO } from '../lib/dates'
 import { RefreshButton } from '../components/RefreshButton'
+import { GymPrograms } from '../components/GymPrograms'
 import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
 import { formatWorkoutDuration, formatWorkoutDistance, isStrengthWorkout } from '../lib/workouts'
 import type { JournalEntry, JournalEntryType, Workout } from '../lib/types'
@@ -321,8 +322,13 @@ export function Journal() {
 
       {tab === 'steps' && <p className="text-sm text-gray-400">Synced automatically from Garmin — nothing to log here.</p>}
 
-      {(tab === 'cardio' || tab === 'strength') && (
-        <p className="text-sm text-gray-400">Synced automatically from Strava — nothing to log here.</p>
+      {tab === 'cardio' && <p className="text-sm text-gray-400">Synced automatically from Strava — nothing to log here.</p>}
+
+      {tab === 'strength' && (
+        <>
+          <GymPrograms />
+          <p className="text-sm text-gray-400">Total strength time below is synced automatically from Strava.</p>
+        </>
       )}
 
       {tab === 'weight' && weightSeries.length > 1 && (

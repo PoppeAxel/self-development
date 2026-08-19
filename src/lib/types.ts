@@ -82,3 +82,40 @@ export interface Workout {
   calories: number | null
   created_at: string
 }
+
+export interface GymProgram {
+  id: string
+  user_id: string
+  name: string
+  created_at: string
+}
+
+export interface GymProgramExercise {
+  id: string
+  user_id: string
+  program_id: string
+  name: string
+  target_sets: number
+  target_reps: number
+  position: number
+}
+
+export interface GymSession {
+  id: string
+  user_id: string
+  program_id: string | null
+  program_name: string | null
+  date: string
+  created_at: string
+}
+
+export interface GymSessionSet {
+  id: string
+  user_id: string
+  session_id: string
+  exercise_name: string
+  set_number: number
+  reps: number | null
+  weight: number | null
+  created_at: string
+}
