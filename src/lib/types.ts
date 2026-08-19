@@ -107,6 +107,7 @@ export interface GymSession {
   program_name: string | null
   date: string
   created_at: string
+  strava_workout_id: string | null
 }
 
 export interface GymSessionSet {

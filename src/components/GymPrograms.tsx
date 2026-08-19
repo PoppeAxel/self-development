@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
-import type { GymProgram, GymProgramExercise, GymSession, GymSessionSet } from '../lib/types'
+import { formatWorkoutDuration } from '../lib/workouts'
+import type { GymProgram, GymProgramExercise, GymSession, GymSessionSet, Workout } from '../lib/types'
 
 interface ExerciseRow {
   name: string
@@ -25,12 +26,13 @@ function summarizeSet(s: GymSessionSet): string {
   return '—'
 }
 
-export function GymPrograms() {
+export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] }) {
   const [programs, setPrograms] = useState<GymProgram[]>([])
   const [exercisesByProgram, setExercisesByProgram] = useState<Map<string, GymProgramExercise[]>>(new Map())
   const [sessions, setSessions] = useState<GymSession[]>([])
   const [setsBySession, setSetsBySession] = useState<Map<string, GymSessionSet[]>>(new Map())
   const [loading, setLoading] = useState(true)
+  const [linkingSessionId, setLinkingSessionId] = useState<string | null>(null)
 
   const [builderOpen, setBuilderOpen] = useState(false)
   const [programName, setProgramName] = useState('')
@@ -166,6 +168,20 @@ export function GymPrograms() {
     await supabase.from('gym_sessions').delete().eq('id', session.id)
   }
 
+  async function linkSession(session: GymSession, workout: Workout) {
+    setSessions((ss) => ss.map((s) => (s.id === session.id ? { ...s, strava_workout_id: workout.id } : s)))
+    setLinkingSessionId(null)
+    await supabase.from('gym_sessions').update({ strava_workout_id: workout.id }).eq('id', session.id)
+  }
+
+  async function unlinkSession(session: GymSession) {
+    setSessions((ss) => ss.map((s) => (s.id === session.id ? { ...s, strava_workout_id: null } : s)))
+    await supabase.from('gym_sessions').update({ strava_workout_id: null }).eq('id', session.id)
+  }
+
+  const workoutById = new Map(strengthWorkouts.map((w) => [w.id, w]))
+  const linkedWorkoutIds = new Set(sessions.map((s) => s.strava_workout_id).filter((id): id is string => id != null))
+
   return (
     <div className="flex flex-col gap-3">
       <h2 className="text-sm font-semibold text-gray-500">Your programs</h2>
@@ -233,6 +249,63 @@ export function GymPrograms() {
                         .join(', ')}
                     </p>
                   ))}
+
+                  {session.strava_workout_id ? (
+                    (() => {
+                      const linkedWorkout = workoutById.get(session.strava_workout_id)
+                      return (
+                        <div className="mt-2 flex items-center justify-between rounded-xl bg-orange-50 px-2.5 py-1.5">
+                          <span className="text-[11px] text-orange-600">
+                            🔗 {linkedWorkout ? `${linkedWorkout.name} · ${formatWorkoutDuration(linkedWorkout.duration_seconds)}` : 'Linked'}
+                          </span>
+                          <button onClick={() => unlinkSession(session)} className="text-[11px] font-medium text-gray-400">
+                            Unlink
+                          </button>
+                        </div>
+                      )
+                    })()
+                  ) : linkingSessionId === session.id ? (
+                    (() => {
+                      const candidates = strengthWorkouts
+                        .filter((w) => !linkedWorkoutIds.has(w.id))
+                        .sort(
+                          (a, b) =>
+                            Math.abs(new Date(a.date).getTime() - new Date(session.date).getTime()) -
+                            Math.abs(new Date(b.date).getTime() - new Date(session.date).getTime()),
+                        )
+                        .slice(0, 5)
+                      return (
+                        <div className="mt-2 flex flex-col gap-1 rounded-xl bg-gray-50 p-2">
+                          {candidates.length === 0 ? (
+                            <p className="text-[11px] text-gray-400">No unlinked Strava workouts found yet.</p>
+                          ) : (
+                            candidates.map((w) => (
+                              <button
+                                key={w.id}
+                                onClick={() => linkSession(session, w)}
+                                className="rounded-lg bg-white px-2 py-1.5 text-left text-[11px] text-gray-700 shadow-sm"
+                              >
+                                {w.date} · {w.name} · {formatWorkoutDuration(w.duration_seconds)}
+                              </button>
+                            ))
+                          )}
+                          <button
+                            onClick={() => setLinkingSessionId(null)}
+                            className="text-left text-[11px] font-medium text-gray-400"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )
+                    })()
+                  ) : (
+                    <button
+                      onClick={() => setLinkingSessionId(session.id)}
+                      className="mt-2 text-[11px] font-medium text-rose-600"
+                    >
+                      Link to Strava workout
+                    </button>
+                  )}
                 </li>
               )
             })}

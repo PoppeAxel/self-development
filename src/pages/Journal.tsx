@@ -326,7 +326,7 @@ export function Journal() {
 
       {tab === 'strength' && (
         <>
-          <GymPrograms />
+          <GymPrograms strengthWorkouts={strengthWorkouts} />
           <p className="text-sm text-gray-400">Total strength time below is synced automatically from Strava.</p>
         </>
       )}
