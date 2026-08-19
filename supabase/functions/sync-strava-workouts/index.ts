@@ -10,6 +10,10 @@ const CRON_SECRET = Deno.env.get('CRON_SECRET')!
 const STRAVA_CLIENT_ID = Deno.env.get('STRAVA_CLIENT_ID')!
 const STRAVA_CLIENT_SECRET = Deno.env.get('STRAVA_CLIENT_SECRET')!
 
+// Strava's sport_type taxonomy is broad; only the clearly-strength types are called out,
+// everything else (Run, Ride, Swim, Walk, Hike, Soccer, ...) counts as cardio.
+const STRENGTH_SPORT_TYPES = new Set(['WeightTraining', 'Crossfit', 'Workout', 'HighIntensityIntervalTraining'])
+
 interface StravaActivity {
   id: number
   name: string
@@ -87,21 +91,64 @@ Deno.serve(async (req) => {
   const activities: StravaActivity[] = await activitiesRes.json()
 
   let synced = 0
+  const affectedDates = new Set<string>()
   for (const a of activities) {
+    const date = a.start_date_local.slice(0, 10)
     const { error } = await supabase.from('workouts').upsert(
       {
         user_id: tokenRow.user_id,
         strava_id: a.id,
         sport_type: a.sport_type,
         name: a.name,
-        date: a.start_date_local.slice(0, 10),
+        date,
         duration_seconds: a.moving_time,
         distance_meters: a.distance,
         calories: a.calories ?? null,
       },
       { onConflict: 'user_id,strava_id' },
     )
-    if (!error) synced++
+    if (!error) {
+      synced++
+      affectedDates.add(date)
+    }
+  }
+
+  // Feed each affected day's cardio/strength minutes into journal_entries, the same shape
+  // as steps/sleep_hours, so a daily task's auto_metric can auto-complete off either one
+  // via Today's existing generic auto-complete logic — no changes needed there.
+  for (const date of affectedDates) {
+    const { data: dayWorkouts } = await supabase
+      .from('workouts')
+      .select('sport_type, duration_seconds')
+      .eq('user_id', tokenRow.user_id)
+      .eq('date', date)
+
+    let cardioSeconds = 0
+    let strengthSeconds = 0
+    for (const w of dayWorkouts ?? []) {
+      if (STRENGTH_SPORT_TYPES.has(w.sport_type)) strengthSeconds += w.duration_seconds
+      else cardioSeconds += w.duration_seconds
+    }
+
+    for (const [type, seconds] of [
+      ['cardio_minutes', cardioSeconds],
+      ['strength_minutes', strengthSeconds],
+    ] as const) {
+      const minutes = Math.round(seconds / 60)
+      const { data: existing } = await supabase
+        .from('journal_entries')
+        .select('id')
+        .eq('user_id', tokenRow.user_id)
+        .eq('date', date)
+        .eq('type', type)
+        .maybeSingle()
+
+      if (existing) {
+        await supabase.from('journal_entries').update({ value_numeric: minutes }).eq('id', existing.id)
+      } else {
+        await supabase.from('journal_entries').insert({ user_id: tokenRow.user_id, date, type, value_numeric: minutes })
+      }
+    }
   }
 
   return new Response(JSON.stringify({ ok: true, fetched: activities.length, synced }), {

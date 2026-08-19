@@ -42,7 +42,7 @@ export interface WeeklyGoal {
   recurring: boolean
 }
 
-export type JournalEntryType = 'weight' | 'mood' | 'note' | 'steps' | 'sleep_hours'
+export type JournalEntryType = 'weight' | 'mood' | 'note' | 'steps' | 'sleep_hours' | 'cardio_minutes' | 'strength_minutes'
 
 export interface JournalEntry {
   id: string

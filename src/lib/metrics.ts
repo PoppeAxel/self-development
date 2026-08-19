@@ -5,12 +5,14 @@ import type { JournalEntryType } from './types'
 // (e.g. sleep hours) means: add it here, add its journal_entries type to the check
 // constraint in a migration, and add an ingestion endpoint that writes that type —
 // no further changes needed in Today's auto-complete logic, form, or display.
-export const AUTO_METRICS = ['steps', 'sleep_hours'] as const
+export const AUTO_METRICS = ['steps', 'sleep_hours', 'cardio_minutes', 'strength_minutes'] as const
 export type AutoMetric = (typeof AUTO_METRICS)[number]
 
 export const METRIC_INFO: Record<AutoMetric, { label: string; journalType: JournalEntryType; icon: string; unit: string }> = {
   steps: { label: 'Steps (Garmin)', journalType: 'steps', icon: '🚶', unit: 'steps' },
   sleep_hours: { label: 'Sleep (hours)', journalType: 'sleep_hours', icon: '😴', unit: 'hours' },
+  cardio_minutes: { label: 'Cardio (Strava)', journalType: 'cardio_minutes', icon: '🏃', unit: 'min' },
+  strength_minutes: { label: 'Strength (Strava)', journalType: 'strength_minutes', icon: '🏋️', unit: 'min' },
 }
 
 export function isAutoMetric(value: string | null): value is AutoMetric {

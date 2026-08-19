@@ -12,8 +12,11 @@ const MOODS = ['😞', '😕', '😐', '🙂', '😄']
 
 // steps/workouts have no manual-entry form (synced from Garmin/Strava) but still get a
 // read-only tab for their chart. 'workouts' isn't a JournalEntryType — it lives in its own
-// table, not journal_entries — so the tab union extends past that type.
-type JournalTab = JournalEntryType | 'workouts'
+// table, not journal_entries — so the tab union extends past that type. cardio_minutes /
+// strength_minutes are excluded: they're derived daily totals written purely so a task's
+// auto_metric can match against them (see src/lib/metrics.ts), not something to browse
+// directly — Workouts already covers that data with richer detail.
+type JournalTab = Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes'> | 'workouts'
 const TABS: JournalTab[] = ['weight', 'sleep_hours', 'steps', 'workouts', 'mood', 'note']
 const TAB_LABELS: Record<JournalTab, string> = {
   weight: 'Weight',
