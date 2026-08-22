@@ -16,9 +16,9 @@ function Shell() {
   )
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex h-full flex-col">
       <div className="safe-top" />
-      <div className="flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {tab === 'today' && <Today />}
         {tab === 'calendar' && <Calendar />}
         {tab === 'goals' && <Goals />}

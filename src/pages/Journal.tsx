@@ -34,6 +34,14 @@ interface WeeklySleep {
   nights: number
 }
 
+interface WeeklyWeight {
+  weekStart: string
+  avg: number
+  min: number
+  max: number
+  entries: number
+}
+
 function WeightChart({ data, goalWeight, height }: { data: { date: string; value: number }[]; goalWeight: number | null; height: number }) {
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -132,6 +140,11 @@ export function Journal() {
   const [workouts, setWorkouts] = useState<Workout[]>([])
   const [cardioExpanded, setCardioExpanded] = useState(false)
   const [strengthExpanded, setStrengthExpanded] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
+
+  useEffect(() => {
+    setShowHistory(false)
+  }, [tab])
 
   async function load() {
     setLoading(true)
@@ -236,6 +249,39 @@ export function Journal() {
     .sort((a, b) => b.weekStart.localeCompare(a.weekStart))
     .slice(0, 12)
 
+  // Weight grouped into Mon–Sun weeks, ascending for trend math.
+  const weightByWeek = new Map<string, number[]>()
+  for (const e of entries) {
+    if (e.type !== 'weight' || e.value_numeric == null) continue
+    const wk = weekStartISO(parseISO(e.date))
+    const arr = weightByWeek.get(wk) ?? []
+    arr.push(e.value_numeric)
+    weightByWeek.set(wk, arr)
+  }
+  const weeklyWeightAsc: WeeklyWeight[] = [...weightByWeek.entries()]
+    .map(([weekStart, values]) => ({
+      weekStart,
+      avg: values.reduce((a, b) => a + b, 0) / values.length,
+      min: Math.min(...values),
+      max: Math.max(...values),
+      entries: values.length,
+    }))
+    .sort((a, b) => a.weekStart.localeCompare(b.weekStart))
+  const weeklyWeight = [...weeklyWeightAsc].reverse().slice(0, 12)
+
+  const currentWeightWeek = weeklyWeightAsc[weeklyWeightAsc.length - 1] ?? null
+  const previousWeightWeek = weeklyWeightAsc[weeklyWeightAsc.length - 2] ?? null
+  const weekWeightChange =
+    currentWeightWeek && previousWeightWeek ? currentWeightWeek.avg - previousWeightWeek.avg : null
+
+  // Trend: average week-over-week change across the last few completed weeks.
+  const recentWeightWeeks = weeklyWeightAsc.slice(-5)
+  const weightDiffs: number[] = []
+  for (let i = 1; i < recentWeightWeeks.length; i++) {
+    weightDiffs.push(recentWeightWeeks[i].avg - recentWeightWeeks[i - 1].avg)
+  }
+  const weightTrendPerWeek = weightDiffs.length > 0 ? weightDiffs.reduce((a, b) => a + b, 0) / weightDiffs.length : null
+
   const cardioWorkouts = workouts.filter((w) => !isStrengthWorkout(w.sport_type))
   const strengthWorkouts = workouts.filter((w) => isStrengthWorkout(w.sport_type))
   const weeklyCardioMinutes = weeklyMinutes(cardioWorkouts)
@@ -331,6 +377,41 @@ export function Journal() {
         </>
       )}
 
+      {tab === 'weight' && weekWeightChange !== null && currentWeightWeek && (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+            <p className="text-xs text-gray-400">This week</p>
+            <p className="text-lg font-bold text-gray-900">{currentWeightWeek.avg.toFixed(1)} kg</p>
+            <p
+              className={`text-sm font-semibold ${
+                weekWeightChange > 0 ? 'text-red-500' : weekWeightChange < 0 ? 'text-emerald-500' : 'text-gray-400'
+              }`}
+            >
+              {weekWeightChange > 0 ? '+' : ''}
+              {weekWeightChange.toFixed(1)} kg vs last week
+            </p>
+          </div>
+          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+            <p className="text-xs text-gray-400">Trend</p>
+            <p
+              className={`text-lg font-bold ${
+                weightTrendPerWeek == null || weightTrendPerWeek === 0
+                  ? 'text-gray-900'
+                  : weightTrendPerWeek > 0
+                    ? 'text-red-500'
+                    : 'text-emerald-500'
+              }`}
+            >
+              {weightTrendPerWeek == null ? '—' : (
+                <>
+                  {weightTrendPerWeek > 0 ? '↗' : weightTrendPerWeek < 0 ? '↘' : '→'} {Math.abs(weightTrendPerWeek).toFixed(2)} kg/wk
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+      )}
+
       {tab === 'weight' && weightSeries.length > 1 && (
         <button
           onClick={() => setWeightExpanded(true)}
@@ -400,6 +481,45 @@ export function Journal() {
                   <p className="mt-1 text-sm text-gray-400">
                     {formatSleepDuration(week.min)} – {formatSleepDuration(week.max)} · {week.nights} night{week.nights === 1 ? '' : 's'}{' '}
                     logged
+                  </p>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+
+      {tab === 'weight' && weeklyWeight.length > 0 && (
+        <div>
+          <h2 className="mb-2 text-sm font-semibold text-gray-500">Weekly average</h2>
+          <ul className="flex flex-col gap-2">
+            {weeklyWeight.map((week, i) => {
+              const prev = weeklyWeight[i + 1]
+              const change = prev ? week.avg - prev.avg : null
+              return (
+                <li key={week.weekStart} className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-500">Week of {week.weekStart}</span>
+                    <span className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-gray-900">{week.avg.toFixed(1)} kg avg</span>
+                      {change !== null && (
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                            change > 0
+                              ? 'bg-red-100 text-red-600'
+                              : change < 0
+                                ? 'bg-emerald-100 text-emerald-600'
+                                : 'bg-gray-100 text-gray-500'
+                          }`}
+                        >
+                          {change > 0 ? '+' : ''}
+                          {change.toFixed(1)} kg
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-400">
+                    {week.min.toFixed(1)} – {week.max.toFixed(1)} kg · {week.entries} log{week.entries === 1 ? '' : 's'}
                   </p>
                 </li>
               )
@@ -480,11 +600,18 @@ export function Journal() {
         </div>
       )}
 
-      {loading ? (
-        <p className="text-sm text-gray-400">Loading…</p>
-      ) : tab === 'cardio' || tab === 'strength' ? (
+      {loading ? null : (
+        <button
+          onClick={() => setShowHistory((v) => !v)}
+          className="flex items-center justify-between text-sm font-semibold text-gray-500"
+        >
+          <span>Recent {TAB_LABELS[tab]}</span>
+          <span className="text-gray-400">{showHistory ? 'Hide ▲' : 'Show ▼'}</span>
+        </button>
+      )}
+
+      {!loading && showHistory && (tab === 'cardio' || tab === 'strength' ? (
         <>
-          <h2 className="text-sm font-semibold text-gray-500">Recent {TAB_LABELS[tab]}</h2>
           {(() => {
             const list = tab === 'cardio' ? recentCardioWorkouts : recentStrengthWorkouts
             const badgeStyle = tab === 'cardio' ? 'bg-orange-100 text-orange-600' : 'bg-rose-100 text-rose-600'
@@ -522,7 +649,6 @@ export function Journal() {
         </>
       ) : (
         <>
-          <h2 className="text-sm font-semibold text-gray-500">Recent {TAB_LABELS[tab]}</h2>
           {recent.length === 0 && <p className="text-sm text-gray-400">Nothing logged yet.</p>}
           <ul className="flex flex-col gap-2 pb-4">
             {recent.map((entry) => (
@@ -543,7 +669,7 @@ export function Journal() {
             ))}
           </ul>
         </>
-      )}
+      ))}
     </div>
   )
 }
