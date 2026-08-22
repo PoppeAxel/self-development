@@ -282,6 +282,25 @@ export function Journal() {
   }
   const weightTrendPerWeek = weightDiffs.length > 0 ? weightDiffs.reduce((a, b) => a + b, 0) / weightDiffs.length : null
 
+  const weightEntries = entries.filter((e) => e.type === 'weight' && e.value_numeric !== null)
+  const firstWeightEntry = weightEntries[0] ?? null
+  const latestWeightEntry = weightEntries[weightEntries.length - 1] ?? null
+  const totalWeightChange =
+    firstWeightEntry && latestWeightEntry && firstWeightEntry !== latestWeightEntry
+      ? (latestWeightEntry.value_numeric as number) - (firstWeightEntry.value_numeric as number)
+      : null
+
+  // Positive = still need to lose weight to hit the goal, negative = need to gain.
+  const distanceToGoal =
+    latestWeightEntry && goalWeight != null ? (latestWeightEntry.value_numeric as number) - goalWeight : null
+
+  // Only estimate an ETA if the current trend is actually moving toward the goal.
+  let weeksToGoal: number | null = null
+  if (distanceToGoal != null && Math.abs(distanceToGoal) > 0.05 && weightTrendPerWeek != null && weightTrendPerWeek !== 0) {
+    const movingTowardGoal = (distanceToGoal > 0 && weightTrendPerWeek < 0) || (distanceToGoal < 0 && weightTrendPerWeek > 0)
+    if (movingTowardGoal) weeksToGoal = Math.abs(distanceToGoal / weightTrendPerWeek)
+  }
+
   const cardioWorkouts = workouts.filter((w) => !isStrengthWorkout(w.sport_type))
   const strengthWorkouts = workouts.filter((w) => isStrengthWorkout(w.sport_type))
   const weeklyCardioMinutes = weeklyMinutes(cardioWorkouts)
@@ -375,6 +394,47 @@ export function Journal() {
           <GymPrograms strengthWorkouts={strengthWorkouts} />
           <p className="text-sm text-gray-400">Total strength time below is synced automatically from Strava.</p>
         </>
+      )}
+
+      {tab === 'weight' && firstWeightEntry && latestWeightEntry && (
+        <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+          <div className="flex items-center justify-between text-xs text-gray-400">
+            <span>Start · {firstWeightEntry.date}</span>
+            <span>Now · {latestWeightEntry.date}</span>
+          </div>
+          <div className="mt-1 flex items-center justify-between">
+            <span className="text-lg font-bold text-gray-900">{(firstWeightEntry.value_numeric as number).toFixed(1)} kg</span>
+            <span className="text-gray-300">→</span>
+            <span className="text-lg font-bold text-gray-900">{(latestWeightEntry.value_numeric as number).toFixed(1)} kg</span>
+          </div>
+          {totalWeightChange !== null && (
+            <p
+              className={`mt-1 text-sm font-semibold ${
+                totalWeightChange > 0 ? 'text-red-500' : totalWeightChange < 0 ? 'text-emerald-500' : 'text-gray-400'
+              }`}
+            >
+              {totalWeightChange > 0 ? '+' : ''}
+              {totalWeightChange.toFixed(1)} kg overall
+            </p>
+          )}
+          {goalWeight != null && distanceToGoal !== null && (
+            <div className="mt-2 border-t border-gray-100 pt-2 text-sm text-gray-500">
+              {Math.abs(distanceToGoal) <= 0.05 ? (
+                <span className="font-semibold text-emerald-500">Goal reached 🎉</span>
+              ) : (
+                <>
+                  <span className="font-medium text-gray-900">{Math.abs(distanceToGoal).toFixed(1)} kg</span> to{' '}
+                  {distanceToGoal > 0 ? 'lose' : 'gain'} to reach {goalWeight} kg
+                  <span className="block text-xs text-gray-400">
+                    {weeksToGoal !== null
+                      ? `~${Math.ceil(weeksToGoal)} week${Math.ceil(weeksToGoal) === 1 ? '' : 's'} at current trend`
+                      : "Current trend isn't moving toward your goal"}
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {tab === 'weight' && weekWeightChange !== null && currentWeightWeek && (
