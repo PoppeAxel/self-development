@@ -32,6 +32,9 @@ export function Today() {
   const [loading, setLoading] = useState(true)
   const [metricValues, setMetricValues] = useState<Map<AutoMetric, number>>(new Map())
   const [stepGoal, setStepGoal] = useState<number | null>(null)
+  const [weightToday, setWeightToday] = useState<number | null>(null)
+  const [goalWeight, setGoalWeight] = useState<number | null>(null)
+  const [weightInput, setWeightInput] = useState('')
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [addFormOpen, setAddFormOpen] = useState(false)
   const [confirmTask, setConfirmTask] = useState<DailyTask | null>(null)
@@ -47,28 +50,44 @@ export function Today() {
     setLoading(true)
     await ensureDefaultCategories()
     await rolloverRecurringGoals()
-    const [{ data: taskRows }, { data: completionRows }, { data: categoryRows }, { data: goalRows }, { data: metricRows }, { data: settingsRow }, { data: reminderRows }] =
-      await Promise.all([
-        supabase
-          .from('daily_tasks')
-          .select('*')
-          .eq('active', true)
-          .or(`scheduled_date.is.null,scheduled_date.lte.${date}`)
-          .order('created_at'),
-        supabase.from('task_completions').select('task_id').eq('date', date),
-        supabase.from('categories').select('*').order('name'),
-        supabase.from('weekly_goals').select('*').eq('week_start', weekStart).not('target_value', 'is', null),
-        supabase
-          .from('journal_entries')
-          .select('type, value_numeric')
-          .in(
-            'type',
-            AUTO_METRICS.map((m) => METRIC_INFO[m].journalType),
-          )
-          .eq('date', date),
-        supabase.from('user_settings').select('*').maybeSingle(),
-        supabase.from('reminders').select('*'),
-      ])
+    const [
+      { data: taskRows },
+      { data: completionRows },
+      { data: categoryRows },
+      { data: goalRows },
+      { data: metricRows },
+      { data: settingsRow },
+      { data: reminderRows },
+      { data: weightRow },
+    ] = await Promise.all([
+      supabase
+        .from('daily_tasks')
+        .select('*')
+        .eq('active', true)
+        .or(`scheduled_date.is.null,scheduled_date.lte.${date}`)
+        .order('created_at'),
+      supabase.from('task_completions').select('task_id').eq('date', date),
+      supabase.from('categories').select('*').order('name'),
+      supabase.from('weekly_goals').select('*').eq('week_start', weekStart).not('target_value', 'is', null),
+      supabase
+        .from('journal_entries')
+        .select('type, value_numeric')
+        .in(
+          'type',
+          AUTO_METRICS.map((m) => METRIC_INFO[m].journalType),
+        )
+        .eq('date', date),
+      supabase.from('user_settings').select('*').maybeSingle(),
+      supabase.from('reminders').select('*'),
+      supabase
+        .from('journal_entries')
+        .select('value_numeric')
+        .eq('type', 'weight')
+        .eq('date', date)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ])
     const allTasks = taskRows ?? []
     const completed = new Set((completionRows ?? []).map((r) => r.task_id))
     const todaysMetrics = new Map<AutoMetric, number>()
@@ -108,6 +127,9 @@ export function Today() {
     setReminders(reminderRows ?? [])
     setMetricValues(todaysMetrics)
     setStepGoal(settingsRow?.step_goal ?? null)
+    setGoalWeight(settingsRow?.goal_weight != null ? Number(settingsRow.goal_weight) : null)
+    setWeightToday(weightRow?.value_numeric != null ? Number(weightRow.value_numeric) : null)
+    setWeightInput(weightRow?.value_numeric != null ? String(weightRow.value_numeric) : '')
     setLoading(false)
   }
 
@@ -274,6 +296,17 @@ export function Today() {
     load()
   }
 
+  async function logWeight() {
+    const value = Number(weightInput)
+    if (!weightInput || Number.isNaN(value)) return
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    await supabase.from('journal_entries').insert({ type: 'weight', value_numeric: value, date, user_id: user.id })
+    load()
+  }
+
   async function removeTask(task: DailyTask) {
     await supabase.from('daily_tasks').update({ active: false }).eq('id', task.id)
     load()
@@ -322,13 +355,13 @@ export function Today() {
         </button>
       </div>
 
-      {(tasks.length > 0 || steps != null) && (
+      {(tasks.length > 0 || steps != null || weightToday != null) && (
         <div className="rounded-3xl border border-gray-100 bg-white shadow-sm">
           <button
             onClick={() => setSummaryOpen((o) => !o)}
             className="flex w-full items-center justify-between px-4 py-3 text-left"
           >
-            <span className="flex items-center gap-3 text-sm font-medium text-gray-700">
+            <span className="flex flex-wrap items-center gap-3 text-sm font-medium text-gray-700">
               {tasks.length > 0 && <span>✓ {doneCount}/{tasks.length} tasks</span>}
               {steps != null && (
                 <span>
@@ -336,6 +369,7 @@ export function Today() {
                   {stepGoal ? `/${stepGoal.toLocaleString()}` : ''} steps
                 </span>
               )}
+              {weightToday != null && <span>⚖️ {weightToday} kg</span>}
             </span>
             <span className={`text-gray-400 transition-transform ${summaryOpen ? 'rotate-180' : ''}`}>⌄</span>
           </button>
@@ -368,6 +402,36 @@ export function Today() {
                   </div>
                 </div>
               )}
+              <div className="flex items-center gap-4">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-violet-100 text-lg">⚖️</span>
+                <div className="flex-1">
+                  {weightToday != null ? (
+                    <>
+                      <p className="font-semibold text-gray-900">{weightToday} kg</p>
+                      <p className="text-sm text-gray-500">
+                        {goalWeight != null ? `Goal ${goalWeight} kg` : `Logged ${isToday ? 'today' : 'that day'}`}
+                      </p>
+                    </>
+                  ) : (
+                    <div className="flex gap-2">
+                      <input
+                        value={weightInput}
+                        onChange={(e) => setWeightInput(e.target.value)}
+                        type="number"
+                        step="0.1"
+                        placeholder="Log weight (kg)"
+                        className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+                      />
+                      <button
+                        onClick={logWeight}
+                        className="shrink-0 rounded-2xl bg-violet-600 px-3 py-2 text-sm font-semibold text-white"
+                      >
+                        Log
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </div>

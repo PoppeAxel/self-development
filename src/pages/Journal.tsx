@@ -238,7 +238,7 @@ export function Journal() {
     arr.push(e.value_numeric)
     sleepByWeek.set(wk, arr)
   }
-  const weeklySleep: WeeklySleep[] = [...sleepByWeek.entries()]
+  const weeklySleepAsc: WeeklySleep[] = [...sleepByWeek.entries()]
     .map(([weekStart, values]) => ({
       weekStart,
       avg: values.reduce((a, b) => a + b, 0) / values.length,
@@ -246,8 +246,20 @@ export function Journal() {
       max: Math.max(...values),
       nights: values.length,
     }))
-    .sort((a, b) => b.weekStart.localeCompare(a.weekStart))
-    .slice(0, 12)
+    .sort((a, b) => a.weekStart.localeCompare(b.weekStart))
+  const weeklySleep = [...weeklySleepAsc].reverse().slice(0, 12)
+
+  const currentSleepWeek = weeklySleepAsc[weeklySleepAsc.length - 1] ?? null
+  const previousSleepWeek = weeklySleepAsc[weeklySleepAsc.length - 2] ?? null
+  const weekSleepChange = currentSleepWeek && previousSleepWeek ? currentSleepWeek.avg - previousSleepWeek.avg : null
+
+  // Trend: average week-over-week change across the last few completed weeks.
+  const recentSleepWeeks = weeklySleepAsc.slice(-5)
+  const sleepDiffs: number[] = []
+  for (let i = 1; i < recentSleepWeeks.length; i++) {
+    sleepDiffs.push(recentSleepWeeks[i].avg - recentSleepWeeks[i - 1].avg)
+  }
+  const sleepTrendPerWeek = sleepDiffs.length > 0 ? sleepDiffs.reduce((a, b) => a + b, 0) / sleepDiffs.length : null
 
   // Weight grouped into Mon–Sun weeks, ascending for trend math.
   const weightByWeek = new Map<string, number[]>()
@@ -491,6 +503,43 @@ export function Journal() {
           </div>
           <div className="flex-1 px-2 pb-4">
             <WeightChart data={weightSeries} goalWeight={goalWeight} height={window.innerHeight - 120} />
+          </div>
+        </div>
+      )}
+
+      {tab === 'sleep_hours' && weekSleepChange !== null && currentSleepWeek && (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+            <p className="text-xs text-gray-400">This week</p>
+            <p className="text-lg font-bold text-gray-900">{formatSleepDuration(currentSleepWeek.avg)}</p>
+            <p
+              className={`text-sm font-semibold ${
+                weekSleepChange > 0 ? 'text-emerald-500' : weekSleepChange < 0 ? 'text-red-500' : 'text-gray-400'
+              }`}
+            >
+              {weekSleepChange > 0 ? '+' : ''}
+              {formatSleepDuration(Math.abs(weekSleepChange))} {weekSleepChange >= 0 ? 'more' : 'less'} vs last week
+            </p>
+          </div>
+          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+            <p className="text-xs text-gray-400">Trend</p>
+            <p
+              className={`text-lg font-bold ${
+                sleepTrendPerWeek == null || sleepTrendPerWeek === 0
+                  ? 'text-gray-900'
+                  : sleepTrendPerWeek > 0
+                    ? 'text-emerald-500'
+                    : 'text-red-500'
+              }`}
+            >
+              {sleepTrendPerWeek == null ? (
+                '—'
+              ) : (
+                <>
+                  {sleepTrendPerWeek > 0 ? '↗' : sleepTrendPerWeek < 0 ? '↘' : '→'} {formatSleepDuration(Math.abs(sleepTrendPerWeek))}/wk
+                </>
+              )}
+            </p>
           </div>
         </div>
       )}
