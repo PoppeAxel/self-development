@@ -97,10 +97,12 @@ export function Today() {
     }
 
     // Auto-complete any task whose linked metric has reached its target today.
+    // No target means done/not-done — any nonzero synced value counts as complete.
     const toAutoComplete = allTasks.filter((t) => {
-      if (!isAutoMetric(t.auto_metric) || t.auto_metric_target == null || completed.has(t.id)) return false
+      if (!isAutoMetric(t.auto_metric) || completed.has(t.id)) return false
       const value = todaysMetrics.get(t.auto_metric)
-      return value != null && value >= t.auto_metric_target
+      if (value == null) return false
+      return t.auto_metric_target != null ? value >= t.auto_metric_target : value > 0
     })
     if (toAutoComplete.length > 0) {
       const {
@@ -581,11 +583,17 @@ export function Today() {
                   value={newAutoMetricTarget}
                   onChange={(e) => setNewAutoMetricTarget(e.target.value)}
                   type="number"
-                  placeholder={`Target, e.g. 10000 ${METRIC_INFO[newAutoMetric as AutoMetric]?.unit ?? ''}`}
+                  placeholder={`Target (optional), e.g. 10000 ${METRIC_INFO[newAutoMetric as AutoMetric]?.unit ?? ''}`}
                   className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
                 />
               )}
             </div>
+            {newAutoMetric && !newAutoMetricTarget && (
+              <p className="text-xs text-gray-400">
+                No target set — this task auto-completes as soon as any {METRIC_INFO[newAutoMetric as AutoMetric].label.toLowerCase()} is
+                logged today.
+              </p>
+            )}
             <div className="flex gap-2 rounded-2xl bg-gray-100 p-1">
               <button
                 type="button"

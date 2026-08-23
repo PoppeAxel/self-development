@@ -42,6 +42,14 @@ interface WeeklyWeight {
   entries: number
 }
 
+interface WeeklySteps {
+  weekStart: string
+  avg: number
+  min: number
+  max: number
+  days: number
+}
+
 function WeightChart({ data, goalWeight, height }: { data: { date: string; value: number }[]; goalWeight: number | null; height: number }) {
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -97,7 +105,19 @@ function StepsChart({ data, stepGoal, height }: { data: { date: string; value: n
   )
 }
 
-function WorkoutsChart({ data, color, height }: { data: { date: string; minutes: number }[]; color: string; height: number }) {
+function WorkoutsChart({
+  data,
+  color,
+  height,
+  unit,
+  decimals = 0,
+}: {
+  data: { date: string; value: number }[]
+  color: string
+  height: number
+  unit: string
+  decimals?: number
+}) {
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
@@ -106,22 +126,34 @@ function WorkoutsChart({ data, color, height }: { data: { date: string; minutes:
         <YAxis stroke="#9ca3af" fontSize={11} />
         <Tooltip
           contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }}
-          formatter={(value) => [`${value} min`, 'Trained']}
+          formatter={(value) => [`${Number(value).toFixed(decimals)} ${unit}`, 'Trained']}
         />
-        <Bar dataKey="minutes" fill={color} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+        <Bar dataKey="value" fill={color} radius={[4, 4, 0, 0]} isAnimationActive={false} />
       </BarChart>
     </ResponsiveContainer>
   )
 }
 
-function weeklyMinutes(workouts: Workout[]): { date: string; minutes: number }[] {
+function weeklyMinutes(workouts: Workout[]): { date: string; value: number }[] {
   const byWeek = new Map<string, number>()
   for (const w of workouts) {
     const wk = weekStartISO(parseISO(w.date))
     byWeek.set(wk, (byWeek.get(wk) ?? 0) + Math.round(w.duration_seconds / 60))
   }
   return [...byWeek.entries()]
-    .map(([weekStart, minutes]) => ({ date: weekStart.slice(5), minutes }))
+    .map(([weekStart, value]) => ({ date: weekStart.slice(5), value }))
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-12)
+}
+
+function weeklyDistanceKm(workouts: Workout[]): { date: string; value: number }[] {
+  const byWeek = new Map<string, number>()
+  for (const w of workouts) {
+    const wk = weekStartISO(parseISO(w.date))
+    byWeek.set(wk, (byWeek.get(wk) ?? 0) + (w.distance_meters ?? 0) / 1000)
+  }
+  return [...byWeek.entries()]
+    .map(([weekStart, value]) => ({ date: weekStart.slice(5), value }))
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(-12)
 }
@@ -313,9 +345,41 @@ export function Journal() {
     if (movingTowardGoal) weeksToGoal = Math.abs(distanceToGoal / weightTrendPerWeek)
   }
 
+  // Steps grouped into Mon–Sun weeks, ascending for trend math.
+  const stepsByWeek = new Map<string, number[]>()
+  for (const e of entries) {
+    if (e.type !== 'steps' || e.value_numeric == null) continue
+    const wk = weekStartISO(parseISO(e.date))
+    const arr = stepsByWeek.get(wk) ?? []
+    arr.push(e.value_numeric)
+    stepsByWeek.set(wk, arr)
+  }
+  const weeklyStepsAsc: WeeklySteps[] = [...stepsByWeek.entries()]
+    .map(([weekStart, values]) => ({
+      weekStart,
+      avg: values.reduce((a, b) => a + b, 0) / values.length,
+      min: Math.min(...values),
+      max: Math.max(...values),
+      days: values.length,
+    }))
+    .sort((a, b) => a.weekStart.localeCompare(b.weekStart))
+  const weeklySteps = [...weeklyStepsAsc].reverse().slice(0, 12)
+
+  const currentStepsWeek = weeklyStepsAsc[weeklyStepsAsc.length - 1] ?? null
+  const previousStepsWeek = weeklyStepsAsc[weeklyStepsAsc.length - 2] ?? null
+  const weekStepsChange = currentStepsWeek && previousStepsWeek ? currentStepsWeek.avg - previousStepsWeek.avg : null
+
+  // Trend: average week-over-week change across the last few completed weeks.
+  const recentStepsWeeks = weeklyStepsAsc.slice(-5)
+  const stepsDiffs: number[] = []
+  for (let i = 1; i < recentStepsWeeks.length; i++) {
+    stepsDiffs.push(recentStepsWeeks[i].avg - recentStepsWeeks[i - 1].avg)
+  }
+  const stepsTrendPerWeek = stepsDiffs.length > 0 ? stepsDiffs.reduce((a, b) => a + b, 0) / stepsDiffs.length : null
+
   const cardioWorkouts = workouts.filter((w) => !isStrengthWorkout(w.sport_type))
   const strengthWorkouts = workouts.filter((w) => isStrengthWorkout(w.sport_type))
-  const weeklyCardioMinutes = weeklyMinutes(cardioWorkouts)
+  const weeklyCardioDistance = weeklyDistanceKm(cardioWorkouts)
   const weeklyStrengthMinutes = weeklyMinutes(strengthWorkouts)
   const recentCardioWorkouts = [...cardioWorkouts].reverse().slice(0, 20)
   const recentStrengthWorkouts = [...strengthWorkouts].reverse().slice(0, 20)
@@ -637,6 +701,44 @@ export function Journal() {
         </div>
       )}
 
+      {tab === 'steps' && weekStepsChange !== null && currentStepsWeek && (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+            <p className="text-xs text-gray-400">This week</p>
+            <p className="text-lg font-bold text-gray-900">{Math.round(currentStepsWeek.avg).toLocaleString()}</p>
+            <p
+              className={`text-sm font-semibold ${
+                weekStepsChange > 0 ? 'text-emerald-500' : weekStepsChange < 0 ? 'text-red-500' : 'text-gray-400'
+              }`}
+            >
+              {weekStepsChange > 0 ? '+' : ''}
+              {Math.round(weekStepsChange).toLocaleString()} vs last week
+            </p>
+          </div>
+          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+            <p className="text-xs text-gray-400">Trend</p>
+            <p
+              className={`text-lg font-bold ${
+                stepsTrendPerWeek == null || Math.round(stepsTrendPerWeek) === 0
+                  ? 'text-gray-900'
+                  : stepsTrendPerWeek > 0
+                    ? 'text-emerald-500'
+                    : 'text-red-500'
+              }`}
+            >
+              {stepsTrendPerWeek == null ? (
+                '—'
+              ) : (
+                <>
+                  {stepsTrendPerWeek > 0 ? '↗' : stepsTrendPerWeek < 0 ? '↘' : '→'} {Math.round(Math.abs(stepsTrendPerWeek)).toLocaleString()}
+                  /wk
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+      )}
+
       {tab === 'steps' && stepsSeries.length > 1 && (
         <button
           onClick={() => setStepsExpanded(true)}
@@ -660,12 +762,58 @@ export function Journal() {
         </div>
       )}
 
-      {tab === 'cardio' && weeklyCardioMinutes.length > 1 && (
+      {tab === 'steps' && weeklySteps.length > 0 && (
+        <div>
+          <h2 className="mb-2 text-sm font-semibold text-gray-500">Weekly average</h2>
+          <ul className="flex flex-col gap-2">
+            {weeklySteps.map((week, i) => {
+              const prev = weeklySteps[i + 1]
+              const change = prev ? week.avg - prev.avg : null
+              const metGoal = stepGoal != null && week.avg >= stepGoal
+              return (
+                <li key={week.weekStart} className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-500">Week of {week.weekStart}</span>
+                    <span className="flex items-center gap-2">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                          stepGoal != null
+                            ? metGoal
+                              ? 'bg-emerald-100 text-emerald-600'
+                              : 'bg-amber-100 text-amber-600'
+                            : 'bg-gray-100 text-gray-600'
+                        }`}
+                      >
+                        {Math.round(week.avg).toLocaleString()} avg
+                      </span>
+                      {change !== null && (
+                        <span
+                          className={`text-xs font-medium ${
+                            change > 0 ? 'text-emerald-500' : change < 0 ? 'text-red-500' : 'text-gray-400'
+                          }`}
+                        >
+                          {change > 0 ? '+' : ''}
+                          {Math.round(change).toLocaleString()}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-400">
+                    {week.min.toLocaleString()} – {week.max.toLocaleString()} · {week.days} day{week.days === 1 ? '' : 's'} logged
+                  </p>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+
+      {tab === 'cardio' && weeklyCardioDistance.length > 1 && (
         <button
           onClick={() => setCardioExpanded(true)}
           className="block w-full rounded-3xl border border-gray-100 bg-white p-2 text-left shadow-sm"
         >
-          <WorkoutsChart data={weeklyCardioMinutes} color="#f97316" height={192} />
+          <WorkoutsChart data={weeklyCardioDistance} color="#f97316" height={192} unit="km" decimals={1} />
         </button>
       )}
 
@@ -678,7 +826,7 @@ export function Journal() {
             </button>
           </div>
           <div className="flex-1 px-2 pb-4">
-            <WorkoutsChart data={weeklyCardioMinutes} color="#f97316" height={window.innerHeight - 120} />
+            <WorkoutsChart data={weeklyCardioDistance} color="#f97316" height={window.innerHeight - 120} unit="km" decimals={1} />
           </div>
         </div>
       )}
@@ -688,7 +836,7 @@ export function Journal() {
           onClick={() => setStrengthExpanded(true)}
           className="block w-full rounded-3xl border border-gray-100 bg-white p-2 text-left shadow-sm"
         >
-          <WorkoutsChart data={weeklyStrengthMinutes} color="#e11d48" height={192} />
+          <WorkoutsChart data={weeklyStrengthMinutes} color="#e11d48" height={192} unit="min" />
         </button>
       )}
 
@@ -704,7 +852,7 @@ export function Journal() {
             </button>
           </div>
           <div className="flex-1 px-2 pb-4">
-            <WorkoutsChart data={weeklyStrengthMinutes} color="#e11d48" height={window.innerHeight - 120} />
+            <WorkoutsChart data={weeklyStrengthMinutes} color="#e11d48" height={window.innerHeight - 120} unit="min" />
           </div>
         </div>
       )}
