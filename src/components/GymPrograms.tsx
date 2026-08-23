@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
 import { formatWorkoutDuration } from '../lib/workouts'
+import { ConfirmDialog } from './ConfirmDialog'
 import type { GymProgram, GymProgramExercise, GymSession, GymSessionSet, Workout } from '../lib/types'
 
 interface ExerciseRow {
@@ -33,6 +34,8 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
   const [setsBySession, setSetsBySession] = useState<Map<string, GymSessionSet[]>>(new Map())
   const [loading, setLoading] = useState(true)
   const [linkingSessionId, setLinkingSessionId] = useState<string | null>(null)
+  const [confirmDeleteProgram, setConfirmDeleteProgram] = useState<GymProgram | null>(null)
+  const [confirmDeleteSession, setConfirmDeleteSession] = useState<GymSession | null>(null)
 
   const [builderOpen, setBuilderOpen] = useState(false)
   const [programName, setProgramName] = useState('')
@@ -202,7 +205,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                     {exercises.length} exercise{exercises.length === 1 ? '' : 's'} — tap to log
                   </p>
                 </button>
-                <button onClick={() => deleteProgram(program)} className="pl-3 text-gray-300">
+                <button onClick={() => setConfirmDeleteProgram(program)} className="pl-3 text-gray-300">
                   ✕
                 </button>
               </div>
@@ -235,7 +238,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                     <span className="text-sm font-medium text-gray-900">{session.program_name ?? 'Session'}</span>
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] text-gray-400">{session.date}</span>
-                      <button onClick={() => deleteSession(session)} className="text-gray-300">
+                      <button onClick={() => setConfirmDeleteSession(session)} className="text-gray-300">
                         ✕
                       </button>
                     </div>
@@ -452,6 +455,30 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmDeleteProgram !== null}
+        title={`Remove "${confirmDeleteProgram?.name ?? ''}"?`}
+        message="This deletes the program and its exercise list. Logged sessions are kept."
+        confirmLabel="Remove"
+        onConfirm={() => {
+          if (confirmDeleteProgram) deleteProgram(confirmDeleteProgram)
+          setConfirmDeleteProgram(null)
+        }}
+        onCancel={() => setConfirmDeleteProgram(null)}
+      />
+
+      <ConfirmDialog
+        open={confirmDeleteSession !== null}
+        title="Remove this session?"
+        message="This deletes the logged sets for this session. It can't be undone."
+        confirmLabel="Remove"
+        onConfirm={() => {
+          if (confirmDeleteSession) deleteSession(confirmDeleteSession)
+          setConfirmDeleteSession(null)
+        }}
+        onCancel={() => setConfirmDeleteSession(null)}
+      />
     </div>
   )
 }

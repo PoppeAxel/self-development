@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import { todayISO, weekStartISO } from '../lib/dates'
 import { RefreshButton } from '../components/RefreshButton'
 import { GymPrograms } from '../components/GymPrograms'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
 import { formatWorkoutDuration, formatWorkoutDistance, isStrengthWorkout, getSportStyle } from '../lib/workouts'
 import type { JournalEntry, JournalEntryType, Workout } from '../lib/types'
@@ -24,6 +25,11 @@ const TAB_LABELS: Record<JournalTab, string> = {
   steps: 'Steps',
   cardio: 'Cardio',
   strength: 'Strength',
+}
+const ENTRY_TYPE_LABELS: Partial<Record<JournalEntryType, string>> = {
+  weight: 'weight entry',
+  sleep_hours: 'sleep entry',
+  steps: 'steps entry',
 }
 
 interface WeeklySleep {
@@ -158,8 +164,13 @@ interface WeeklyCardioWeek {
   bySport: Record<string, number>
 }
 
+interface ChartRow {
+  date: string
+  [sportType: string]: number | string
+}
+
 interface WeeklyDistanceBySport {
-  chartData: (Record<string, number> & { date: string })[]
+  chartData: ChartRow[]
   sportTypes: string[]
   weeks: WeeklyCardioWeek[] // ascending, same 12-week window as chartData
 }
@@ -181,7 +192,11 @@ function weeklyDistanceBySport(workouts: Workout[]): WeeklyDistanceBySport {
     const total = Object.values(bySport).reduce((a, b) => a + b, 0)
     return { weekStart, total, bySport }
   })
-  const chartData = weeks.map(({ weekStart, bySport }) => ({ date: weekStart.slice(5), ...bySport }))
+  const chartData: ChartRow[] = weeks.map(({ weekStart, bySport }) => {
+    const row: ChartRow = { date: weekStart.slice(5) }
+    for (const [sportType, km] of Object.entries(bySport)) row[sportType] = km
+    return row
+  })
   return { chartData, sportTypes: [...sportTypes].sort(), weeks }
 }
 
@@ -226,6 +241,8 @@ export function Journal() {
   const [cardioExpanded, setCardioExpanded] = useState(false)
   const [strengthExpanded, setStrengthExpanded] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  const [confirmDeleteEntry, setConfirmDeleteEntry] = useState<JournalEntry | null>(null)
+  const [confirmDeleteWorkout, setConfirmDeleteWorkout] = useState<Workout | null>(null)
 
   useEffect(() => {
     setShowHistory(false)
@@ -1134,7 +1151,7 @@ export function Journal() {
                             {workout.calories != null && ` · ${workout.calories} cal`}
                           </span>
                         </span>
-                        <button onClick={() => removeWorkout(workout)} className="text-gray-300">
+                        <button onClick={() => setConfirmDeleteWorkout(workout)} className="text-gray-300">
                           ✕
                         </button>
                       </li>
@@ -1160,7 +1177,7 @@ export function Journal() {
                   {entry.type === 'sleep_hours' && entry.value_numeric != null && `${formatSleepDuration(entry.value_numeric)} slept`}
                   {entry.type === 'steps' && entry.value_numeric != null && `${entry.value_numeric.toLocaleString()} steps`}
                 </span>
-                <button onClick={() => remove(entry)} className="text-gray-300">
+                <button onClick={() => setConfirmDeleteEntry(entry)} className="text-gray-300">
                   ✕
                 </button>
               </li>
@@ -1168,6 +1185,29 @@ export function Journal() {
           </ul>
         </>
       ))}
+
+      <ConfirmDialog
+        open={confirmDeleteEntry !== null}
+        title={`Remove this ${confirmDeleteEntry ? ENTRY_TYPE_LABELS[confirmDeleteEntry.type] ?? 'entry' : 'entry'}?`}
+        confirmLabel="Remove"
+        onConfirm={() => {
+          if (confirmDeleteEntry) remove(confirmDeleteEntry)
+          setConfirmDeleteEntry(null)
+        }}
+        onCancel={() => setConfirmDeleteEntry(null)}
+      />
+
+      <ConfirmDialog
+        open={confirmDeleteWorkout !== null}
+        title={`Remove "${confirmDeleteWorkout?.name ?? ''}"?`}
+        message="This removes the synced Strava workout from your log."
+        confirmLabel="Remove"
+        onConfirm={() => {
+          if (confirmDeleteWorkout) removeWorkout(confirmDeleteWorkout)
+          setConfirmDeleteWorkout(null)
+        }}
+        onCancel={() => setConfirmDeleteWorkout(null)}
+      />
     </div>
   )
 }
