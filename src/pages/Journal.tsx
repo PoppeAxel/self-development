@@ -6,7 +6,7 @@ import { todayISO, weekStartISO } from '../lib/dates'
 import { RefreshButton } from '../components/RefreshButton'
 import { GymPrograms } from '../components/GymPrograms'
 import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
-import { formatWorkoutDuration, formatWorkoutDistance, isStrengthWorkout } from '../lib/workouts'
+import { formatWorkoutDuration, formatWorkoutDistance, isStrengthWorkout, getSportStyle } from '../lib/workouts'
 import type { JournalEntry, JournalEntryType, Workout } from '../lib/types'
 
 // steps/cardio/strength have no manual-entry form (synced from Garmin/Strava) but still
@@ -134,28 +134,81 @@ function WorkoutsChart({
   )
 }
 
-function weeklyMinutes(workouts: Workout[]): { date: string; value: number }[] {
+interface WeeklyMinutes {
+  weekStart: string
+  date: string
+  value: number
+}
+
+function weeklyMinutes(workouts: Workout[]): WeeklyMinutes[] {
   const byWeek = new Map<string, number>()
   for (const w of workouts) {
     const wk = weekStartISO(parseISO(w.date))
     byWeek.set(wk, (byWeek.get(wk) ?? 0) + Math.round(w.duration_seconds / 60))
   }
   return [...byWeek.entries()]
-    .map(([weekStart, value]) => ({ date: weekStart.slice(5), value }))
-    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(([weekStart, value]) => ({ weekStart, date: weekStart.slice(5), value }))
+    .sort((a, b) => a.weekStart.localeCompare(b.weekStart))
     .slice(-12)
 }
 
-function weeklyDistanceKm(workouts: Workout[]): { date: string; value: number }[] {
-  const byWeek = new Map<string, number>()
+interface WeeklyCardioWeek {
+  weekStart: string
+  total: number
+  bySport: Record<string, number>
+}
+
+interface WeeklyDistanceBySport {
+  chartData: (Record<string, number> & { date: string })[]
+  sportTypes: string[]
+  weeks: WeeklyCardioWeek[] // ascending, same 12-week window as chartData
+}
+
+// Weekly km, broken down per Strava sport_type, for the stacked Cardio chart and stats.
+function weeklyDistanceBySport(workouts: Workout[]): WeeklyDistanceBySport {
+  const byWeek = new Map<string, Record<string, number>>()
+  const sportTypes = new Set<string>()
   for (const w of workouts) {
     const wk = weekStartISO(parseISO(w.date))
-    byWeek.set(wk, (byWeek.get(wk) ?? 0) + (w.distance_meters ?? 0) / 1000)
+    const bucket = byWeek.get(wk) ?? {}
+    bucket[w.sport_type] = (bucket[w.sport_type] ?? 0) + (w.distance_meters ?? 0) / 1000
+    byWeek.set(wk, bucket)
+    sportTypes.add(w.sport_type)
   }
-  return [...byWeek.entries()]
-    .map(([weekStart, value]) => ({ date: weekStart.slice(5), value }))
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(-12)
+  const weekStarts = [...byWeek.keys()].sort().slice(-12)
+  const weeks: WeeklyCardioWeek[] = weekStarts.map((weekStart) => {
+    const bySport = byWeek.get(weekStart)!
+    const total = Object.values(bySport).reduce((a, b) => a + b, 0)
+    return { weekStart, total, bySport }
+  })
+  const chartData = weeks.map(({ weekStart, bySport }) => ({ date: weekStart.slice(5), ...bySport }))
+  return { chartData, sportTypes: [...sportTypes].sort(), weeks }
+}
+
+function CardioChart({ data, sportTypes, height }: { data: WeeklyDistanceBySport['chartData']; sportTypes: string[]; height: number }) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
+        <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
+        <YAxis stroke="#9ca3af" fontSize={11} />
+        <Tooltip
+          contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }}
+          formatter={(value, name) => [`${Number(value).toFixed(1)} km`, getSportStyle(String(name)).label]}
+        />
+        {sportTypes.map((sportType, i) => (
+          <Bar
+            key={sportType}
+            dataKey={sportType}
+            stackId="cardio"
+            fill={getSportStyle(sportType).color}
+            radius={i === sportTypes.length - 1 ? [4, 4, 0, 0] : undefined}
+            isAnimationActive={false}
+          />
+        ))}
+      </BarChart>
+    </ResponsiveContainer>
+  )
 }
 
 export function Journal() {
@@ -379,10 +432,32 @@ export function Journal() {
 
   const cardioWorkouts = workouts.filter((w) => !isStrengthWorkout(w.sport_type))
   const strengthWorkouts = workouts.filter((w) => isStrengthWorkout(w.sport_type))
-  const weeklyCardioDistance = weeklyDistanceKm(cardioWorkouts)
+  const weeklyCardioDistance = weeklyDistanceBySport(cardioWorkouts)
   const weeklyStrengthMinutes = weeklyMinutes(strengthWorkouts)
   const recentCardioWorkouts = [...cardioWorkouts].reverse().slice(0, 20)
   const recentStrengthWorkouts = [...strengthWorkouts].reverse().slice(0, 20)
+
+  const currentCardioWeek = weeklyCardioDistance.weeks[weeklyCardioDistance.weeks.length - 1] ?? null
+  const previousCardioWeek = weeklyCardioDistance.weeks[weeklyCardioDistance.weeks.length - 2] ?? null
+  const weekCardioChange = currentCardioWeek && previousCardioWeek ? currentCardioWeek.total - previousCardioWeek.total : null
+  const recentCardioWeeksForTrend = weeklyCardioDistance.weeks.slice(-5)
+  const cardioDiffs: number[] = []
+  for (let i = 1; i < recentCardioWeeksForTrend.length; i++) {
+    cardioDiffs.push(recentCardioWeeksForTrend[i].total - recentCardioWeeksForTrend[i - 1].total)
+  }
+  const cardioTrendPerWeek = cardioDiffs.length > 0 ? cardioDiffs.reduce((a, b) => a + b, 0) / cardioDiffs.length : null
+  const cardioWeeksDesc = [...weeklyCardioDistance.weeks].reverse()
+
+  const currentStrengthWeek = weeklyStrengthMinutes[weeklyStrengthMinutes.length - 1] ?? null
+  const previousStrengthWeek = weeklyStrengthMinutes[weeklyStrengthMinutes.length - 2] ?? null
+  const weekStrengthChange = currentStrengthWeek && previousStrengthWeek ? currentStrengthWeek.value - previousStrengthWeek.value : null
+  const recentStrengthWeeksForTrend = weeklyStrengthMinutes.slice(-5)
+  const strengthDiffs: number[] = []
+  for (let i = 1; i < recentStrengthWeeksForTrend.length; i++) {
+    strengthDiffs.push(recentStrengthWeeksForTrend[i].value - recentStrengthWeeksForTrend[i - 1].value)
+  }
+  const strengthTrendPerWeek = strengthDiffs.length > 0 ? strengthDiffs.reduce((a, b) => a + b, 0) / strengthDiffs.length : null
+  const strengthWeeksDesc = [...weeklyStrengthMinutes].reverse()
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
@@ -808,13 +883,60 @@ export function Journal() {
         </div>
       )}
 
-      {tab === 'cardio' && weeklyCardioDistance.length > 1 && (
-        <button
-          onClick={() => setCardioExpanded(true)}
-          className="block w-full rounded-3xl border border-gray-100 bg-white p-2 text-left shadow-sm"
-        >
-          <WorkoutsChart data={weeklyCardioDistance} color="#f97316" height={192} unit="km" decimals={1} />
-        </button>
+      {tab === 'cardio' && weekCardioChange !== null && currentCardioWeek && (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+            <p className="text-xs text-gray-400">This week</p>
+            <p className="text-lg font-bold text-gray-900">{currentCardioWeek.total.toFixed(1)} km</p>
+            <p
+              className={`text-sm font-semibold ${
+                weekCardioChange > 0 ? 'text-emerald-500' : weekCardioChange < 0 ? 'text-red-500' : 'text-gray-400'
+              }`}
+            >
+              {weekCardioChange > 0 ? '+' : ''}
+              {weekCardioChange.toFixed(1)} km vs last week
+            </p>
+          </div>
+          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+            <p className="text-xs text-gray-400">Trend</p>
+            <p
+              className={`text-lg font-bold ${
+                cardioTrendPerWeek == null || Math.abs(cardioTrendPerWeek) < 0.05
+                  ? 'text-gray-900'
+                  : cardioTrendPerWeek > 0
+                    ? 'text-emerald-500'
+                    : 'text-red-500'
+              }`}
+            >
+              {cardioTrendPerWeek == null ? (
+                '—'
+              ) : (
+                <>
+                  {cardioTrendPerWeek > 0 ? '↗' : cardioTrendPerWeek < 0 ? '↘' : '→'} {Math.abs(cardioTrendPerWeek).toFixed(1)} km/wk
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {tab === 'cardio' && weeklyCardioDistance.chartData.length > 1 && (
+        <div className="rounded-3xl border border-gray-100 bg-white p-2 shadow-sm">
+          <button onClick={() => setCardioExpanded(true)} className="block w-full text-left">
+            <CardioChart data={weeklyCardioDistance.chartData} sportTypes={weeklyCardioDistance.sportTypes} height={192} />
+          </button>
+          <div className="flex flex-wrap gap-2 px-2 pb-1">
+            {weeklyCardioDistance.sportTypes.map((sportType) => {
+              const style = getSportStyle(sportType)
+              return (
+                <span key={sportType} className="flex items-center gap-1 rounded-full bg-gray-50 px-2 py-1 text-xs text-gray-600">
+                  <span aria-hidden>{style.icon}</span>
+                  {style.label}
+                </span>
+              )
+            })}
+          </div>
+        </div>
       )}
 
       {cardioExpanded && (
@@ -826,7 +948,94 @@ export function Journal() {
             </button>
           </div>
           <div className="flex-1 px-2 pb-4">
-            <WorkoutsChart data={weeklyCardioDistance} color="#f97316" height={window.innerHeight - 120} unit="km" decimals={1} />
+            <CardioChart data={weeklyCardioDistance.chartData} sportTypes={weeklyCardioDistance.sportTypes} height={window.innerHeight - 160} />
+            <div className="flex flex-wrap gap-2 px-2 pt-2">
+              {weeklyCardioDistance.sportTypes.map((sportType) => {
+                const style = getSportStyle(sportType)
+                return (
+                  <span key={sportType} className="flex items-center gap-1 rounded-full bg-gray-50 px-2 py-1 text-xs text-gray-600">
+                    <span aria-hidden>{style.icon}</span>
+                    {style.label}
+                  </span>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'cardio' && cardioWeeksDesc.length > 0 && (
+        <div>
+          <h2 className="mb-2 text-sm font-semibold text-gray-500">Weekly total</h2>
+          <ul className="flex flex-col gap-2">
+            {cardioWeeksDesc.map((week, i) => {
+              const prev = cardioWeeksDesc[i + 1]
+              const change = prev ? week.total - prev.total : null
+              return (
+                <li key={week.weekStart} className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-500">Week of {week.weekStart}</span>
+                    <span className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-gray-900">{week.total.toFixed(1)} km</span>
+                      {change !== null && (
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                            change > 0 ? 'bg-emerald-100 text-emerald-600' : change < 0 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-500'
+                          }`}
+                        >
+                          {change > 0 ? '+' : ''}
+                          {change.toFixed(1)} km
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <p className="mt-1 flex flex-wrap gap-x-3 text-sm text-gray-400">
+                    {Object.entries(week.bySport).map(([sportType, km]) => (
+                      <span key={sportType}>
+                        {getSportStyle(sportType).icon} {km.toFixed(1)} km
+                      </span>
+                    ))}
+                  </p>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+
+      {tab === 'strength' && weekStrengthChange !== null && currentStrengthWeek && (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+            <p className="text-xs text-gray-400">This week</p>
+            <p className="text-lg font-bold text-gray-900">{formatWorkoutDuration(currentStrengthWeek.value * 60)}</p>
+            <p
+              className={`text-sm font-semibold ${
+                weekStrengthChange > 0 ? 'text-emerald-500' : weekStrengthChange < 0 ? 'text-red-500' : 'text-gray-400'
+              }`}
+            >
+              {weekStrengthChange > 0 ? '+' : ''}
+              {Math.round(weekStrengthChange)} min vs last week
+            </p>
+          </div>
+          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+            <p className="text-xs text-gray-400">Trend</p>
+            <p
+              className={`text-lg font-bold ${
+                strengthTrendPerWeek == null || Math.round(strengthTrendPerWeek) === 0
+                  ? 'text-gray-900'
+                  : strengthTrendPerWeek > 0
+                    ? 'text-emerald-500'
+                    : 'text-red-500'
+              }`}
+            >
+              {strengthTrendPerWeek == null ? (
+                '—'
+              ) : (
+                <>
+                  {strengthTrendPerWeek > 0 ? '↗' : strengthTrendPerWeek < 0 ? '↘' : '→'} {Math.round(Math.abs(strengthTrendPerWeek))} min/wk
+                </>
+              )}
+            </p>
           </div>
         </div>
       )}
@@ -854,6 +1063,38 @@ export function Journal() {
           <div className="flex-1 px-2 pb-4">
             <WorkoutsChart data={weeklyStrengthMinutes} color="#e11d48" height={window.innerHeight - 120} unit="min" />
           </div>
+        </div>
+      )}
+
+      {tab === 'strength' && strengthWeeksDesc.length > 0 && (
+        <div>
+          <h2 className="mb-2 text-sm font-semibold text-gray-500">Weekly total</h2>
+          <ul className="flex flex-col gap-2">
+            {strengthWeeksDesc.map((week, i) => {
+              const prev = strengthWeeksDesc[i + 1]
+              const change = prev ? week.value - prev.value : null
+              return (
+                <li key={week.weekStart} className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-500">Week of {week.weekStart}</span>
+                    <span className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-gray-900">{formatWorkoutDuration(week.value * 60)}</span>
+                      {change !== null && (
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                            change > 0 ? 'bg-emerald-100 text-emerald-600' : change < 0 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-500'
+                          }`}
+                        >
+                          {change > 0 ? '+' : ''}
+                          {Math.round(change)} min
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
         </div>
       )}
 
