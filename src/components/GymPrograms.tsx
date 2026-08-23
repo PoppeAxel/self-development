@@ -38,10 +38,12 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
   const [confirmDeleteSession, setConfirmDeleteSession] = useState<GymSession | null>(null)
 
   const [builderOpen, setBuilderOpen] = useState(false)
+  const [editingProgram, setEditingProgram] = useState<GymProgram | null>(null)
   const [programName, setProgramName] = useState('')
   const [exerciseRows, setExerciseRows] = useState<ExerciseRow[]>([emptyExerciseRow()])
 
   const [loggingProgram, setLoggingProgram] = useState<GymProgram | null>(null)
+  const [editingSession, setEditingSession] = useState<GymSession | null>(null)
   const [sessionDate, setSessionDate] = useState(todayISO())
   const [sessionRows, setSessionRows] = useState<SessionExerciseRow[]>([])
 
@@ -83,8 +85,21 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
   }, [])
 
   function openBuilder() {
+    setEditingProgram(null)
     setProgramName('')
     setExerciseRows([emptyExerciseRow()])
+    setBuilderOpen(true)
+  }
+
+  function openEditProgram(program: GymProgram) {
+    const exercises = (exercisesByProgram.get(program.id) ?? []).slice().sort((a, b) => a.position - b.position)
+    setEditingProgram(program)
+    setProgramName(program.name)
+    setExerciseRows(
+      exercises.length > 0
+        ? exercises.map((ex) => ({ name: ex.name, sets: String(ex.target_sets), reps: String(ex.target_reps) }))
+        : [emptyExerciseRow()],
+    )
     setBuilderOpen(true)
   }
 
@@ -98,21 +113,31 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
     } = await supabase.auth.getUser()
     if (!user) return
 
-    const { data: program, error } = await supabase.from('gym_programs').insert({ name, user_id: user.id }).select().single()
-    if (error || !program) return
-
-    await supabase.from('gym_program_exercises').insert(
+    const exercisePayload = (programId: string) =>
       validRows.map((r, i) => ({
-        program_id: program.id,
+        program_id: programId,
         user_id: user.id,
         name: r.name.trim(),
         target_sets: Number(r.sets) || 1,
         target_reps: Number(r.reps) || 1,
         position: i,
-      })),
-    )
+      }))
+
+    if (editingProgram) {
+      await supabase.from('gym_programs').update({ name }).eq('id', editingProgram.id)
+      // Simplest correct way to reconcile add/remove/rename/reorder: replace the whole
+      // exercise list. Sessions reference exercises by name snapshot, not FK, so this
+      // can't orphan or corrupt logged history.
+      await supabase.from('gym_program_exercises').delete().eq('program_id', editingProgram.id)
+      await supabase.from('gym_program_exercises').insert(exercisePayload(editingProgram.id))
+    } else {
+      const { data: program, error } = await supabase.from('gym_programs').insert({ name, user_id: user.id }).select().single()
+      if (error || !program) return
+      await supabase.from('gym_program_exercises').insert(exercisePayload(program.id))
+    }
 
     setBuilderOpen(false)
+    setEditingProgram(null)
     load()
   }
 
@@ -130,22 +155,69 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
       })),
     )
     setSessionDate(todayISO())
+    setEditingSession(null)
     setLoggingProgram(program)
   }
 
+  function openEditSession(session: GymSession) {
+    const program = session.program_id ? (programs.find((p) => p.id === session.program_id) ?? null) : null
+    const programExercises = program ? (exercisesByProgram.get(program.id) ?? []).slice().sort((a, b) => a.position - b.position) : []
+    const targetSetsByName = new Map(programExercises.map((ex) => [ex.name, ex.target_sets]))
+
+    const sets = setsBySession.get(session.id) ?? []
+    const byExercise = new Map<string, GymSessionSet[]>()
+    for (const s of sets) {
+      const arr = byExercise.get(s.exercise_name) ?? []
+      arr.push(s)
+      byExercise.set(s.exercise_name, arr)
+    }
+    // Show the program's current exercises (so you can log a missed one) plus any
+    // exercise names this session logged that the program no longer has.
+    const programNames = programExercises.map((ex) => ex.name)
+    const exerciseNames = [...programNames, ...[...byExercise.keys()].filter((n) => !programNames.includes(n))]
+
+    setSessionRows(
+      exerciseNames.map((name) => {
+        const existingSets = (byExercise.get(name) ?? []).slice().sort((a, b) => a.set_number - b.set_number)
+        const setCount = Math.max(targetSetsByName.get(name) ?? 0, existingSets.length, 1)
+        return {
+          exerciseName: name,
+          sets: Array.from({ length: setCount }, (_, i) => ({
+            reps: existingSets[i]?.reps != null ? String(existingSets[i].reps) : '',
+            weight: existingSets[i]?.weight != null ? String(existingSets[i].weight) : '',
+          })),
+        }
+      }),
+    )
+    setSessionDate(session.date)
+    setLoggingProgram(null)
+    setEditingSession(session)
+  }
+
   async function saveSession() {
-    if (!loggingProgram) return
+    if (!loggingProgram && !editingSession) return
     const {
       data: { user },
     } = await supabase.auth.getUser()
     if (!user) return
 
-    const { data: session, error } = await supabase
-      .from('gym_sessions')
-      .insert({ user_id: user.id, program_id: loggingProgram.id, program_name: loggingProgram.name, date: sessionDate })
-      .select()
-      .single()
-    if (error || !session) return
+    const sessionId = editingSession
+      ? editingSession.id
+      : await (async () => {
+          if (!loggingProgram) return null
+          const { data: session, error } = await supabase
+            .from('gym_sessions')
+            .insert({ user_id: user.id, program_id: loggingProgram.id, program_name: loggingProgram.name, date: sessionDate })
+            .select()
+            .single()
+          return error || !session ? null : session.id
+        })()
+    if (!sessionId) return
+
+    if (editingSession) {
+      await supabase.from('gym_sessions').update({ date: sessionDate }).eq('id', sessionId)
+      await supabase.from('gym_session_sets').delete().eq('session_id', sessionId)
+    }
 
     const setsToInsert = sessionRows.flatMap((row) =>
       row.sets
@@ -153,7 +225,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
         .filter((s) => s.reps || s.weight)
         .map((s) => ({
           user_id: user.id,
-          session_id: session.id,
+          session_id: sessionId,
           exercise_name: row.exerciseName,
           set_number: s.set_number,
           reps: s.reps ? Number(s.reps) : null,
@@ -163,6 +235,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
     if (setsToInsert.length > 0) await supabase.from('gym_session_sets').insert(setsToInsert)
 
     setLoggingProgram(null)
+    setEditingSession(null)
     load()
   }
 
@@ -205,7 +278,10 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                     {exercises.length} exercise{exercises.length === 1 ? '' : 's'} — tap to log
                   </p>
                 </button>
-                <button onClick={() => setConfirmDeleteProgram(program)} className="pl-3 text-gray-300">
+                <button onClick={() => openEditProgram(program)} className="pl-3 text-gray-300" aria-label="Edit program">
+                  ✎
+                </button>
+                <button onClick={() => setConfirmDeleteProgram(program)} className="pl-3 text-gray-300" aria-label="Remove program">
                   ✕
                 </button>
               </div>
@@ -238,7 +314,10 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                     <span className="text-sm font-medium text-gray-900">{session.program_name ?? 'Session'}</span>
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] text-gray-400">{session.date}</span>
-                      <button onClick={() => setConfirmDeleteSession(session)} className="text-gray-300">
+                      <button onClick={() => openEditSession(session)} className="text-gray-300" aria-label="Edit session">
+                        ✎
+                      </button>
+                      <button onClick={() => setConfirmDeleteSession(session)} className="text-gray-300" aria-label="Remove session">
                         ✕
                       </button>
                     </div>
@@ -319,9 +398,12 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
       {builderOpen && (
         <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
           <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-gray-900">New program</h2>
+            <h2 className="text-lg font-bold text-gray-900">{editingProgram ? 'Edit program' : 'New program'}</h2>
             <button
-              onClick={() => setBuilderOpen(false)}
+              onClick={() => {
+                setBuilderOpen(false)
+                setEditingProgram(null)
+              }}
               className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
             >
               Close ✕
@@ -382,18 +464,23 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
               + Add exercise
             </button>
             <button type="submit" className="mt-2 rounded-2xl bg-rose-600 px-4 py-2.5 font-semibold text-white">
-              Save program
+              {editingProgram ? 'Save changes' : 'Save program'}
             </button>
           </form>
         </div>
       )}
 
-      {loggingProgram && (
+      {(loggingProgram || editingSession) && (
         <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
           <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-gray-900">{loggingProgram.name}</h2>
+            <h2 className="text-lg font-bold text-gray-900">
+              {editingSession ? (editingSession.program_name ?? 'Session') : loggingProgram!.name}
+            </h2>
             <button
-              onClick={() => setLoggingProgram(null)}
+              onClick={() => {
+                setLoggingProgram(null)
+                setEditingSession(null)
+              }}
               className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
             >
               Close ✕
@@ -450,7 +537,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
               </div>
             ))}
             <button onClick={saveSession} className="mt-2 rounded-2xl bg-rose-600 px-4 py-2.5 font-semibold text-white">
-              Save session
+              {editingSession ? 'Save changes' : 'Save session'}
             </button>
           </div>
         </div>
