@@ -280,6 +280,44 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
     return points.sort((a, b) => a.date.localeCompare(b.date))
   }
 
+  // Rolling average sets/week per muscle group over the trailing window, so a single
+  // heavy or light week doesn't misrepresent how balanced training actually is. A set
+  // counts fully toward its exercise's primary muscle and at half weight toward its
+  // secondary muscle (the common convention for indirect stimulus, e.g. rows for biceps).
+  function muscleBalance(windowDays: number): { muscle: string; primaryPerWeek: number; secondaryPerWeek: number; totalPerWeek: number }[] {
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - windowDays)
+    const cutoffStr = cutoff.toISOString().slice(0, 10)
+    const totals = new Map<string, { primary: number; secondary: number }>()
+    for (const session of sessions) {
+      if (session.date < cutoffStr) continue
+      for (const s of setsBySession.get(session.id) ?? []) {
+        const ex = exerciseByName.get(s.exercise_name.toLowerCase())
+        if (!ex) continue
+        if (ex.primary_muscle) {
+          const t = totals.get(ex.primary_muscle) ?? { primary: 0, secondary: 0 }
+          t.primary += 1
+          totals.set(ex.primary_muscle, t)
+        }
+        if (ex.secondary_muscle) {
+          const t = totals.get(ex.secondary_muscle) ?? { primary: 0, secondary: 0 }
+          t.secondary += 1
+          totals.set(ex.secondary_muscle, t)
+        }
+      }
+    }
+    const weeks = windowDays / 7
+    return MUSCLE_GROUPS.map((muscle) => {
+      const t = totals.get(muscle) ?? { primary: 0, secondary: 0 }
+      return {
+        muscle,
+        primaryPerWeek: t.primary / weeks,
+        secondaryPerWeek: (t.secondary * 0.5) / weeks,
+        totalPerWeek: (t.primary + t.secondary * 0.5) / weeks,
+      }
+    }).sort((a, b) => b.totalPerWeek - a.totalPerWeek)
+  }
+
   function openLogSession(program: GymProgram) {
     const progExercises = (exercisesByProgram.get(program.id) ?? []).slice().sort((a, b) => a.position - b.position)
     setSessionRows(
@@ -422,6 +460,9 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
   const trackedLiftProgress = TRACKED_LIFTS.map((name) => ({ name, points: liftProgress(name) })).filter(
     (lift) => lift.points.length > 0,
   )
+  const muscleBalanceWindowDays = 28
+  const muscleBalanceData = muscleBalance(muscleBalanceWindowDays)
+  const muscleBalanceMax = Math.max(...muscleBalanceData.map((m) => m.totalPerWeek), 1)
 
   return (
     <div className="flex flex-col gap-3">
@@ -488,6 +529,31 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
           })}
         </div>
       )}
+
+      <div>
+        <h2 className="text-sm font-semibold text-gray-500">Muscle balance</h2>
+        <p className="mb-2 text-[11px] text-gray-400">
+          Avg sets/week, last {muscleBalanceWindowDays / 7} weeks · secondary muscles (lighter) count half a set
+        </p>
+        {muscleBalanceData.every((m) => m.totalPerWeek === 0) ? (
+          <p className="text-sm text-gray-400">Log some sessions with categorized exercises to see your balance across muscle groups.</p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {muscleBalanceData.map((m) => (
+              <div key={m.muscle} className="flex items-center gap-2">
+                <span className="w-24 shrink-0 text-xs text-gray-600">{m.muscle}</span>
+                <div className="h-4 flex-1 overflow-hidden rounded-full bg-gray-100">
+                  <div className="flex h-full">
+                    <div className="h-full bg-rose-500" style={{ width: `${(m.primaryPerWeek / muscleBalanceMax) * 100}%` }} />
+                    <div className="h-full bg-rose-200" style={{ width: `${(m.secondaryPerWeek / muscleBalanceMax) * 100}%` }} />
+                  </div>
+                </div>
+                <span className="w-10 shrink-0 text-right text-xs font-medium text-gray-700">{m.totalPerWeek.toFixed(1)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <button
         onClick={() => setProgramsOpen((o) => !o)}
