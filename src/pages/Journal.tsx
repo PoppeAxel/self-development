@@ -241,6 +241,7 @@ export function Journal() {
   const [cardioExpanded, setCardioExpanded] = useState(false)
   const [strengthExpanded, setStrengthExpanded] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  const [trainingTimeOpen, setTrainingTimeOpen] = useState(false)
   const [confirmDeleteEntry, setConfirmDeleteEntry] = useState<JournalEntry | null>(null)
   const [confirmDeleteWorkout, setConfirmDeleteWorkout] = useState<Workout | null>(null)
 
@@ -1020,7 +1021,17 @@ export function Journal() {
         </div>
       )}
 
-      {tab === 'strength' && weekStrengthChange !== null && currentStrengthWeek && (
+      {tab === 'strength' && (weekStrengthChange !== null || weeklyStrengthMinutes.length > 1 || strengthWeeksDesc.length > 0) && (
+        <button
+          onClick={() => setTrainingTimeOpen((o) => !o)}
+          className="flex items-center justify-between text-sm font-semibold text-gray-500"
+        >
+          <span>Training time</span>
+          <span className="text-gray-400">{trainingTimeOpen ? 'Hide ▲' : 'Show ▼'}</span>
+        </button>
+      )}
+
+      {tab === 'strength' && trainingTimeOpen && weekStrengthChange !== null && currentStrengthWeek && (
         <div className="grid grid-cols-2 gap-2">
           <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
             <p className="text-xs text-gray-400">This week</p>
@@ -1057,7 +1068,7 @@ export function Journal() {
         </div>
       )}
 
-      {tab === 'strength' && weeklyStrengthMinutes.length > 1 && (
+      {tab === 'strength' && trainingTimeOpen && weeklyStrengthMinutes.length > 1 && (
         <button
           onClick={() => setStrengthExpanded(true)}
           className="block w-full rounded-3xl border border-gray-100 bg-white p-2 text-left shadow-sm"
@@ -1083,7 +1094,7 @@ export function Journal() {
         </div>
       )}
 
-      {tab === 'strength' && strengthWeeksDesc.length > 0 && (
+      {tab === 'strength' && trainingTimeOpen && strengthWeeksDesc.length > 0 && (
         <div>
           <h2 className="mb-2 text-sm font-semibold text-gray-500">Weekly total</h2>
           <ul className="flex flex-col gap-2">

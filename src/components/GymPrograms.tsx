@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
 import { formatWorkoutDuration } from '../lib/workouts'
-import { MUSCLE_GROUPS } from '../lib/exercises'
+import { MUSCLE_GROUPS, TRACKED_LIFTS, estimatedOneRepMax, recentAverage, liftTrendPerWeek } from '../lib/exercises'
 import { ConfirmDialog } from './ConfirmDialog'
 import type { Exercise, GymProgram, GymProgramExercise, GymSession, GymSessionSet, Workout } from '../lib/types'
 
@@ -54,6 +55,16 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
   const [sessionRows, setSessionRows] = useState<SessionExerciseRow[]>([])
   const [substitutingSessionIndex, setSubstitutingSessionIndex] = useState<number | null>(null)
   const [substituteSessionQuery, setSubstituteSessionQuery] = useState('')
+
+  const [libraryOpen, setLibraryOpen] = useState(false)
+  const [exerciseFormOpen, setExerciseFormOpen] = useState(false)
+  const [editingExercise, setEditingExercise] = useState<Exercise | null>(null)
+  const [exerciseFormName, setExerciseFormName] = useState('')
+  const [exerciseFormPrimary, setExerciseFormPrimary] = useState('')
+  const [exerciseFormSecondary, setExerciseFormSecondary] = useState('')
+  const [confirmDeleteExercise, setConfirmDeleteExercise] = useState<Exercise | null>(null)
+  const [programsOpen, setProgramsOpen] = useState(false)
+  const [sessionsOpen, setSessionsOpen] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -186,6 +197,62 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
     await supabase.from('gym_programs').delete().eq('id', program.id)
   }
 
+  function openNewExercise() {
+    setEditingExercise(null)
+    setExerciseFormName('')
+    setExerciseFormPrimary('')
+    setExerciseFormSecondary('')
+    setExerciseFormOpen(true)
+  }
+
+  function openEditExercise(ex: Exercise) {
+    setEditingExercise(ex)
+    setExerciseFormName(ex.name)
+    setExerciseFormPrimary(ex.primary_muscle ?? '')
+    setExerciseFormSecondary(ex.secondary_muscle ?? '')
+    setExerciseFormOpen(true)
+  }
+
+  async function saveExerciseForm(e: React.FormEvent) {
+    e.preventDefault()
+    const name = exerciseFormName.trim()
+    if (!name) return
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+
+    if (editingExercise) {
+      await supabase
+        .from('exercises')
+        .update({ name, primary_muscle: exerciseFormPrimary || null, secondary_muscle: exerciseFormSecondary || null })
+        .eq('id', editingExercise.id)
+      // gym_program_exercises.name is denormalized for display, so a rename here
+      // needs to propagate to current programs — gym_session_sets.exercise_name is
+      // an intentional historical snapshot (same reasoning as program_name) and is
+      // left untouched.
+      if (name !== editingExercise.name) {
+        await supabase.from('gym_program_exercises').update({ name }).eq('exercise_id', editingExercise.id)
+      }
+    } else {
+      await supabase
+        .from('exercises')
+        .upsert(
+          { user_id: user.id, name, primary_muscle: exerciseFormPrimary || null, secondary_muscle: exerciseFormSecondary || null },
+          { onConflict: 'user_id,name' },
+        )
+    }
+
+    setExerciseFormOpen(false)
+    setEditingExercise(null)
+    load()
+  }
+
+  async function deleteExercise(ex: Exercise) {
+    setExercises((es) => es.filter((e) => e.id !== ex.id))
+    await supabase.from('exercises').delete().eq('id', ex.id)
+  }
+
   // Most recent logged sets for an exercise (by name, case-insensitive), searching
   // sessions newest-first — used to prefill "last time you did this" reps/weight.
   function lastLoggedSets(exerciseName: string): GymSessionSet[] | null {
@@ -195,6 +262,22 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
       if (sets.length > 0) return sets.slice().sort((a, b) => a.set_number - b.set_number)
     }
     return null
+  }
+
+  // Estimated 1-rep-max per session for a tracked lift, ascending by date — the best
+  // (highest e1RM) set that session, so different rep ranges stay comparable over time.
+  function liftProgress(exerciseName: string): { date: string; e1rm: number }[] {
+    const target = exerciseName.toLowerCase()
+    const points: { date: string; e1rm: number }[] = []
+    for (const session of sessions) {
+      const sets = (setsBySession.get(session.id) ?? []).filter(
+        (s) => s.exercise_name.toLowerCase() === target && s.weight != null && s.reps != null,
+      )
+      if (sets.length === 0) continue
+      const best = Math.max(...sets.map((s) => estimatedOneRepMax(s.weight as number, s.reps as number)))
+      points.push({ date: session.date, e1rm: Math.round(best * 10) / 10 })
+    }
+    return points.sort((a, b) => a.date.localeCompare(b.date))
   }
 
   function openLogSession(program: GymProgram) {
@@ -336,10 +419,84 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
   const linkedWorkoutIds = new Set(sessions.map((s) => s.strava_workout_id).filter((id): id is string => id != null))
   const exerciseByName = new Map(exercises.map((ex) => [ex.name.toLowerCase(), ex]))
 
+  const trackedLiftProgress = TRACKED_LIFTS.map((name) => ({ name, points: liftProgress(name) })).filter(
+    (lift) => lift.points.length > 0,
+  )
+
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="text-sm font-semibold text-gray-500">Your programs</h2>
-      {loading ? (
+      <h2 className="text-sm font-semibold text-gray-500">Lift progress</h2>
+      {trackedLiftProgress.length === 0 ? (
+        <p className="text-sm text-gray-400">
+          Log weight and reps for Squat, Bench press, Deadlift, or Military press (overhead press) to see your estimated 1-rep-max
+          trend here.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {trackedLiftProgress.map(({ name, points }) => {
+            // Averaging the last few sessions (rather than just the latest) keeps one
+            // off day — poor sleep, fatigue — from swinging the headline number, and the
+            // trend below is a regression across every session rather than two isolated
+            // points, for the same reason.
+            const windowSize = Math.min(3, points.length)
+            const current = recentAverage(points, windowSize)
+            const trend = liftTrendPerWeek(points)
+            return (
+              <div key={name} className="rounded-2xl border border-gray-100 bg-white p-3 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <p className="font-medium text-gray-900">{name}</p>
+                  <div className="text-right">
+                    <p className="text-sm font-bold text-gray-900">{current.toFixed(1)} kg e1RM</p>
+                    <p className="text-[11px] text-gray-400">
+                      {points.length > 1 ? `avg of last ${windowSize} session${windowSize === 1 ? '' : 's'}` : '1 session logged'}
+                    </p>
+                    {trend !== null ? (
+                      <p
+                        className={`text-xs font-semibold ${
+                          Math.abs(trend) < 0.05 ? 'text-gray-400' : trend > 0 ? 'text-emerald-500' : 'text-red-500'
+                        }`}
+                      >
+                        {trend > 0 ? '↗' : trend < 0 ? '↘' : '→'} {Math.abs(trend).toFixed(1)} kg/wk
+                      </p>
+                    ) : points.length < 3 ? (
+                      <p className="text-[11px] text-gray-400">
+                        Log {3 - points.length} more session{3 - points.length === 1 ? '' : 's'} for a trend
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-gray-400">Not enough date spread yet for a trend</p>
+                    )}
+                  </div>
+                </div>
+                {points.length > 1 && (
+                  <div className="mt-2 h-24">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={points} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
+                        <XAxis dataKey="date" stroke="#9ca3af" fontSize={10} tickFormatter={(d: string) => d.slice(5)} />
+                        <YAxis stroke="#9ca3af" fontSize={10} domain={['dataMin - 5', 'dataMax + 5']} width={32} />
+                        <Tooltip
+                          contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }}
+                          formatter={(value) => [`${value} kg`, 'e1RM']}
+                        />
+                        <Line type="monotone" dataKey="e1rm" stroke="#e11d48" strokeWidth={2.5} dot={{ r: 3, fill: '#e11d48' }} isAnimationActive={false} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <button
+        onClick={() => setProgramsOpen((o) => !o)}
+        className="flex items-center justify-between text-sm font-semibold text-gray-500"
+      >
+        <span>Your programs ({programs.length})</span>
+        <span className="text-gray-400">{programsOpen ? 'Hide ▲' : 'Show ▼'}</span>
+      </button>
+      {programsOpen && (loading ? (
         <p className="text-sm text-gray-400">Loading…</p>
       ) : (
         <div className="flex flex-col gap-2">
@@ -366,17 +523,27 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
             )
           })}
         </div>
-      )}
+      ))}
       <button
         onClick={openBuilder}
         className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-rose-600"
       >
         + New program
       </button>
+      <button onClick={() => setLibraryOpen(true)} className="text-sm font-medium text-gray-500">
+        📋 Exercise library ({exercises.length})
+      </button>
 
       {sessions.length > 0 && (
         <div className="mt-2">
-          <h2 className="mb-2 text-sm font-semibold text-gray-500">Recent sessions</h2>
+          <button
+            onClick={() => setSessionsOpen((o) => !o)}
+            className="mb-2 flex w-full items-center justify-between text-sm font-semibold text-gray-500"
+          >
+            <span>Recent sessions ({sessions.length})</span>
+            <span className="text-gray-400">{sessionsOpen ? 'Hide ▲' : 'Show ▼'}</span>
+          </button>
+          {sessionsOpen && (
           <ul className="flex flex-col gap-2">
             {sessions.map((session) => {
               const sets = setsBySession.get(session.id) ?? []
@@ -470,6 +637,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
               )
             })}
           </ul>
+          )}
         </div>
       )}
 
@@ -831,6 +999,110 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
           setConfirmDeleteSession(null)
         }}
         onCancel={() => setConfirmDeleteSession(null)}
+      />
+
+      {libraryOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+          <div className="flex items-center justify-between px-4 pt-4">
+            <h2 className="text-lg font-bold text-gray-900">Exercise library</h2>
+            <button onClick={() => setLibraryOpen(false)} className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600">
+              Close ✕
+            </button>
+          </div>
+          <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-4">
+            <button
+              onClick={openNewExercise}
+              className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-rose-600"
+            >
+              + New exercise
+            </button>
+            {exercises.length === 0 && <p className="text-sm text-gray-400">No exercises yet — add one above.</p>}
+            {[...MUSCLE_GROUPS, null].map((muscle) => {
+              const group = exercises.filter((ex) => (ex.primary_muscle ?? null) === muscle).sort((a, b) => a.name.localeCompare(b.name))
+              if (group.length === 0) return null
+              return (
+                <div key={muscle ?? 'uncategorized'}>
+                  <h3 className="mb-1 mt-2 text-xs font-semibold uppercase text-gray-400">{muscle ?? 'Uncategorized'}</h3>
+                  <div className="flex flex-col gap-2">
+                    {group.map((ex) => (
+                      <div key={ex.id} className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                        <button onClick={() => openEditExercise(ex)} className="flex-1 text-left">
+                          <p className="font-medium text-gray-900">{ex.name}</p>
+                          {ex.secondary_muscle && <p className="text-[11px] text-gray-400">+ {ex.secondary_muscle}</p>}
+                        </button>
+                        <button onClick={() => setConfirmDeleteExercise(ex)} className="pl-3 text-gray-300" aria-label="Remove exercise">
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {exerciseFormOpen && (
+            <div className="fixed inset-0 z-[60] flex flex-col bg-white safe-top safe-bottom">
+              <div className="flex items-center justify-between px-4 pt-4">
+                <h2 className="text-lg font-bold text-gray-900">{editingExercise ? 'Edit exercise' : 'New exercise'}</h2>
+                <button
+                  onClick={() => setExerciseFormOpen(false)}
+                  className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
+                >
+                  Close ✕
+                </button>
+              </div>
+              <form onSubmit={saveExerciseForm} className="flex flex-1 flex-col gap-2 p-4">
+                <input
+                  autoFocus
+                  value={exerciseFormName}
+                  onChange={(e) => setExerciseFormName(e.target.value)}
+                  placeholder="Exercise name, e.g. Hack Squat"
+                  className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+                />
+                <select
+                  value={exerciseFormPrimary}
+                  onChange={(e) => setExerciseFormPrimary(e.target.value)}
+                  className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-rose-400"
+                >
+                  <option value="">Primary muscle</option>
+                  {MUSCLE_GROUPS.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={exerciseFormSecondary}
+                  onChange={(e) => setExerciseFormSecondary(e.target.value)}
+                  className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-rose-400"
+                >
+                  <option value="">Secondary muscle (optional)</option>
+                  {MUSCLE_GROUPS.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+                <button type="submit" className="mt-2 rounded-2xl bg-rose-600 px-4 py-2.5 font-semibold text-white">
+                  {editingExercise ? 'Save changes' : 'Add exercise'}
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={confirmDeleteExercise !== null}
+        title={`Remove "${confirmDeleteExercise?.name ?? ''}" from your exercise library?`}
+        message="Programs using this exercise keep their name — they just won't be grouped under this catalog entry for swap suggestions anymore."
+        confirmLabel="Remove"
+        onConfirm={() => {
+          if (confirmDeleteExercise) deleteExercise(confirmDeleteExercise)
+          setConfirmDeleteExercise(null)
+        }}
+        onCancel={() => setConfirmDeleteExercise(null)}
       />
     </div>
   )
