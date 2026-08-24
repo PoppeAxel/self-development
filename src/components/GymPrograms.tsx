@@ -2,13 +2,16 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
 import { formatWorkoutDuration } from '../lib/workouts'
+import { MUSCLE_GROUPS } from '../lib/exercises'
 import { ConfirmDialog } from './ConfirmDialog'
-import type { GymProgram, GymProgramExercise, GymSession, GymSessionSet, Workout } from '../lib/types'
+import type { Exercise, GymProgram, GymProgramExercise, GymSession, GymSessionSet, Workout } from '../lib/types'
 
 interface ExerciseRow {
   name: string
   sets: string
   reps: string
+  primaryMuscle: string
+  secondaryMuscle: string
 }
 
 interface SessionExerciseRow {
@@ -17,7 +20,7 @@ interface SessionExerciseRow {
 }
 
 function emptyExerciseRow(): ExerciseRow {
-  return { name: '', sets: '3', reps: '10' }
+  return { name: '', sets: '3', reps: '10', primaryMuscle: '', secondaryMuscle: '' }
 }
 
 function summarizeSet(s: GymSessionSet): string {
@@ -36,11 +39,14 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
   const [linkingSessionId, setLinkingSessionId] = useState<string | null>(null)
   const [confirmDeleteProgram, setConfirmDeleteProgram] = useState<GymProgram | null>(null)
   const [confirmDeleteSession, setConfirmDeleteSession] = useState<GymSession | null>(null)
+  const [exercises, setExercises] = useState<Exercise[]>([])
 
   const [builderOpen, setBuilderOpen] = useState(false)
   const [editingProgram, setEditingProgram] = useState<GymProgram | null>(null)
   const [programName, setProgramName] = useState('')
   const [exerciseRows, setExerciseRows] = useState<ExerciseRow[]>([emptyExerciseRow()])
+  const [substitutingIndex, setSubstitutingIndex] = useState<number | null>(null)
+  const [substituteQuery, setSubstituteQuery] = useState('')
 
   const [loggingProgram, setLoggingProgram] = useState<GymProgram | null>(null)
   const [editingSession, setEditingSession] = useState<GymSession | null>(null)
@@ -49,10 +55,11 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
 
   async function load() {
     setLoading(true)
-    const [{ data: programRows }, { data: exerciseRowsData }, { data: sessionRows }] = await Promise.all([
+    const [{ data: programRows }, { data: exerciseRowsData }, { data: sessionRows }, { data: exerciseCatalogRows }] = await Promise.all([
       supabase.from('gym_programs').select('*').order('created_at'),
       supabase.from('gym_program_exercises').select('*').order('position'),
       supabase.from('gym_sessions').select('*').order('date', { ascending: false }).limit(20),
+      supabase.from('exercises').select('*').order('name'),
     ])
     const byProgram = new Map<string, GymProgramExercise[]>()
     for (const e of exerciseRowsData ?? []) {
@@ -63,6 +70,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
     setPrograms(programRows ?? [])
     setExercisesByProgram(byProgram)
     setSessions(sessionRows ?? [])
+    setExercises(exerciseCatalogRows ?? [])
 
     const sessionIds = (sessionRows ?? []).map((s) => s.id)
     if (sessionIds.length > 0) {
@@ -92,15 +100,40 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
   }
 
   function openEditProgram(program: GymProgram) {
-    const exercises = (exercisesByProgram.get(program.id) ?? []).slice().sort((a, b) => a.position - b.position)
+    const progExercises = (exercisesByProgram.get(program.id) ?? []).slice().sort((a, b) => a.position - b.position)
+    const exerciseById = new Map(exercises.map((ex) => [ex.id, ex]))
+    const exerciseByName = new Map(exercises.map((ex) => [ex.name.toLowerCase(), ex]))
     setEditingProgram(program)
     setProgramName(program.name)
     setExerciseRows(
-      exercises.length > 0
-        ? exercises.map((ex) => ({ name: ex.name, sets: String(ex.target_sets), reps: String(ex.target_reps) }))
+      progExercises.length > 0
+        ? progExercises.map((ex) => {
+            const catalogEx = ex.exercise_id ? exerciseById.get(ex.exercise_id) : exerciseByName.get(ex.name.toLowerCase())
+            return {
+              name: ex.name,
+              sets: String(ex.target_sets),
+              reps: String(ex.target_reps),
+              primaryMuscle: catalogEx?.primary_muscle ?? '',
+              secondaryMuscle: catalogEx?.secondary_muscle ?? '',
+            }
+          })
         : [emptyExerciseRow()],
     )
     setBuilderOpen(true)
+  }
+
+  // Upserts the row's name into the exercise catalog with its chosen muscle groups (or
+  // clears them if left blank) and returns the catalog id to link on the program row.
+  async function upsertExercise(userId: string, name: string, primaryMuscle: string, secondaryMuscle: string): Promise<string | null> {
+    const { data, error } = await supabase
+      .from('exercises')
+      .upsert(
+        { user_id: userId, name, primary_muscle: primaryMuscle || null, secondary_muscle: secondaryMuscle || null },
+        { onConflict: 'user_id,name' },
+      )
+      .select('id')
+      .single()
+    return error || !data ? null : data.id
   }
 
   async function saveProgram(e: React.FormEvent) {
@@ -113,6 +146,10 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
     } = await supabase.auth.getUser()
     if (!user) return
 
+    const exerciseIds = await Promise.all(
+      validRows.map((r) => upsertExercise(user.id, r.name.trim(), r.primaryMuscle, r.secondaryMuscle)),
+    )
+
     const exercisePayload = (programId: string) =>
       validRows.map((r, i) => ({
         program_id: programId,
@@ -121,6 +158,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
         target_sets: Number(r.sets) || 1,
         target_reps: Number(r.reps) || 1,
         position: i,
+        exercise_id: exerciseIds[i],
       }))
 
     if (editingProgram) {
@@ -257,6 +295,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
 
   const workoutById = new Map(strengthWorkouts.map((w) => [w.id, w]))
   const linkedWorkoutIds = new Set(sessions.map((s) => s.strava_workout_id).filter((id): id is string => id != null))
+  const exerciseByName = new Map(exercises.map((ex) => [ex.name.toLowerCase(), ex]))
 
   return (
     <div className="flex flex-col gap-3">
@@ -419,40 +458,84 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
             />
             <div className="flex flex-col gap-2">
               {exerciseRows.map((row, i) => (
-                <div key={i} className="flex gap-2">
-                  <input
-                    value={row.name}
-                    onChange={(e) =>
-                      setExerciseRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, name: e.target.value } : r)))
-                    }
-                    placeholder="Exercise, e.g. Bench Press"
-                    className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
-                  />
-                  <input
-                    value={row.sets}
-                    onChange={(e) =>
-                      setExerciseRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, sets: e.target.value } : r)))
-                    }
-                    type="number"
-                    placeholder="Sets"
-                    className="w-16 min-w-0 rounded-2xl border border-gray-200 bg-white px-2 py-2.5 text-center text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
-                  />
-                  <input
-                    value={row.reps}
-                    onChange={(e) =>
-                      setExerciseRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, reps: e.target.value } : r)))
-                    }
-                    type="number"
-                    placeholder="Reps"
-                    className="w-16 min-w-0 rounded-2xl border border-gray-200 bg-white px-2 py-2.5 text-center text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setExerciseRows((rows) => rows.filter((_, idx) => idx !== i))}
-                    className="shrink-0 px-2 text-gray-300"
-                  >
-                    ✕
-                  </button>
+                <div key={i} className="flex flex-col gap-2 rounded-2xl border border-gray-100 p-3">
+                  <div className="flex gap-2">
+                    <input
+                      value={row.name}
+                      onChange={(e) =>
+                        setExerciseRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, name: e.target.value } : r)))
+                      }
+                      placeholder="Exercise, e.g. Bench Press"
+                      className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSubstitutingIndex(i)
+                        setSubstituteQuery('')
+                      }}
+                      className="shrink-0 px-2 text-gray-400"
+                      aria-label="Swap exercise"
+                    >
+                      ⇄
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExerciseRows((rows) => rows.filter((_, idx) => idx !== i))}
+                      className="shrink-0 px-2 text-gray-300"
+                      aria-label="Remove exercise"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      value={row.sets}
+                      onChange={(e) =>
+                        setExerciseRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, sets: e.target.value } : r)))
+                      }
+                      type="number"
+                      placeholder="Sets"
+                      className="w-16 min-w-0 rounded-2xl border border-gray-200 bg-white px-2 py-2.5 text-center text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+                    />
+                    <input
+                      value={row.reps}
+                      onChange={(e) =>
+                        setExerciseRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, reps: e.target.value } : r)))
+                      }
+                      type="number"
+                      placeholder="Reps"
+                      className="w-16 min-w-0 rounded-2xl border border-gray-200 bg-white px-2 py-2.5 text-center text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+                    />
+                    <select
+                      value={row.primaryMuscle}
+                      onChange={(e) =>
+                        setExerciseRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, primaryMuscle: e.target.value } : r)))
+                      }
+                      className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-2 py-2.5 text-sm text-gray-900 outline-none focus:border-rose-400"
+                    >
+                      <option value="">Primary muscle</option>
+                      {MUSCLE_GROUPS.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={row.secondaryMuscle}
+                      onChange={(e) =>
+                        setExerciseRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, secondaryMuscle: e.target.value } : r)))
+                      }
+                      className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-2 py-2.5 text-sm text-gray-900 outline-none focus:border-rose-400"
+                    >
+                      <option value="">Secondary (optional)</option>
+                      {MUSCLE_GROUPS.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               ))}
             </div>
@@ -467,6 +550,70 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
               {editingProgram ? 'Save changes' : 'Save program'}
             </button>
           </form>
+
+          {substitutingIndex !== null && (
+            <div className="fixed inset-0 z-[60] flex flex-col bg-white safe-top safe-bottom">
+              <div className="flex items-center justify-between px-4 pt-4">
+                <h2 className="text-lg font-bold text-gray-900">Swap exercise</h2>
+                <button
+                  onClick={() => setSubstitutingIndex(null)}
+                  className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
+                >
+                  Close ✕
+                </button>
+              </div>
+              <div className="p-4">
+                <input
+                  autoFocus
+                  value={substituteQuery}
+                  onChange={(e) => setSubstituteQuery(e.target.value)}
+                  placeholder="Search exercises"
+                  className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+                />
+              </div>
+              <div className="flex-1 overflow-y-auto px-4 pb-4">
+                {(() => {
+                  const currentRow = exerciseRows[substitutingIndex]
+                  const query = substituteQuery.trim().toLowerCase()
+                  const candidates = exercises
+                    .filter((ex) => ex.name.toLowerCase() !== currentRow.name.trim().toLowerCase())
+                    .filter((ex) => !query || ex.name.toLowerCase().includes(query))
+                    .sort((a, b) => {
+                      const aMatches = currentRow.primaryMuscle && a.primary_muscle === currentRow.primaryMuscle ? 0 : 1
+                      const bMatches = currentRow.primaryMuscle && b.primary_muscle === currentRow.primaryMuscle ? 0 : 1
+                      return aMatches !== bMatches ? aMatches - bMatches : a.name.localeCompare(b.name)
+                    })
+                  if (candidates.length === 0) {
+                    return <p className="text-sm text-gray-400">No matches — type a new name in the exercise field instead.</p>
+                  }
+                  return (
+                    <div className="flex flex-col gap-2">
+                      {candidates.map((ex) => (
+                        <button
+                          key={ex.id}
+                          type="button"
+                          onClick={() => {
+                            setExerciseRows((rows) =>
+                              rows.map((r, idx) =>
+                                idx === substitutingIndex
+                                  ? { ...r, name: ex.name, primaryMuscle: ex.primary_muscle ?? '', secondaryMuscle: ex.secondary_muscle ?? '' }
+                                  : r,
+                              ),
+                            )
+                            setSubstitutingIndex(null)
+                          }}
+                          className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 text-left shadow-sm"
+                        >
+                          <span className="font-medium text-gray-900">{ex.name}</span>
+                          <span className="text-xs text-gray-400">{ex.primary_muscle ?? 'Uncategorized'}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )
+                })()}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -493,9 +640,19 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
               type="date"
               className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-rose-400"
             />
-            {sessionRows.map((row, exIdx) => (
+            {sessionRows.map((row, exIdx) => {
+              const catalogEx = exerciseByName.get(row.exerciseName.toLowerCase())
+              return (
               <div key={exIdx} className="rounded-2xl border border-gray-100 bg-white p-3 shadow-sm">
-                <p className="mb-2 font-medium text-gray-900">{row.exerciseName}</p>
+                <p className="mb-2 font-medium text-gray-900">
+                  {row.exerciseName}
+                  {catalogEx?.primary_muscle && (
+                    <span className="ml-2 text-xs font-normal text-gray-400">
+                      {catalogEx.primary_muscle}
+                      {catalogEx.secondary_muscle ? ` · ${catalogEx.secondary_muscle}` : ''}
+                    </span>
+                  )}
+                </p>
                 <div className="flex flex-col gap-1.5">
                   {row.sets.map((set, setIdx) => (
                     <div key={setIdx} className="flex items-center gap-2">
@@ -535,7 +692,8 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                   ))}
                 </div>
               </div>
-            ))}
+              )
+            })}
             <button onClick={saveSession} className="mt-2 rounded-2xl bg-rose-600 px-4 py-2.5 font-semibold text-white">
               {editingSession ? 'Save changes' : 'Save session'}
             </button>

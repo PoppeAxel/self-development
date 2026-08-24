@@ -98,6 +98,16 @@ export interface GymProgramExercise {
   target_sets: number
   target_reps: number
   position: number
+  exercise_id: string | null
+}
+
+export interface Exercise {
+  id: string
+  user_id: string
+  name: string
+  primary_muscle: string | null
+  secondary_muscle: string | null
+  created_at: string
 }
 
 export interface GymSession {
