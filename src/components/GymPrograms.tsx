@@ -52,6 +52,8 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
   const [editingSession, setEditingSession] = useState<GymSession | null>(null)
   const [sessionDate, setSessionDate] = useState(todayISO())
   const [sessionRows, setSessionRows] = useState<SessionExerciseRow[]>([])
+  const [substitutingSessionIndex, setSubstitutingSessionIndex] = useState<number | null>(null)
+  const [substituteSessionQuery, setSubstituteSessionQuery] = useState('')
 
   async function load() {
     setLoading(true)
@@ -184,13 +186,30 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
     await supabase.from('gym_programs').delete().eq('id', program.id)
   }
 
+  // Most recent logged sets for an exercise (by name, case-insensitive), searching
+  // sessions newest-first — used to prefill "last time you did this" reps/weight.
+  function lastLoggedSets(exerciseName: string): GymSessionSet[] | null {
+    const target = exerciseName.toLowerCase()
+    for (const session of sessions) {
+      const sets = (setsBySession.get(session.id) ?? []).filter((s) => s.exercise_name.toLowerCase() === target)
+      if (sets.length > 0) return sets.slice().sort((a, b) => a.set_number - b.set_number)
+    }
+    return null
+  }
+
   function openLogSession(program: GymProgram) {
-    const exercises = (exercisesByProgram.get(program.id) ?? []).slice().sort((a, b) => a.position - b.position)
+    const progExercises = (exercisesByProgram.get(program.id) ?? []).slice().sort((a, b) => a.position - b.position)
     setSessionRows(
-      exercises.map((ex) => ({
-        exerciseName: ex.name,
-        sets: Array.from({ length: ex.target_sets }, () => ({ reps: '', weight: '' })),
-      })),
+      progExercises.map((ex) => {
+        const previous = lastLoggedSets(ex.name)
+        return {
+          exerciseName: ex.name,
+          sets: Array.from({ length: ex.target_sets }, (_, i) => ({
+            reps: previous?.[i]?.reps != null ? String(previous[i].reps) : '',
+            weight: previous?.[i]?.weight != null ? String(previous[i].weight) : '',
+          })),
+        }
+      }),
     )
     setSessionDate(todayISO())
     setEditingSession(null)
@@ -230,6 +249,26 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
     setSessionDate(session.date)
     setLoggingProgram(null)
     setEditingSession(session)
+  }
+
+  // Swaps a session row's exercise (e.g. equipment unavailable, an injury) without
+  // touching the underlying program — this only affects the session being logged.
+  function pickSubstituteForSession(newExerciseName: string) {
+    if (substitutingSessionIndex == null) return
+    const previous = lastLoggedSets(newExerciseName)
+    setSessionRows((rows) =>
+      rows.map((r, idx) => {
+        if (idx !== substitutingSessionIndex) return r
+        return {
+          exerciseName: newExerciseName,
+          sets: Array.from({ length: r.sets.length }, (_, i) => ({
+            reps: previous?.[i]?.reps != null ? String(previous[i].reps) : '',
+            weight: previous?.[i]?.weight != null ? String(previous[i].weight) : '',
+          })),
+        }
+      }),
+    )
+    setSubstitutingSessionIndex(null)
   }
 
   async function saveSession() {
@@ -644,15 +683,28 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
               const catalogEx = exerciseByName.get(row.exerciseName.toLowerCase())
               return (
               <div key={exIdx} className="rounded-2xl border border-gray-100 bg-white p-3 shadow-sm">
-                <p className="mb-2 font-medium text-gray-900">
-                  {row.exerciseName}
-                  {catalogEx?.primary_muscle && (
-                    <span className="ml-2 text-xs font-normal text-gray-400">
-                      {catalogEx.primary_muscle}
-                      {catalogEx.secondary_muscle ? ` · ${catalogEx.secondary_muscle}` : ''}
-                    </span>
-                  )}
-                </p>
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="font-medium text-gray-900">
+                    {row.exerciseName}
+                    {catalogEx?.primary_muscle && (
+                      <span className="ml-2 text-xs font-normal text-gray-400">
+                        {catalogEx.primary_muscle}
+                        {catalogEx.secondary_muscle ? ` · ${catalogEx.secondary_muscle}` : ''}
+                      </span>
+                    )}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSubstitutingSessionIndex(exIdx)
+                      setSubstituteSessionQuery('')
+                    }}
+                    className="shrink-0 pl-2 text-gray-400"
+                    aria-label="Swap exercise"
+                  >
+                    ⇄
+                  </button>
+                </div>
                 <div className="flex flex-col gap-1.5">
                   {row.sets.map((set, setIdx) => (
                     <div key={setIdx} className="flex items-center gap-2">
@@ -698,6 +750,62 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
               {editingSession ? 'Save changes' : 'Save session'}
             </button>
           </div>
+
+          {substitutingSessionIndex !== null && (
+            <div className="fixed inset-0 z-[60] flex flex-col bg-white safe-top safe-bottom">
+              <div className="flex items-center justify-between px-4 pt-4">
+                <h2 className="text-lg font-bold text-gray-900">Swap exercise</h2>
+                <button
+                  onClick={() => setSubstitutingSessionIndex(null)}
+                  className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
+                >
+                  Close ✕
+                </button>
+              </div>
+              <div className="p-4">
+                <input
+                  autoFocus
+                  value={substituteSessionQuery}
+                  onChange={(e) => setSubstituteSessionQuery(e.target.value)}
+                  placeholder="Search exercises"
+                  className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+                />
+              </div>
+              <div className="flex-1 overflow-y-auto px-4 pb-4">
+                {(() => {
+                  const currentRow = sessionRows[substitutingSessionIndex]
+                  const currentEx = exerciseByName.get(currentRow.exerciseName.toLowerCase())
+                  const query = substituteSessionQuery.trim().toLowerCase()
+                  const candidates = exercises
+                    .filter((ex) => ex.name.toLowerCase() !== currentRow.exerciseName.trim().toLowerCase())
+                    .filter((ex) => !query || ex.name.toLowerCase().includes(query))
+                    .sort((a, b) => {
+                      const aMatches = currentEx?.primary_muscle && a.primary_muscle === currentEx.primary_muscle ? 0 : 1
+                      const bMatches = currentEx?.primary_muscle && b.primary_muscle === currentEx.primary_muscle ? 0 : 1
+                      return aMatches !== bMatches ? aMatches - bMatches : a.name.localeCompare(b.name)
+                    })
+                  if (candidates.length === 0) {
+                    return <p className="text-sm text-gray-400">No matches.</p>
+                  }
+                  return (
+                    <div className="flex flex-col gap-2">
+                      {candidates.map((ex) => (
+                        <button
+                          key={ex.id}
+                          type="button"
+                          onClick={() => pickSubstituteForSession(ex.name)}
+                          className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 text-left shadow-sm"
+                        >
+                          <span className="font-medium text-gray-900">{ex.name}</span>
+                          <span className="text-xs text-gray-400">{ex.primary_muscle ?? 'Uncategorized'}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )
+                })()}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
