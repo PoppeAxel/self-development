@@ -18,6 +18,17 @@ export const MUSCLE_GROUPS = [
 
 export type MuscleGroup = (typeof MUSCLE_GROUPS)[number]
 
+// Rolls the 13 muscle groups up into a handful of body regions for a compact overview
+// (src/components/GymPrograms.tsx's Muscle balance section) — the full per-muscle
+// breakdown is still available by expanding a region.
+export const MUSCLE_REGIONS: Record<string, MuscleGroup[]> = {
+  Push: ['Chest', 'Shoulders', 'Triceps'],
+  Pull: ['Upper back', 'Lower back', 'Biceps'],
+  Legs: ['Quads', 'Hamstrings', 'Glutes', 'Calves'],
+  Core: ['Core', 'Full body'],
+  Forearms: ['Forearms'],
+}
+
 // The big compound lifts worth tracking progress on — matched against
 // gym_session_sets.exercise_name (exact, case-insensitive) so a variant like "Romanian
 // deadlift" doesn't get conflated with "Deadlift".

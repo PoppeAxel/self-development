@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
 import { formatWorkoutDuration } from '../lib/workouts'
-import { MUSCLE_GROUPS, TRACKED_LIFTS, estimatedOneRepMax, recentAverage, liftTrendPerWeek } from '../lib/exercises'
+import { MUSCLE_GROUPS, MUSCLE_REGIONS, TRACKED_LIFTS, estimatedOneRepMax, recentAverage, liftTrendPerWeek } from '../lib/exercises'
 import { ConfirmDialog } from './ConfirmDialog'
 import type { Exercise, GymProgram, GymProgramExercise, GymSession, GymSessionSet, Workout } from '../lib/types'
 
@@ -64,6 +64,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
   const [exerciseFormSecondary, setExerciseFormSecondary] = useState('')
   const [confirmDeleteExercise, setConfirmDeleteExercise] = useState<Exercise | null>(null)
   const [programsOpen, setProgramsOpen] = useState(false)
+  const [expandedRegion, setExpandedRegion] = useState<string | null>(null)
   const [sessionsOpen, setSessionsOpen] = useState(false)
 
   async function load() {
@@ -462,6 +463,14 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
   )
   const muscleBalanceWindowDays = 28
   const muscleBalanceData = muscleBalance(muscleBalanceWindowDays)
+  const muscleByName = new Map(muscleBalanceData.map((m) => [m.muscle, m]))
+  const regionBalance = Object.entries(MUSCLE_REGIONS)
+    .map(([region, muscles]) => {
+      const items = muscles.map((m) => muscleByName.get(m)!).filter(Boolean)
+      return { region, items, totalPerWeek: items.reduce((sum, m) => sum + m.totalPerWeek, 0) }
+    })
+    .sort((a, b) => b.totalPerWeek - a.totalPerWeek)
+  const regionMax = Math.max(...regionBalance.map((r) => r.totalPerWeek), 1)
   const muscleBalanceMax = Math.max(...muscleBalanceData.map((m) => m.totalPerWeek), 1)
 
   return (
@@ -533,22 +542,49 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
       <div>
         <h2 className="text-sm font-semibold text-gray-500">Muscle balance</h2>
         <p className="mb-2 text-[11px] text-gray-400">
-          Avg sets/week, last {muscleBalanceWindowDays / 7} weeks · secondary muscles (lighter) count half a set
+          Avg sets/week, last {muscleBalanceWindowDays / 7} weeks · secondary muscles (lighter) count half a set · tap a region for detail
         </p>
         {muscleBalanceData.every((m) => m.totalPerWeek === 0) ? (
           <p className="text-sm text-gray-400">Log some sessions with categorized exercises to see your balance across muscle groups.</p>
         ) : (
           <div className="flex flex-col gap-2">
-            {muscleBalanceData.map((m) => (
-              <div key={m.muscle} className="flex items-center gap-2">
-                <span className="w-24 shrink-0 text-xs text-gray-600">{m.muscle}</span>
-                <div className="h-4 flex-1 overflow-hidden rounded-full bg-gray-100">
-                  <div className="flex h-full">
-                    <div className="h-full bg-rose-500" style={{ width: `${(m.primaryPerWeek / muscleBalanceMax) * 100}%` }} />
-                    <div className="h-full bg-rose-200" style={{ width: `${(m.secondaryPerWeek / muscleBalanceMax) * 100}%` }} />
+            {regionBalance.map(({ region, items, totalPerWeek }) => (
+              <div key={region}>
+                <button
+                  type="button"
+                  onClick={() => setExpandedRegion((r) => (r === region ? null : region))}
+                  className="flex w-full items-center gap-2"
+                >
+                  <span className="w-20 shrink-0 text-left text-xs font-medium text-gray-700">{region}</span>
+                  <div className="h-4 flex-1 overflow-hidden rounded-full bg-gray-100">
+                    <div className="flex h-full">
+                      {items.map((m) => (
+                        <Fragment key={m.muscle}>
+                          <div className="h-full bg-rose-500" style={{ width: `${(m.primaryPerWeek / regionMax) * 100}%` }} />
+                          <div className="h-full bg-rose-200" style={{ width: `${(m.secondaryPerWeek / regionMax) * 100}%` }} />
+                        </Fragment>
+                      ))}
+                    </div>
                   </div>
-                </div>
-                <span className="w-10 shrink-0 text-right text-xs font-medium text-gray-700">{m.totalPerWeek.toFixed(1)}</span>
+                  <span className="w-10 shrink-0 text-right text-xs font-medium text-gray-700">{totalPerWeek.toFixed(1)}</span>
+                  <span className="w-3 shrink-0 text-gray-400">{expandedRegion === region ? '▲' : '▼'}</span>
+                </button>
+                {expandedRegion === region && (
+                  <div className="mt-2 ml-4 flex flex-col gap-1.5 border-l-2 border-gray-100 pl-3">
+                    {items.map((m) => (
+                      <div key={m.muscle} className="flex items-center gap-2">
+                        <span className="w-24 shrink-0 text-xs text-gray-500">{m.muscle}</span>
+                        <div className="h-3 flex-1 overflow-hidden rounded-full bg-gray-100">
+                          <div className="flex h-full">
+                            <div className="h-full bg-rose-500" style={{ width: `${(m.primaryPerWeek / muscleBalanceMax) * 100}%` }} />
+                            <div className="h-full bg-rose-200" style={{ width: `${(m.secondaryPerWeek / muscleBalanceMax) * 100}%` }} />
+                          </div>
+                        </div>
+                        <span className="w-8 shrink-0 text-right text-xs text-gray-500">{m.totalPerWeek.toFixed(1)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
