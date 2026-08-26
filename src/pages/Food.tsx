@@ -825,41 +825,56 @@ export function Food() {
             />
             <p className="text-xs text-gray-400">Per 100g:</p>
             <div className="grid grid-cols-2 gap-2">
-              <input
-                value={ingredientForm.kcal}
-                onChange={(e) => setIngredientForm((f) => ({ ...f, kcal: e.target.value }))}
-                type="number"
-                placeholder="Calories (kcal)"
-                className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
-              />
-              <input
-                value={ingredientForm.protein}
-                onChange={(e) => setIngredientForm((f) => ({ ...f, protein: e.target.value }))}
-                type="number"
-                placeholder="Protein (g)"
-                className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
-              />
-              <input
-                value={ingredientForm.carbs}
-                onChange={(e) => setIngredientForm((f) => ({ ...f, carbs: e.target.value }))}
-                type="number"
-                placeholder="Carbs (g)"
-                className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
-              />
-              <input
-                value={ingredientForm.fat}
-                onChange={(e) => setIngredientForm((f) => ({ ...f, fat: e.target.value }))}
-                type="number"
-                placeholder="Fat (g)"
-                className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
-              />
-              <input
-                value={ingredientForm.fiber}
-                onChange={(e) => setIngredientForm((f) => ({ ...f, fiber: e.target.value }))}
-                type="number"
-                placeholder="Fiber (g)"
-                className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
-              />
+              <label className="flex flex-col gap-1 text-xs font-medium text-gray-500">
+                Calories (kcal)
+                <input
+                  value={ingredientForm.kcal}
+                  onChange={(e) => setIngredientForm((f) => ({ ...f, kcal: e.target.value }))}
+                  type="number"
+                  placeholder="0"
+                  className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-gray-500">
+                Protein (g)
+                <input
+                  value={ingredientForm.protein}
+                  onChange={(e) => setIngredientForm((f) => ({ ...f, protein: e.target.value }))}
+                  type="number"
+                  placeholder="0"
+                  className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-gray-500">
+                Carbs (g)
+                <input
+                  value={ingredientForm.carbs}
+                  onChange={(e) => setIngredientForm((f) => ({ ...f, carbs: e.target.value }))}
+                  type="number"
+                  placeholder="0"
+                  className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-gray-500">
+                Fat (g)
+                <input
+                  value={ingredientForm.fat}
+                  onChange={(e) => setIngredientForm((f) => ({ ...f, fat: e.target.value }))}
+                  type="number"
+                  placeholder="0"
+                  className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-gray-500">
+                Fiber (g)
+                <input
+                  value={ingredientForm.fiber}
+                  onChange={(e) => setIngredientForm((f) => ({ ...f, fiber: e.target.value }))}
+                  type="number"
+                  placeholder="0"
+                  className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
+                />
+              </label>
             </div>
             <button type="submit" className="mt-2 rounded-2xl bg-teal-600 px-4 py-2.5 font-semibold text-white">
               {editingIngredient ? 'Save changes' : 'Save ingredient'}
