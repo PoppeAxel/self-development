@@ -103,6 +103,10 @@ export function Food() {
   const [confirmDeleteRecipe, setConfirmDeleteRecipe] = useState<Recipe | null>(null)
 
   const [ingredientFormOpen, setIngredientFormOpen] = useState(false)
+  // 'recipe' means this ingredient is being created from inside the recipe builder's
+  // ingredient picker (pickingIngredientFor already holds which row/slot it's for) — on
+  // save it gets auto-added to that recipe row instead of just returning to the library.
+  const [ingredientFormOrigin, setIngredientFormOrigin] = useState<'library' | 'recipe'>('library')
   const [editingIngredient, setEditingIngredient] = useState<Ingredient | null>(null)
   const [ingredientForm, setIngredientForm] = useState<IngredientFormState>(emptyIngredientForm())
   const [ingredientFormMode, setIngredientFormMode] = useState<'manual' | 'search'>('manual')
@@ -314,7 +318,7 @@ export function Food() {
 
   // --- Ingredient library ---
 
-  function openNewIngredient() {
+  function openNewIngredient(origin: 'library' | 'recipe' = 'library') {
     setEditingIngredient(null)
     setIngredientForm(emptyIngredientForm())
     setIngredientFormMode('manual')
@@ -322,6 +326,7 @@ export function Food() {
     setLsvResults([])
     setScanLookupError(null)
     setScanLookingUp(false)
+    setIngredientFormOrigin(origin)
     setIngredientFormOpen(true)
   }
 
@@ -336,6 +341,7 @@ export function Food() {
       fiber: String(ingredient.fiber_per_100g),
     })
     setIngredientFormMode('manual')
+    setIngredientFormOrigin('library')
     setIngredientFormOpen(true)
   }
 
@@ -412,11 +418,22 @@ export function Food() {
 
     if (editingIngredient) {
       await supabase.from('ingredients').update(payload).eq('id', editingIngredient.id)
+    } else if (ingredientFormOrigin === 'recipe') {
+      // Created from inside the recipe builder's ingredient picker (e.g. scanned a
+      // barcode for something new mid-recipe) — insert and immediately drop it into the
+      // pending recipe row instead of just returning to an unchanged picker list.
+      const { data, error } = await supabase
+        .from('ingredients')
+        .insert({ ...payload, source: 'manual', user_id: user.id })
+        .select()
+        .single()
+      if (!error && data) addIngredientToRecipe(data)
     } else {
       await supabase.from('ingredients').insert({ ...payload, source: 'manual', user_id: user.id })
     }
 
     setIngredientFormOpen(false)
+    setIngredientFormOrigin('library')
     setEditingIngredient(null)
     load()
   }
@@ -589,7 +606,7 @@ export function Food() {
       {subTab === 'library' && (
         <>
           <button
-            onClick={openNewIngredient}
+            onClick={() => openNewIngredient()}
             className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-teal-600"
           >
             + New ingredient
@@ -826,18 +843,22 @@ export function Food() {
                   className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
                 />
               </div>
+              <div className="px-4 pb-2">
+                <button
+                  type="button"
+                  onClick={() => openNewIngredient('recipe')}
+                  className="w-full rounded-2xl border-2 border-dashed border-gray-200 py-2 text-sm font-semibold text-teal-600"
+                >
+                  + New ingredient (manual, search, or 📷 scan barcode)
+                </button>
+              </div>
               <div className="flex-1 overflow-y-auto px-4 pb-4">
                 {(() => {
                   const q = ingredientPickQuery.trim().toLowerCase()
                   const candidates = ingredients.filter((i) => !q || i.name.toLowerCase().includes(q))
                   return (
                     <div className="flex flex-col gap-2">
-                      {candidates.length === 0 && (
-                        <p className="text-sm text-gray-400">
-                          No matches — close this and add it to your ingredient library first (Library tab: manual entry or
-                          Livsmedelsverket search).
-                        </p>
-                      )}
+                      {candidates.length === 0 && <p className="text-sm text-gray-400">No matches — add it above.</p>}
                       {candidates.map((ing) => (
                         <button
                           key={ing.id}
@@ -858,9 +879,11 @@ export function Food() {
         </div>
       )}
 
-      {/* Ingredient form (manual entry or import from Livsmedelsverket) */}
+      {/* Ingredient form (manual entry or import from Livsmedelsverket). z-[65]: can be
+          opened from inside the recipe builder's ingredient picker (z-[60]), and needs to
+          stack above it; the barcode scanner it can open is z-[70], above this in turn. */}
       {ingredientFormOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+        <div className="fixed inset-0 z-[65] flex flex-col bg-white safe-top safe-bottom">
           <div className="flex items-center justify-between px-4 pt-4">
             <h2 className="text-lg font-bold text-gray-900">{editingIngredient ? 'Edit ingredient' : 'New ingredient'}</h2>
             <button
