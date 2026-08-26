@@ -8,7 +8,16 @@ import { GymPrograms } from '../components/GymPrograms'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
 import { formatWorkoutDuration, formatWorkoutDistance, isStrengthWorkout, getSportStyle } from '../lib/workouts'
-import type { JournalEntry, JournalEntryType, Workout } from '../lib/types'
+import { logEntryMacros } from '../lib/food'
+import type {
+  FoodLogEntry,
+  Ingredient,
+  JournalEntry,
+  JournalEntryType,
+  Recipe,
+  RecipeIngredient,
+  Workout,
+} from '../lib/types'
 
 // steps/cardio/strength have no manual-entry form (synced from Garmin/Strava) but still
 // get a read-only tab for their chart. 'cardio'/'strength' aren't JournalEntryTypes — they
@@ -244,6 +253,10 @@ export function Journal() {
   const [trainingTimeOpen, setTrainingTimeOpen] = useState(false)
   const [confirmDeleteEntry, setConfirmDeleteEntry] = useState<JournalEntry | null>(null)
   const [confirmDeleteWorkout, setConfirmDeleteWorkout] = useState<Workout | null>(null)
+  const [foodEntries, setFoodEntries] = useState<FoodLogEntry[]>([])
+  const [recipes, setRecipes] = useState<Recipe[]>([])
+  const [recipeLines, setRecipeLines] = useState<Map<string, RecipeIngredient[]>>(new Map())
+  const [ingredients, setIngredients] = useState<Ingredient[]>([])
 
   useEffect(() => {
     setShowHistory(false)
@@ -251,15 +264,39 @@ export function Journal() {
 
   async function load() {
     setLoading(true)
-    const [{ data }, { data: settingsRow }, { data: workoutRows }] = await Promise.all([
+    const [
+      { data },
+      { data: settingsRow },
+      { data: workoutRows },
+      { data: foodEntryRows },
+      { data: recipeRows },
+      { data: recipeLineRows },
+      { data: ingredientRows },
+    ] = await Promise.all([
       supabase.from('journal_entries').select('*').order('date', { ascending: true }).limit(200),
       supabase.from('user_settings').select('*').maybeSingle(),
       supabase.from('workouts').select('*').order('date', { ascending: true }).limit(200),
+      // 60 days is comfortably more than the 28-day window the calorie-estimate card
+      // averages over — see foodDailyKcal below.
+      supabase.from('food_log_entries').select('*').order('date', { ascending: true }).limit(400),
+      supabase.from('recipes').select('*'),
+      supabase.from('recipe_ingredients').select('*'),
+      supabase.from('ingredients').select('*'),
     ])
     setEntries(data ?? [])
     setGoalWeight(settingsRow?.goal_weight != null ? Number(settingsRow.goal_weight) : null)
     setStepGoal(settingsRow?.step_goal != null ? Number(settingsRow.step_goal) : null)
     setWorkouts(workoutRows ?? [])
+    setFoodEntries(foodEntryRows ?? [])
+    setRecipes(recipeRows ?? [])
+    const byRecipe = new Map<string, RecipeIngredient[]>()
+    for (const line of recipeLineRows ?? []) {
+      const arr = byRecipe.get(line.recipe_id) ?? []
+      arr.push(line)
+      byRecipe.set(line.recipe_id, arr)
+    }
+    setRecipeLines(byRecipe)
+    setIngredients(ingredientRows ?? [])
     setLoading(false)
   }
 
@@ -415,6 +452,34 @@ export function Journal() {
     const movingTowardGoal = (distanceToGoal > 0 && weightTrendPerWeek < 0) || (distanceToGoal < 0 && weightTrendPerWeek > 0)
     if (movingTowardGoal) weeksToGoal = Math.abs(distanceToGoal / weightTrendPerWeek)
   }
+
+  // Estimated maintenance calories from the current trend: how many calories you've
+  // actually been eating (avg over logged days) vs. how your weight has been moving
+  // over the same stretch. Deliberately doesn't touch workout-calorie estimates —
+  // those are unreliable, and unnecessary anyway: weight change already nets out
+  // training along with everything else, so it's the only "calories out" signal used.
+  // 1 kg of body-mass change ≈ 7700 kcal (standard estimate for fat mass).
+  const recipesById = new Map(recipes.map((r) => [r.id, r]))
+  const ingredientsById = new Map(ingredients.map((i) => [i.id, i]))
+  const kcalByDate = new Map<string, number>()
+  for (const e of foodEntries) {
+    const kcal = logEntryMacros(e, recipesById, recipeLines, ingredientsById).kcal
+    kcalByDate.set(e.date, (kcalByDate.get(e.date) ?? 0) + kcal)
+  }
+  const CALORIE_WINDOW_DAYS = 28
+  const calorieWindowStart = new Date()
+  calorieWindowStart.setDate(calorieWindowStart.getDate() - CALORIE_WINDOW_DAYS)
+  const calorieWindowStartStr = calorieWindowStart.toISOString().slice(0, 10)
+  const recentDailyKcal = [...kcalByDate.entries()].filter(([date]) => date >= calorieWindowStartStr).map(([, kcal]) => kcal)
+  const avgDailyKcal =
+    recentDailyKcal.length > 0 ? recentDailyKcal.reduce((a, b) => a + b, 0) / recentDailyKcal.length : null
+
+  // Require a handful of logged days and an established weight trend before showing
+  // this — a couple of data points either way would make the estimate meaningless.
+  const MIN_LOGGED_DAYS_FOR_ESTIMATE = 5
+  const showCalorieEstimate = avgDailyKcal != null && recentDailyKcal.length >= MIN_LOGGED_DAYS_FOR_ESTIMATE && weightTrendPerWeek != null
+  const estimatedMaintenanceKcal = showCalorieEstimate ? avgDailyKcal! - (weightTrendPerWeek! * 7700) / 7 : null
+  const dailyDeficitOrSurplus = showCalorieEstimate ? avgDailyKcal! - estimatedMaintenanceKcal! : null
 
   // Steps grouped into Mon–Sun weeks, ascending for trend math.
   const stepsByWeek = new Map<string, number[]>()
@@ -638,6 +703,25 @@ export function Journal() {
               )}
             </p>
           </div>
+        </div>
+      )}
+
+      {tab === 'weight' && showCalorieEstimate && (
+        <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+          <p className="text-xs text-gray-400">Estimated maintenance · last {recentDailyKcal.length} logged days</p>
+          <p className="text-lg font-bold text-gray-900">{Math.round(estimatedMaintenanceKcal!).toLocaleString()} kcal/day</p>
+          <p className="mt-1 text-sm text-gray-500">
+            Averaging <span className="font-medium text-gray-900">{Math.round(avgDailyKcal!).toLocaleString()} kcal/day</span>, which
+            is a{' '}
+            <span className={`font-medium ${dailyDeficitOrSurplus! < 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+              {Math.round(Math.abs(dailyDeficitOrSurplus!)).toLocaleString()} kcal/day {dailyDeficitOrSurplus! < 0 ? 'deficit' : 'surplus'}
+            </span>{' '}
+            matching your {Math.abs(weightTrendPerWeek!).toFixed(2)} kg/wk trend.
+          </p>
+          <p className="mt-1 text-xs text-gray-400">
+            Eat around this many calories to hold steady, less to keep losing, more to slow down or reverse — based only on your own
+            logged intake and weight trend (no workout-calorie guessing).
+          </p>
         </div>
       )}
 
