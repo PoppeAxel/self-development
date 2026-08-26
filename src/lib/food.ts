@@ -141,3 +141,36 @@ export async function fetchLivsmedelsverketMacros(nummer: number): Promise<Macro
     fiber: byName.get(NUTRIENT_NAMES.fiber) ?? 0,
   }
 }
+
+// --- Open Food Facts (barcode lookup) ---
+// Livsmedelsverket has no barcode/GTIN field at all — it's a food-composition database,
+// not a retail product catalog — so branded/packaged products go through Open Food
+// Facts instead, keyed by barcode. Free, no API key, CORS-open (Access-Control-Allow-
+// Origin: *). Community-sourced, so coverage/accuracy varies — always shown to the user
+// for review before saving, same as a Livsmedelsverket import.
+const OPEN_FOOD_FACTS_BASE = 'https://world.openfoodfacts.org/api/v2/product'
+
+export interface OpenFoodFactsProduct {
+  name: string
+  macros: Macros
+}
+
+export async function fetchOpenFoodFactsProduct(barcode: string): Promise<OpenFoodFactsProduct | null> {
+  const res = await fetch(
+    `${OPEN_FOOD_FACTS_BASE}/${encodeURIComponent(barcode)}.json?fields=product_name,nutriments`,
+  )
+  if (!res.ok) return null
+  const data = await res.json()
+  if (data.status !== 1 || !data.product) return null
+  const n = data.product.nutriments ?? {}
+  return {
+    name: data.product.product_name || `Barcode ${barcode}`,
+    macros: {
+      kcal: n['energy-kcal_100g'] ?? 0,
+      protein: n['proteins_100g'] ?? 0,
+      carbs: n['carbohydrates_100g'] ?? 0,
+      fat: n['fat_100g'] ?? 0,
+      fiber: n['fiber_100g'] ?? 0,
+    },
+  }
+}

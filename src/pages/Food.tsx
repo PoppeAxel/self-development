@@ -4,12 +4,14 @@ import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
 import { RefreshButton } from '../components/RefreshButton'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { BarcodeScanner } from '../components/BarcodeScanner'
 import {
   addMacros,
   logEntryMacros,
   recipePerServingMacros,
   searchLivsmedelsverket,
   fetchLivsmedelsverketMacros,
+  fetchOpenFoodFactsProduct,
   ZERO_MACROS,
   type Macros,
   type LivsmedelsverketFood,
@@ -84,6 +86,8 @@ export function Food() {
   const [lsvResults, setLsvResults] = useState<LivsmedelsverketFood[]>([])
   const [lsvSearching, setLsvSearching] = useState(false)
   const [confirmDeleteIngredient, setConfirmDeleteIngredient] = useState<Ingredient | null>(null)
+  const [scannerOpen, setScannerOpen] = useState(false)
+  const [scanLookupError, setScanLookupError] = useState<string | null>(null)
 
   async function load() {
     setLoading(true)
@@ -266,6 +270,7 @@ export function Food() {
     setIngredientFormMode('manual')
     setLsvQuery('')
     setLsvResults([])
+    setScanLookupError(null)
     setIngredientFormOpen(true)
   }
 
@@ -302,6 +307,25 @@ export function Food() {
       carbs: String(round(macros.carbs, 1)),
       fat: String(round(macros.fat, 1)),
       fiber: String(round(macros.fiber, 1)),
+    })
+    setIngredientFormMode('manual')
+  }
+
+  async function handleBarcodeDetected(barcode: string) {
+    setScannerOpen(false)
+    const product = await fetchOpenFoodFactsProduct(barcode)
+    if (!product) {
+      setScanLookupError(`No Open Food Facts entry found for barcode ${barcode} — try manual entry instead.`)
+      return
+    }
+    setScanLookupError(null)
+    setIngredientForm({
+      name: product.name,
+      kcal: String(round(product.macros.kcal, 1)),
+      protein: String(round(product.macros.protein, 1)),
+      carbs: String(round(product.macros.carbs, 1)),
+      fat: String(round(product.macros.fat, 1)),
+      fiber: String(round(product.macros.fiber, 1)),
     })
     setIngredientFormMode('manual')
   }
@@ -778,6 +802,20 @@ export function Food() {
             </div>
           </div>
 
+          <div className="px-4 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setScanLookupError(null)
+                setScannerOpen(true)
+              }}
+              className="w-full rounded-2xl border-2 border-dashed border-gray-200 py-2 text-sm font-semibold text-teal-600"
+            >
+              📷 Scan barcode
+            </button>
+            {scanLookupError && <p className="mt-2 text-xs text-red-500">{scanLookupError}</p>}
+          </div>
+
           {/* Single scrollable region for both the search results and the form below —
               they used to be separate blocks with only the form scrollable, which made
               search results past the fold unreachable (nothing to scroll them into view). */}
@@ -883,6 +921,8 @@ export function Food() {
           </div>
         </div>
       )}
+
+      {scannerOpen && <BarcodeScanner onDetected={handleBarcodeDetected} onClose={() => setScannerOpen(false)} />}
 
       <ConfirmDialog
         open={confirmDeleteEntry !== null}
