@@ -14,7 +14,13 @@ export function BarcodeScanner({ onDetected, onClose }: { onDetected: (code: str
   const controlsRef = useRef<IScannerControls | null>(null)
   const onDetectedRef = useRef(onDetected)
   onDetectedRef.current = onDetected
+  const detectedRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
+  // A continuous scanner gets a "not found" result on essentially every frame while
+  // it's simply still looking — that's normal, not an error, so it stays silent. But
+  // silence is indistinguishable from "broken" to the user, so after a stretch of
+  // frames with nothing found, show a hint that it's still alive and actively trying.
+  const [stillLooking, setStillLooking] = useState(false)
 
   // Mount-once: the camera/decoder should start exactly once for the component's
   // lifetime, not restart on every parent re-render (onDetectedRef sidesteps that).
@@ -23,18 +29,30 @@ export function BarcodeScanner({ onDetected, onClose }: { onDetected: (code: str
     const hints = new Map()
     hints.set(DecodeHintType.POSSIBLE_FORMATS, PRODUCT_BARCODE_FORMATS)
     const reader = new BrowserMultiFormatReader(hints)
+    const stillLookingTimer = setTimeout(() => {
+      if (!cancelled && !detectedRef.current) setStillLooking(true)
+    }, 6000)
 
     reader
       .decodeFromConstraints({ video: { facingMode: 'environment' } }, videoRef.current ?? undefined, (result, err) => {
-        if (cancelled) return
-        if (result) {
-          controlsRef.current?.stop()
-          onDetectedRef.current(result.getText())
-        } else if (err && !(err instanceof NotFoundException)) {
-          // NotFoundException fires on every frame with no barcode in view — expected
-          // and noisy, not a real error. Anything else (camera/permission failures)
-          // is worth surfacing.
-          setError(err.message)
+        if (cancelled || detectedRef.current) return
+        try {
+          if (result) {
+            detectedRef.current = true
+            controlsRef.current?.stop()
+            onDetectedRef.current(result.getText())
+          } else if (err && !(err instanceof NotFoundException)) {
+            // NotFoundException fires on every frame with no barcode in view — expected
+            // and noisy, not a real error. Anything else (camera/permission failures)
+            // is worth surfacing.
+            setError(err.message)
+          }
+        } catch (callbackErr) {
+          // Belt-and-suspenders: this callback runs inside ZXing's scan loop, not a
+          // React event handler or awaited promise, so an exception here (e.g. a bad
+          // result.getText()) would otherwise vanish as an unhandled rejection with
+          // nothing shown to the user — exactly the "silent failure" this guards against.
+          setError(callbackErr instanceof Error ? callbackErr.message : 'Something went wrong reading that barcode.')
         }
       })
       .then((controls) => {
@@ -50,6 +68,7 @@ export function BarcodeScanner({ onDetected, onClose }: { onDetected: (code: str
 
     return () => {
       cancelled = true
+      clearTimeout(stillLookingTimer)
       controlsRef.current?.stop()
     }
   }, [])
@@ -67,7 +86,11 @@ export function BarcodeScanner({ onDetected, onClose }: { onDetected: (code: str
         <div className="pointer-events-none absolute inset-x-8 top-1/2 h-24 -translate-y-1/2 rounded-2xl border-2 border-teal-400" />
       </div>
       <p className="px-6 pb-6 text-center text-sm text-white/70">
-        {error ? error : 'Point the camera at a barcode — it scans automatically.'}
+        {error
+          ? error
+          : stillLooking
+            ? "Still looking — try moving closer, steadying the barcode in the box, or improving lighting."
+            : 'Point the camera at a barcode — it scans automatically.'}
       </p>
     </div>
   )
