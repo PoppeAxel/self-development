@@ -778,41 +778,45 @@ export function Food() {
             </div>
           </div>
 
-          {ingredientFormMode === 'search' && (
-            <div className="flex flex-col gap-2 p-4">
-              <div className="flex gap-2">
-                <input
-                  value={lsvQuery}
-                  onChange={(e) => setLsvQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && runLsvSearch()}
-                  placeholder="e.g. kycklingfilé"
-                  className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
-                />
-                <button onClick={runLsvSearch} className="shrink-0 rounded-2xl bg-teal-600 px-4 py-2.5 font-semibold text-white">
-                  Search
-                </button>
-              </div>
-              {lsvSearching && <p className="text-sm text-gray-400">Searching…</p>}
-              {!lsvSearching && lsvResults.length === 0 && lsvQuery && (
-                <p className="text-sm text-gray-400">No matches — try a different search term, or switch to manual entry.</p>
-              )}
-              <div className="flex flex-col gap-2">
-                {lsvResults.map((f) => (
-                  <button
-                    key={f.nummer}
-                    onClick={async () => {
-                      await importLsvFood(f)
-                    }}
-                    className="rounded-2xl border border-gray-100 bg-white px-4 py-3 text-left text-sm font-medium text-gray-900 shadow-sm"
-                  >
-                    {f.namn}
+          {/* Single scrollable region for both the search results and the form below —
+              they used to be separate blocks with only the form scrollable, which made
+              search results past the fold unreachable (nothing to scroll them into view). */}
+          <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-4">
+            {ingredientFormMode === 'search' && (
+              <div className="flex flex-col gap-2 border-b border-gray-100 pb-4">
+                <div className="flex gap-2">
+                  <input
+                    value={lsvQuery}
+                    onChange={(e) => setLsvQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && runLsvSearch()}
+                    placeholder="e.g. kycklingfilé"
+                    className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
+                  />
+                  <button onClick={runLsvSearch} className="shrink-0 rounded-2xl bg-teal-600 px-4 py-2.5 font-semibold text-white">
+                    Search
                   </button>
-                ))}
+                </div>
+                {lsvSearching && <p className="text-sm text-gray-400">Searching…</p>}
+                {!lsvSearching && lsvResults.length === 0 && lsvQuery && (
+                  <p className="text-sm text-gray-400">No matches — try a different search term, or switch to manual entry.</p>
+                )}
+                <div className="flex flex-col gap-2">
+                  {lsvResults.map((f) => (
+                    <button
+                      key={f.nummer}
+                      onClick={async () => {
+                        await importLsvFood(f)
+                      }}
+                      className="rounded-2xl border border-gray-100 bg-white px-4 py-3 text-left text-sm font-medium text-gray-900 shadow-sm"
+                    >
+                      {f.namn}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          <form onSubmit={saveIngredientForm} className="flex flex-1 flex-col gap-2 overflow-y-auto p-4">
+            <form onSubmit={saveIngredientForm} className="flex flex-col gap-2">
             <input
               value={ingredientForm.name}
               onChange={(e) => setIngredientForm((f) => ({ ...f, name: e.target.value }))}
@@ -860,7 +864,8 @@ export function Food() {
             <button type="submit" className="mt-2 rounded-2xl bg-teal-600 px-4 py-2.5 font-semibold text-white">
               {editingIngredient ? 'Save changes' : 'Save ingredient'}
             </button>
-          </form>
+            </form>
+          </div>
         </div>
       )}
 
