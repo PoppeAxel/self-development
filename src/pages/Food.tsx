@@ -474,10 +474,16 @@ export function Food() {
 
       {subTab === 'recipes' && (
         <>
+          <button
+            onClick={openNewRecipe}
+            className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-teal-600"
+          >
+            + New recipe
+          </button>
           {loading ? (
             <p className="text-sm text-gray-400">Loading…</p>
           ) : recipes.length === 0 ? (
-            <p className="text-sm text-gray-400">No recipes yet — add one below.</p>
+            <p className="text-sm text-gray-400">No recipes yet — add one above.</p>
           ) : (
             <div className="flex flex-col gap-2">
               {recipes.map((recipe) => {
@@ -506,21 +512,22 @@ export function Food() {
               })}
             </div>
           )}
-          <button
-            onClick={openNewRecipe}
-            className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-teal-600"
-          >
-            + New recipe
-          </button>
         </>
       )}
 
       {subTab === 'library' && (
         <>
+          <button
+            onClick={openNewIngredient}
+            className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-teal-600"
+          >
+            + New ingredient
+          </button>
+          <p className="text-[11px] text-gray-400">Nutrition data via Livsmedelsverket's Livsmedelsdatabasen (CC BY 4.0).</p>
           {loading ? (
             <p className="text-sm text-gray-400">Loading…</p>
           ) : ingredients.length === 0 ? (
-            <p className="text-sm text-gray-400">No ingredients yet — add one below.</p>
+            <p className="text-sm text-gray-400">No ingredients yet — add one above.</p>
           ) : (
             <div className="flex flex-col gap-2">
               {ingredients.map((ingredient) => (
@@ -549,13 +556,6 @@ export function Food() {
               ))}
             </div>
           )}
-          <button
-            onClick={openNewIngredient}
-            className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-teal-600"
-          >
-            + New ingredient
-          </button>
-          <p className="text-[11px] text-gray-400">Nutrition data via Livsmedelsverket's Livsmedelsdatabasen (CC BY 4.0).</p>
         </>
       )}
 
