@@ -1,10 +1,11 @@
-export type Tab = 'today' | 'calendar' | 'goals' | 'journal' | 'settings'
+export type Tab = 'today' | 'calendar' | 'goals' | 'journal' | 'food' | 'settings'
 
 const TABS: { id: Tab; label: string; icon: string; active: string; iconBg: string }[] = [
   { id: 'today', label: 'Today', icon: '✓', active: 'text-pink-600', iconBg: 'bg-pink-100' },
   { id: 'calendar', label: 'Calendar', icon: '📅', active: 'text-rose-600', iconBg: 'bg-rose-100' },
   { id: 'goals', label: 'Goals', icon: '◎', active: 'text-amber-600', iconBg: 'bg-amber-100' },
   { id: 'journal', label: 'Journal', icon: '✎', active: 'text-violet-600', iconBg: 'bg-violet-100' },
+  { id: 'food', label: 'Food', icon: '🍽', active: 'text-teal-600', iconBg: 'bg-teal-100' },
   { id: 'settings', label: 'Settings', icon: '⚙', active: 'text-emerald-600', iconBg: 'bg-emerald-100' },
 ]
 

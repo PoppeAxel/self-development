@@ -6,6 +6,7 @@ import { Today } from './pages/Today'
 import { Calendar } from './pages/Calendar'
 import { Goals } from './pages/Goals'
 import { Journal } from './pages/Journal'
+import { Food } from './pages/Food'
 import { Settings } from './pages/Settings'
 
 function Shell() {
@@ -23,6 +24,7 @@ function Shell() {
         {tab === 'calendar' && <Calendar />}
         {tab === 'goals' && <Goals />}
         {tab === 'journal' && <Journal />}
+        {tab === 'food' && <Food />}
         {tab === 'settings' && <Settings />}
       </div>
       <TabBar active={tab} onChange={setTab} />

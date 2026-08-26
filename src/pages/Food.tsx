@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
-import { ConfirmDialog } from './ConfirmDialog'
+import { RefreshButton } from '../components/RefreshButton'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import {
   addMacros,
   logEntryMacros,
@@ -20,9 +21,9 @@ function round(n: number, decimals = 0) {
   return Math.round(n * f) / f
 }
 
-function MacroRow({ macros, compact = false }: { macros: Macros; compact?: boolean }) {
+function MacroRow({ macros }: { macros: Macros }) {
   return (
-    <p className={compact ? 'text-[11px] text-gray-400' : 'text-sm text-gray-500'}>
+    <p className="text-sm text-gray-500">
       P {round(macros.protein)}g · C {round(macros.carbs)}g · F {round(macros.fat)}g · Fiber {round(macros.fiber)}g
     </p>
   )
@@ -47,7 +48,12 @@ function emptyIngredientForm(): IngredientFormState {
   return { name: '', kcal: '', protein: '', carbs: '', fat: '', fiber: '' }
 }
 
-export function FoodTracking() {
+type FoodSubTab = 'log' | 'recipes' | 'library'
+const SUB_TABS: FoodSubTab[] = ['log', 'recipes', 'library']
+const SUB_TAB_LABELS: Record<FoodSubTab, string> = { log: 'Log', recipes: 'Recipes', library: 'Library' }
+
+export function Food() {
+  const [subTab, setSubTab] = useState<FoodSubTab>('log')
   const [ingredients, setIngredients] = useState<Ingredient[]>([])
   const [recipes, setRecipes] = useState<Recipe[]>([])
   const [recipeLines, setRecipeLines] = useState<Map<string, RecipeIngredient[]>>(new Map())
@@ -60,9 +66,6 @@ export function FoodTracking() {
   const [quantifying, setQuantifying] = useState<{ kind: 'recipe' | 'ingredient'; id: string; name: string } | null>(null)
   const [quantifyValue, setQuantifyValue] = useState('')
   const [confirmDeleteEntry, setConfirmDeleteEntry] = useState<FoodLogEntry | null>(null)
-
-  const [recipesOpen, setRecipesOpen] = useState(false)
-  const [ingredientsOpen, setIngredientsOpen] = useState(false)
 
   const [recipeBuilderOpen, setRecipeBuilderOpen] = useState(false)
   const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null)
@@ -338,137 +341,185 @@ export function FoodTracking() {
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-3 py-2 shadow-sm">
-        <span className="text-sm font-medium text-gray-500">Log for</span>
-        <input
-          value={logDate}
-          onChange={(e) => setLogDate(e.target.value)}
-          type="date"
-          className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-emerald-400"
-        />
+    <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">Food</h1>
+        <RefreshButton onRefresh={load} />
       </div>
 
-      <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-        <p className="text-lg font-bold text-gray-900">{round(dayTotal.kcal)} kcal</p>
-        <MacroRow macros={dayTotal} />
+      <div className="flex gap-2 rounded-2xl bg-gray-100 p-1">
+        {SUB_TABS.map((t) => (
+          <button
+            key={t}
+            onClick={() => setSubTab(t)}
+            className={`flex-1 rounded-xl px-2 py-2 text-sm font-medium transition ${
+              subTab === t ? 'bg-white text-teal-600 shadow-sm' : 'text-gray-500'
+            }`}
+          >
+            {SUB_TAB_LABELS[t]}
+          </button>
+        ))}
       </div>
 
-      {loading ? (
-        <p className="text-sm text-gray-400">Loading…</p>
-      ) : dayEntries.length === 0 ? (
-        <p className="text-sm text-gray-400">Nothing logged for this day yet.</p>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {dayEntries.map((entry) => {
-            const m = macrosFor(entry)
-            return (
-              <li key={entry.id} className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-                <div className="flex-1">
-                  <p className="font-medium text-gray-900">{entryLabel(entry)}</p>
-                  <p className="text-xs text-gray-400">
-                    {round(m.kcal)} kcal · P {round(m.protein)}g C {round(m.carbs)}g F {round(m.fat)}g
-                  </p>
-                </div>
-                <button onClick={() => setConfirmDeleteEntry(entry)} className="pl-3 text-gray-300" aria-label="Remove entry">
-                  ✕
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-      )}
-
-      <button onClick={openAddLog} className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-emerald-600">
-        + Add food
-      </button>
-
-      {kcalSeries.length > 1 && (
-        <div>
-          <h2 className="mb-2 text-sm font-semibold text-gray-500">Daily calories</h2>
-          <div className="h-40 rounded-3xl border border-gray-100 bg-white p-2 shadow-sm">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={kcalSeries} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
-                <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
-                <YAxis stroke="#9ca3af" fontSize={11} />
-                <Tooltip
-                  contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }}
-                  formatter={(value) => [`${value} kcal`, 'Logged']}
-                />
-                <Bar dataKey="value" fill="#10b981" radius={[4, 4, 0, 0]} isAnimationActive={false} />
-              </BarChart>
-            </ResponsiveContainer>
+      {subTab === 'log' && (
+        <>
+          <div className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-3 py-2 shadow-sm">
+            <span className="text-sm font-medium text-gray-500">Log for</span>
+            <input
+              value={logDate}
+              onChange={(e) => setLogDate(e.target.value)}
+              type="date"
+              className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 outline-none focus:border-teal-400"
+            />
           </div>
-        </div>
-      )}
 
-      <button onClick={() => setRecipesOpen((o) => !o)} className="flex items-center justify-between text-sm font-semibold text-gray-500">
-        <span>Your recipes ({recipes.length})</span>
-        <span className="text-gray-400">{recipesOpen ? 'Hide ▲' : 'Show ▼'}</span>
-      </button>
-      {recipesOpen && (
-        <div className="flex flex-col gap-2">
-          {recipes.map((recipe) => {
-            const lines = recipeLines.get(recipe.id) ?? []
-            const perServing = recipePerServingMacros(recipe, lines, ingredientsById)
-            return (
-              <div key={recipe.id} className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-                <div className="flex-1">
-                  <p className="font-medium text-gray-900">{recipe.name}</p>
-                  <p className="text-[11px] text-gray-400">
-                    {round(perServing.kcal)} kcal/serving · {recipe.servings} serving{recipe.servings === 1 ? '' : 's'} · {lines.length}{' '}
-                    ingredient{lines.length === 1 ? '' : 's'}
-                  </p>
-                </div>
-                <button onClick={() => openEditRecipe(recipe)} className="pl-3 text-gray-300" aria-label="Edit recipe">
-                  ✎
-                </button>
-                <button onClick={() => setConfirmDeleteRecipe(recipe)} className="pl-3 text-gray-300" aria-label="Remove recipe">
-                  ✕
-                </button>
-              </div>
-            )
-          })}
-        </div>
-      )}
-      <button
-        onClick={openNewRecipe}
-        className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-emerald-600"
-      >
-        + New recipe
-      </button>
+          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+            <p className="text-lg font-bold text-gray-900">{round(dayTotal.kcal)} kcal</p>
+            <MacroRow macros={dayTotal} />
+          </div>
 
-      <button onClick={() => setIngredientsOpen((o) => !o)} className="mt-1 text-sm font-medium text-gray-500">
-        🥕 Ingredient library ({ingredients.length})
-      </button>
-      {ingredientsOpen && (
-        <div className="flex flex-col gap-2">
-          {ingredients.map((ingredient) => (
-            <div key={ingredient.id} className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-              <div className="flex-1">
-                <p className="font-medium text-gray-900">{ingredient.name}</p>
-                <p className="text-[11px] text-gray-400">
-                  {ingredient.kcal_per_100g} kcal/100g
-                  {ingredient.source === 'livsmedelsverket' ? ' · Livsmedelsverket' : ''}
-                </p>
+          {loading ? (
+            <p className="text-sm text-gray-400">Loading…</p>
+          ) : dayEntries.length === 0 ? (
+            <p className="text-sm text-gray-400">Nothing logged for this day yet.</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {dayEntries.map((entry) => {
+                const m = macrosFor(entry)
+                return (
+                  <li
+                    key={entry.id}
+                    className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm"
+                  >
+                    <div className="flex-1">
+                      <p className="font-medium text-gray-900">{entryLabel(entry)}</p>
+                      <p className="text-xs text-gray-400">
+                        {round(m.kcal)} kcal · P {round(m.protein)}g C {round(m.carbs)}g F {round(m.fat)}g
+                      </p>
+                    </div>
+                    <button onClick={() => setConfirmDeleteEntry(entry)} className="pl-3 text-gray-300" aria-label="Remove entry">
+                      ✕
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+
+          <button
+            onClick={openAddLog}
+            className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-teal-600"
+          >
+            + Add food
+          </button>
+
+          {kcalSeries.length > 1 && (
+            <div>
+              <h2 className="mb-2 text-sm font-semibold text-gray-500">Daily calories</h2>
+              <div className="h-40 rounded-3xl border border-gray-100 bg-white p-2 shadow-sm">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={kcalSeries} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
+                    <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
+                    <YAxis stroke="#9ca3af" fontSize={11} />
+                    <Tooltip
+                      contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }}
+                      formatter={(value) => [`${value} kcal`, 'Logged']}
+                    />
+                    <Bar dataKey="value" fill="#0d9488" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
-              <button onClick={() => openEditIngredient(ingredient)} className="pl-3 text-gray-300" aria-label="Edit ingredient">
-                ✎
-              </button>
-              <button onClick={() => setConfirmDeleteIngredient(ingredient)} className="pl-3 text-gray-300" aria-label="Remove ingredient">
-                ✕
-              </button>
             </div>
-          ))}
+          )}
+        </>
+      )}
+
+      {subTab === 'recipes' && (
+        <>
+          {loading ? (
+            <p className="text-sm text-gray-400">Loading…</p>
+          ) : recipes.length === 0 ? (
+            <p className="text-sm text-gray-400">No recipes yet — add one below.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {recipes.map((recipe) => {
+                const lines = recipeLines.get(recipe.id) ?? []
+                const perServing = recipePerServingMacros(recipe, lines, ingredientsById)
+                return (
+                  <div
+                    key={recipe.id}
+                    className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm"
+                  >
+                    <div className="flex-1">
+                      <p className="font-medium text-gray-900">{recipe.name}</p>
+                      <p className="text-[11px] text-gray-400">
+                        {round(perServing.kcal)} kcal/serving · {recipe.servings} serving{recipe.servings === 1 ? '' : 's'} ·{' '}
+                        {lines.length} ingredient{lines.length === 1 ? '' : 's'}
+                      </p>
+                    </div>
+                    <button onClick={() => openEditRecipe(recipe)} className="pl-3 text-gray-300" aria-label="Edit recipe">
+                      ✎
+                    </button>
+                    <button onClick={() => setConfirmDeleteRecipe(recipe)} className="pl-3 text-gray-300" aria-label="Remove recipe">
+                      ✕
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          <button
+            onClick={openNewRecipe}
+            className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-teal-600"
+          >
+            + New recipe
+          </button>
+        </>
+      )}
+
+      {subTab === 'library' && (
+        <>
+          {loading ? (
+            <p className="text-sm text-gray-400">Loading…</p>
+          ) : ingredients.length === 0 ? (
+            <p className="text-sm text-gray-400">No ingredients yet — add one below.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {ingredients.map((ingredient) => (
+                <div
+                  key={ingredient.id}
+                  className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm"
+                >
+                  <div className="flex-1">
+                    <p className="font-medium text-gray-900">{ingredient.name}</p>
+                    <p className="text-[11px] text-gray-400">
+                      {ingredient.kcal_per_100g} kcal/100g
+                      {ingredient.source === 'livsmedelsverket' ? ' · Livsmedelsverket' : ''}
+                    </p>
+                  </div>
+                  <button onClick={() => openEditIngredient(ingredient)} className="pl-3 text-gray-300" aria-label="Edit ingredient">
+                    ✎
+                  </button>
+                  <button
+                    onClick={() => setConfirmDeleteIngredient(ingredient)}
+                    className="pl-3 text-gray-300"
+                    aria-label="Remove ingredient"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <button
             onClick={openNewIngredient}
-            className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-emerald-600"
+            className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-teal-600"
           >
             + New ingredient
           </button>
           <p className="text-[11px] text-gray-400">Nutrition data via Livsmedelsverket's Livsmedelsdatabasen (CC BY 4.0).</p>
-        </div>
+        </>
       )}
 
       {/* Add to log */}
@@ -486,7 +537,7 @@ export function FoodTracking() {
               value={addLogQuery}
               onChange={(e) => setAddLogQuery(e.target.value)}
               placeholder="Search recipes and ingredients"
-              className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-emerald-400"
+              className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
             />
           </div>
           <div className="flex-1 overflow-y-auto px-4 pb-4">
@@ -527,7 +578,7 @@ export function FoodTracking() {
               </>
             )}
             {matchingRecipes.length === 0 && matchingIngredients.length === 0 && (
-              <p className="text-sm text-gray-400">No matches — add a new ingredient or recipe from the sections below first.</p>
+              <p className="text-sm text-gray-400">No matches — add a new ingredient or recipe from the Recipes/Library tabs first.</p>
             )}
           </div>
         </div>
@@ -544,13 +595,13 @@ export function FoodTracking() {
               onChange={(e) => setQuantifyValue(e.target.value)}
               type="number"
               step={quantifying.kind === 'recipe' ? '0.5' : '1'}
-              className="mt-3 w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-emerald-400"
+              className="mt-3 w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-teal-400"
             />
             <div className="mt-4 flex gap-2">
               <button onClick={() => setQuantifying(null)} className="flex-1 rounded-2xl bg-gray-100 px-4 py-2.5 font-medium text-gray-600">
                 Cancel
               </button>
-              <button onClick={confirmQuantify} className="flex-1 rounded-2xl bg-emerald-600 px-4 py-2.5 font-semibold text-white">
+              <button onClick={confirmQuantify} className="flex-1 rounded-2xl bg-teal-600 px-4 py-2.5 font-semibold text-white">
                 Log
               </button>
             </div>
@@ -579,7 +630,7 @@ export function FoodTracking() {
               value={recipeName}
               onChange={(e) => setRecipeName(e.target.value)}
               placeholder="Recipe name"
-              className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-emerald-400"
+              className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
             />
             <div className="flex items-center gap-2">
               <span className="text-sm text-gray-500">Makes</span>
@@ -588,7 +639,7 @@ export function FoodTracking() {
                 onChange={(e) => setRecipeServings(e.target.value)}
                 type="number"
                 step="0.5"
-                className="w-20 rounded-2xl border border-gray-200 bg-white px-3 py-2 text-center text-gray-900 outline-none focus:border-emerald-400"
+                className="w-20 rounded-2xl border border-gray-200 bg-white px-3 py-2 text-center text-gray-900 outline-none focus:border-teal-400"
               />
               <span className="text-sm text-gray-500">servings</span>
             </div>
@@ -611,7 +662,7 @@ export function FoodTracking() {
                     onChange={(e) => setRecipeRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, grams: e.target.value } : r)))}
                     type="number"
                     placeholder="g"
-                    className="w-16 min-w-0 rounded-xl border border-gray-200 bg-white px-2 py-2 text-center text-gray-900 outline-none focus:border-emerald-400"
+                    className="w-16 min-w-0 rounded-xl border border-gray-200 bg-white px-2 py-2 text-center text-gray-900 outline-none focus:border-teal-400"
                   />
                   <button
                     type="button"
@@ -630,11 +681,11 @@ export function FoodTracking() {
                 setPickingIngredientFor('new')
                 setIngredientPickQuery('')
               }}
-              className="rounded-2xl border-2 border-dashed border-gray-200 py-2 text-sm font-semibold text-emerald-600"
+              className="rounded-2xl border-2 border-dashed border-gray-200 py-2 text-sm font-semibold text-teal-600"
             >
               + Add ingredient
             </button>
-            <button type="submit" className="mt-2 rounded-2xl bg-emerald-600 px-4 py-2.5 font-semibold text-white">
+            <button type="submit" className="mt-2 rounded-2xl bg-teal-600 px-4 py-2.5 font-semibold text-white">
               {editingRecipe ? 'Save changes' : 'Save recipe'}
             </button>
           </form>
@@ -656,7 +707,7 @@ export function FoodTracking() {
                   value={ingredientPickQuery}
                   onChange={(e) => setIngredientPickQuery(e.target.value)}
                   placeholder="Search ingredient library"
-                  className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-emerald-400"
+                  className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
                 />
               </div>
               <div className="flex-1 overflow-y-auto px-4 pb-4">
@@ -667,7 +718,8 @@ export function FoodTracking() {
                     <div className="flex flex-col gap-2">
                       {candidates.length === 0 && (
                         <p className="text-sm text-gray-400">
-                          No matches — close this and add it to your ingredient library first (manual entry or Livsmedelsverket search).
+                          No matches — close this and add it to your ingredient library first (Library tab: manual entry or
+                          Livsmedelsverket search).
                         </p>
                       )}
                       {candidates.map((ing) => (
@@ -709,7 +761,7 @@ export function FoodTracking() {
                 type="button"
                 onClick={() => setIngredientFormMode('manual')}
                 className={`flex-1 rounded-xl px-2 py-2 text-sm font-medium transition ${
-                  ingredientFormMode === 'manual' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500'
+                  ingredientFormMode === 'manual' ? 'bg-white text-teal-600 shadow-sm' : 'text-gray-500'
                 }`}
               >
                 Manual entry
@@ -718,7 +770,7 @@ export function FoodTracking() {
                 type="button"
                 onClick={() => setIngredientFormMode('search')}
                 className={`flex-1 rounded-xl px-2 py-2 text-sm font-medium transition ${
-                  ingredientFormMode === 'search' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500'
+                  ingredientFormMode === 'search' ? 'bg-white text-teal-600 shadow-sm' : 'text-gray-500'
                 }`}
               >
                 Search Livsmedelsverket
@@ -734,12 +786,9 @@ export function FoodTracking() {
                   onChange={(e) => setLsvQuery(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && runLsvSearch()}
                   placeholder="e.g. kycklingfilé"
-                  className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-emerald-400"
+                  className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
                 />
-                <button
-                  onClick={runLsvSearch}
-                  className="shrink-0 rounded-2xl bg-emerald-600 px-4 py-2.5 font-semibold text-white"
-                >
+                <button onClick={runLsvSearch} className="shrink-0 rounded-2xl bg-teal-600 px-4 py-2.5 font-semibold text-white">
                   Search
                 </button>
               </div>
@@ -768,7 +817,7 @@ export function FoodTracking() {
               value={ingredientForm.name}
               onChange={(e) => setIngredientForm((f) => ({ ...f, name: e.target.value }))}
               placeholder="Ingredient name"
-              className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-emerald-400"
+              className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
             />
             <p className="text-xs text-gray-400">Per 100g:</p>
             <div className="grid grid-cols-2 gap-2">
@@ -777,38 +826,38 @@ export function FoodTracking() {
                 onChange={(e) => setIngredientForm((f) => ({ ...f, kcal: e.target.value }))}
                 type="number"
                 placeholder="Calories (kcal)"
-                className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-emerald-400"
+                className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
               />
               <input
                 value={ingredientForm.protein}
                 onChange={(e) => setIngredientForm((f) => ({ ...f, protein: e.target.value }))}
                 type="number"
                 placeholder="Protein (g)"
-                className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-emerald-400"
+                className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
               />
               <input
                 value={ingredientForm.carbs}
                 onChange={(e) => setIngredientForm((f) => ({ ...f, carbs: e.target.value }))}
                 type="number"
                 placeholder="Carbs (g)"
-                className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-emerald-400"
+                className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
               />
               <input
                 value={ingredientForm.fat}
                 onChange={(e) => setIngredientForm((f) => ({ ...f, fat: e.target.value }))}
                 type="number"
                 placeholder="Fat (g)"
-                className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-emerald-400"
+                className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
               />
               <input
                 value={ingredientForm.fiber}
                 onChange={(e) => setIngredientForm((f) => ({ ...f, fiber: e.target.value }))}
                 type="number"
                 placeholder="Fiber (g)"
-                className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-emerald-400"
+                className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
               />
             </div>
-            <button type="submit" className="mt-2 rounded-2xl bg-emerald-600 px-4 py-2.5 font-semibold text-white">
+            <button type="submit" className="mt-2 rounded-2xl bg-teal-600 px-4 py-2.5 font-semibold text-white">
               {editingIngredient ? 'Save changes' : 'Save ingredient'}
             </button>
           </form>

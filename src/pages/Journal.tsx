@@ -5,7 +5,6 @@ import { supabase } from '../lib/supabase'
 import { todayISO, weekStartISO } from '../lib/dates'
 import { RefreshButton } from '../components/RefreshButton'
 import { GymPrograms } from '../components/GymPrograms'
-import { FoodTracking } from '../components/FoodTracking'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
 import { formatWorkoutDuration, formatWorkoutDistance, isStrengthWorkout, getSportStyle } from '../lib/workouts'
@@ -17,18 +16,15 @@ import type { JournalEntry, JournalEntryType, Workout } from '../lib/types'
 // type. cardio_minutes/strength_minutes (the derived daily totals journal_entries stores
 // purely for auto_metric matching, see src/lib/metrics.ts) are excluded here since Cardio/
 // Strength already cover that data with richer detail. Mood/Notes are dropped for now —
-// not deleted, just off the tab bar. 'food' is its own tables (ingredients/recipes/
-// food_log_entries), not a JournalEntryType — see FoodTracking.tsx, which renders its own
-// log/chart/recipe UI entirely (this file just mounts it, no generic entry list applies).
-type JournalTab = Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes' | 'mood' | 'note'> | 'cardio' | 'strength' | 'food'
-const TABS: JournalTab[] = ['weight', 'sleep_hours', 'steps', 'cardio', 'strength', 'food']
+// not deleted, just off the tab bar.
+type JournalTab = Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes' | 'mood' | 'note'> | 'cardio' | 'strength'
+const TABS: JournalTab[] = ['weight', 'sleep_hours', 'steps', 'cardio', 'strength']
 const TAB_LABELS: Record<JournalTab, string> = {
   weight: 'Weight',
   sleep_hours: 'Sleep',
   steps: 'Steps',
   cardio: 'Cardio',
   strength: 'Strength',
-  food: 'Food',
 }
 const ENTRY_TYPE_LABELS: Partial<Record<JournalEntryType, string>> = {
   weight: 'weight entry',
@@ -568,8 +564,6 @@ export function Journal() {
           <p className="text-sm text-gray-400">Total strength time below is synced automatically from Strava.</p>
         </>
       )}
-
-      {tab === 'food' && <FoodTracking />}
 
       {tab === 'weight' && firstWeightEntry && latestWeightEntry && (
         <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
@@ -1132,7 +1126,7 @@ export function Journal() {
         </div>
       )}
 
-      {loading || tab === 'food' ? null : (
+      {loading ? null : (
         <button
           onClick={() => setShowHistory((v) => !v)}
           className="flex items-center justify-between text-sm font-semibold text-gray-500"
@@ -1142,7 +1136,7 @@ export function Journal() {
         </button>
       )}
 
-      {!loading && tab !== 'food' && showHistory && (tab === 'cardio' || tab === 'strength' ? (
+      {!loading && showHistory && (tab === 'cardio' || tab === 'strength' ? (
         <>
           {(() => {
             const list = tab === 'cardio' ? recentCardioWorkouts : recentStrengthWorkouts
