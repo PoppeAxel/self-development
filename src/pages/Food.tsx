@@ -87,6 +87,7 @@ export function Food() {
   const [lsvSearching, setLsvSearching] = useState(false)
   const [confirmDeleteIngredient, setConfirmDeleteIngredient] = useState<Ingredient | null>(null)
   const [scannerOpen, setScannerOpen] = useState(false)
+  const [scanLookingUp, setScanLookingUp] = useState(false)
   const [scanLookupError, setScanLookupError] = useState<string | null>(null)
 
   async function load() {
@@ -271,6 +272,7 @@ export function Food() {
     setLsvQuery('')
     setLsvResults([])
     setScanLookupError(null)
+    setScanLookingUp(false)
     setIngredientFormOpen(true)
   }
 
@@ -313,12 +315,23 @@ export function Food() {
 
   async function handleBarcodeDetected(barcode: string) {
     setScannerOpen(false)
-    const product = await fetchOpenFoodFactsProduct(barcode)
-    if (!product) {
-      setScanLookupError(`No Open Food Facts entry found for barcode ${barcode} — try manual entry instead.`)
+    setScanLookupError(null)
+    setScanLookingUp(true)
+    let product
+    try {
+      product = await fetchOpenFoodFactsProduct(barcode)
+    } catch {
+      // Network/fetch failure — distinct from "we asked Open Food Facts and it doesn't
+      // have this barcode" below, so the message doesn't imply the barcode itself is bad.
+      setScanLookingUp(false)
+      setScanLookupError(`Detected barcode ${barcode}, but couldn't reach Open Food Facts — check your connection and try again.`)
       return
     }
-    setScanLookupError(null)
+    setScanLookingUp(false)
+    if (!product) {
+      setScanLookupError(`Detected barcode ${barcode}, but couldn't find it on Open Food Facts — try manual entry instead.`)
+      return
+    }
     setIngredientForm({
       name: product.name,
       kcal: String(round(product.macros.kcal, 1)),
@@ -813,6 +826,7 @@ export function Food() {
             >
               📷 Scan barcode
             </button>
+            {scanLookingUp && <p className="mt-2 text-xs text-gray-400">Looking up barcode…</p>}
             {scanLookupError && <p className="mt-2 text-xs text-red-500">{scanLookupError}</p>}
           </div>
 
