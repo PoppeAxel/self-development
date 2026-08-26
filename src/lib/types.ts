@@ -145,11 +145,14 @@ export interface Ingredient {
   created_at: string
 }
 
+export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack'
+
 export interface Recipe {
   id: string
   user_id: string
   name: string
   servings: number
+  meal_type: MealType | null
   created_at: string
 }
 
@@ -170,5 +173,6 @@ export interface FoodLogEntry {
   servings: number | null
   ingredient_id: string | null
   grams: number | null
+  meal_type: MealType | null
   created_at: string
 }

@@ -12,11 +12,33 @@ import {
   searchLivsmedelsverket,
   fetchLivsmedelsverketMacros,
   fetchOpenFoodFactsProduct,
+  defaultMealTypeForNow,
+  MEAL_TYPES,
+  MEAL_TYPE_INFO,
   ZERO_MACROS,
   type Macros,
   type LivsmedelsverketFood,
 } from '../lib/food'
-import type { FoodLogEntry, Ingredient, Recipe, RecipeIngredient } from '../lib/types'
+import type { FoodLogEntry, Ingredient, MealType, Recipe, RecipeIngredient } from '../lib/types'
+
+function MealTypePicker({ value, onChange }: { value: MealType | null; onChange: (v: MealType | null) => void }) {
+  return (
+    <div className="grid grid-cols-2 gap-1.5">
+      {MEAL_TYPES.map((m) => (
+        <button
+          key={m}
+          type="button"
+          onClick={() => onChange(value === m ? null : m)}
+          className={`rounded-xl py-1.5 text-xs font-medium transition ${
+            value === m ? 'bg-teal-100 text-teal-700' : 'bg-gray-100 text-gray-500'
+          }`}
+        >
+          {MEAL_TYPE_INFO[m].icon} {MEAL_TYPE_INFO[m].label}
+        </button>
+      ))}
+    </div>
+  )
+}
 
 function round(n: number, decimals = 0) {
   const f = 10 ** decimals
@@ -67,12 +89,14 @@ export function Food() {
   const [addLogQuery, setAddLogQuery] = useState('')
   const [quantifying, setQuantifying] = useState<{ kind: 'recipe' | 'ingredient'; id: string; name: string } | null>(null)
   const [quantifyValue, setQuantifyValue] = useState('')
+  const [quantifyMealType, setQuantifyMealType] = useState<MealType | null>(null)
   const [confirmDeleteEntry, setConfirmDeleteEntry] = useState<FoodLogEntry | null>(null)
 
   const [recipeBuilderOpen, setRecipeBuilderOpen] = useState(false)
   const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null)
   const [recipeName, setRecipeName] = useState('')
   const [recipeServings, setRecipeServings] = useState('1')
+  const [recipeMealType, setRecipeMealType] = useState<MealType | null>(null)
   const [recipeRows, setRecipeRows] = useState<RecipeIngredientRow[]>([])
   const [pickingIngredientFor, setPickingIngredientFor] = useState<number | 'new' | null>(null)
   const [ingredientPickQuery, setIngredientPickQuery] = useState('')
@@ -128,6 +152,11 @@ export function Food() {
   function beginQuantify(kind: 'recipe' | 'ingredient', id: string, name: string) {
     setQuantifying({ kind, id, name })
     setQuantifyValue(kind === 'recipe' ? '1' : '100')
+    // A recipe's own meal tag (if it has one) is a better default than a time-of-day
+    // guess — e.g. a recipe tagged "Dinner" logged the next day as lunch leftovers is
+    // the exception, not the rule.
+    const recipeMeal = kind === 'recipe' ? (recipesById.get(id)?.meal_type ?? null) : null
+    setQuantifyMealType(recipeMeal ?? defaultMealTypeForNow())
     setAddLogOpen(false)
   }
 
@@ -143,7 +172,7 @@ export function Food() {
       quantifying.kind === 'recipe'
         ? { recipe_id: quantifying.id, servings: value, ingredient_id: null, grams: null }
         : { ingredient_id: quantifying.id, grams: value, recipe_id: null, servings: null }
-    await supabase.from('food_log_entries').insert({ ...payload, date: logDate, user_id: user.id })
+    await supabase.from('food_log_entries').insert({ ...payload, meal_type: quantifyMealType, date: logDate, user_id: user.id })
     setQuantifying(null)
     load()
   }
@@ -170,6 +199,20 @@ export function Food() {
   const dayEntries = entries.filter((e) => e.date === logDate)
   const dayTotal = dayEntries.reduce((sum, e) => addMacros(sum, macrosFor(e)), ZERO_MACROS)
 
+  // Grouped by meal for display — 'null' (no meal tag, e.g. logged before this feature
+  // existed) gets its own bucket rendered last under "Other", rather than being merged
+  // into Snack or hidden, so nothing silently disappears from the day's list.
+  const dayEntriesByMeal = new Map<MealType | null, FoodLogEntry[]>()
+  for (const entry of dayEntries) {
+    const arr = dayEntriesByMeal.get(entry.meal_type) ?? []
+    arr.push(entry)
+    dayEntriesByMeal.set(entry.meal_type, arr)
+  }
+  const mealSections: { meal: MealType | null; entries: FoodLogEntry[] }[] = [
+    ...MEAL_TYPES.map((meal) => ({ meal, entries: dayEntriesByMeal.get(meal) ?? [] })).filter((s) => s.entries.length > 0),
+    ...(dayEntriesByMeal.has(null) ? [{ meal: null, entries: dayEntriesByMeal.get(null)! }] : []),
+  ]
+
   // Last 14 days of kcal totals, oldest first, for the trend chart.
   const kcalByDate = new Map<string, number>()
   for (const e of entries) {
@@ -190,6 +233,7 @@ export function Food() {
     setEditingRecipe(null)
     setRecipeName('')
     setRecipeServings('1')
+    setRecipeMealType(null)
     setRecipeRows([])
     setRecipeBuilderOpen(true)
   }
@@ -199,6 +243,7 @@ export function Food() {
     setEditingRecipe(recipe)
     setRecipeName(recipe.name)
     setRecipeServings(String(recipe.servings))
+    setRecipeMealType(recipe.meal_type)
     setRecipeRows(
       lines.map((l) => ({
         ingredientId: l.ingredient_id,
@@ -234,11 +279,15 @@ export function Food() {
 
     let recipeId: string
     if (editingRecipe) {
-      await supabase.from('recipes').update({ name, servings }).eq('id', editingRecipe.id)
+      await supabase.from('recipes').update({ name, servings, meal_type: recipeMealType }).eq('id', editingRecipe.id)
       await supabase.from('recipe_ingredients').delete().eq('recipe_id', editingRecipe.id)
       recipeId = editingRecipe.id
     } else {
-      const { data, error } = await supabase.from('recipes').insert({ name, servings, user_id: user.id }).select().single()
+      const { data, error } = await supabase
+        .from('recipes')
+        .insert({ name, servings, meal_type: recipeMealType, user_id: user.id })
+        .select()
+        .single()
       if (error || !data) return
       recipeId = data.id
     }
@@ -420,27 +469,42 @@ export function Food() {
           ) : dayEntries.length === 0 ? (
             <p className="text-sm text-gray-400">Nothing logged for this day yet.</p>
           ) : (
-            <ul className="flex flex-col gap-2">
-              {dayEntries.map((entry) => {
-                const m = macrosFor(entry)
+            <div className="flex flex-col gap-3">
+              {mealSections.map(({ meal, entries: mealEntries }) => {
+                const mealTotal = mealEntries.reduce((sum, e) => addMacros(sum, macrosFor(e)), ZERO_MACROS)
                 return (
-                  <li
-                    key={entry.id}
-                    className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm"
-                  >
-                    <div className="flex-1">
-                      <p className="font-medium text-gray-900">{entryLabel(entry)}</p>
-                      <p className="text-xs text-gray-400">
-                        {round(m.kcal)} kcal · P {round(m.protein)}g C {round(m.carbs)}g F {round(m.fat)}g
-                      </p>
+                  <div key={meal ?? 'other'}>
+                    <div className="mb-1 flex items-center justify-between px-1">
+                      <span className="text-xs font-semibold uppercase text-gray-400">
+                        {meal ? `${MEAL_TYPE_INFO[meal].icon} ${MEAL_TYPE_INFO[meal].label}` : 'Other'}
+                      </span>
+                      <span className="text-xs text-gray-400">{round(mealTotal.kcal)} kcal</span>
                     </div>
-                    <button onClick={() => setConfirmDeleteEntry(entry)} className="pl-3 text-gray-300" aria-label="Remove entry">
-                      ✕
-                    </button>
-                  </li>
+                    <ul className="flex flex-col gap-2">
+                      {mealEntries.map((entry) => {
+                        const m = macrosFor(entry)
+                        return (
+                          <li
+                            key={entry.id}
+                            className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm"
+                          >
+                            <div className="flex-1">
+                              <p className="font-medium text-gray-900">{entryLabel(entry)}</p>
+                              <p className="text-xs text-gray-400">
+                                {round(m.kcal)} kcal · P {round(m.protein)}g C {round(m.carbs)}g F {round(m.fat)}g
+                              </p>
+                            </div>
+                            <button onClick={() => setConfirmDeleteEntry(entry)} className="pl-3 text-gray-300" aria-label="Remove entry">
+                              ✕
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </div>
                 )
               })}
-            </ul>
+            </div>
           )}
 
           <button
@@ -495,7 +559,14 @@ export function Food() {
                     className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm"
                   >
                     <div className="flex-1">
-                      <p className="font-medium text-gray-900">{recipe.name}</p>
+                      <p className="font-medium text-gray-900">
+                        {recipe.name}
+                        {recipe.meal_type && (
+                          <span className="ml-2 rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-700">
+                            {MEAL_TYPE_INFO[recipe.meal_type].icon} {MEAL_TYPE_INFO[recipe.meal_type].label}
+                          </span>
+                        )}
+                      </p>
                       <p className="text-[11px] text-gray-400">
                         {round(perServing.kcal)} kcal/serving · {recipe.servings} serving{recipe.servings === 1 ? '' : 's'} ·{' '}
                         {lines.length} ingredient{lines.length === 1 ? '' : 's'}
@@ -634,6 +705,9 @@ export function Food() {
               step={quantifying.kind === 'recipe' ? '0.5' : '1'}
               className="mt-3 w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-teal-400"
             />
+            <div className="mt-3">
+              <MealTypePicker value={quantifyMealType} onChange={setQuantifyMealType} />
+            </div>
             <div className="mt-4 flex gap-2">
               <button onClick={() => setQuantifying(null)} className="flex-1 rounded-2xl bg-gray-100 px-4 py-2.5 font-medium text-gray-600">
                 Cancel
@@ -679,6 +753,11 @@ export function Food() {
                 className="w-20 rounded-2xl border border-gray-200 bg-white px-3 py-2 text-center text-gray-900 outline-none focus:border-teal-400"
               />
               <span className="text-sm text-gray-500">servings</span>
+            </div>
+
+            <div>
+              <p className="mb-1 text-xs text-gray-400">Meal (optional — used to prefill logging)</p>
+              <MealTypePicker value={recipeMealType} onChange={setRecipeMealType} />
             </div>
 
             <div className="flex flex-col gap-2">

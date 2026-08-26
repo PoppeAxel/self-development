@@ -1,4 +1,23 @@
-import type { FoodLogEntry, Ingredient, Recipe, RecipeIngredient } from './types'
+import type { FoodLogEntry, Ingredient, MealType, Recipe, RecipeIngredient } from './types'
+
+export const MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack']
+
+export const MEAL_TYPE_INFO: Record<MealType, { label: string; icon: string }> = {
+  breakfast: { label: 'Breakfast', icon: '🌅' },
+  lunch: { label: 'Lunch', icon: '🥪' },
+  dinner: { label: 'Dinner', icon: '🍽' },
+  snack: { label: 'Snack', icon: '🍎' },
+}
+
+// Guess a reasonable default meal when logging food, based on time of day — just a
+// starting point in the picker, never enforced (always overridable).
+export function defaultMealTypeForNow(): MealType {
+  const hour = new Date().getHours()
+  if (hour < 10) return 'breakfast'
+  if (hour < 15) return 'lunch'
+  if (hour < 21) return 'dinner'
+  return 'snack'
+}
 
 export interface Macros {
   kcal: number
