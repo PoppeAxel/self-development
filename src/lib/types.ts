@@ -130,3 +130,45 @@ export interface GymSessionSet {
   weight: number | null
   created_at: string
 }
+
+export interface Ingredient {
+  id: string
+  user_id: string
+  name: string
+  source: 'livsmedelsverket' | 'manual'
+  source_ref: string | null
+  kcal_per_100g: number
+  protein_per_100g: number
+  carbs_per_100g: number
+  fat_per_100g: number
+  fiber_per_100g: number
+  created_at: string
+}
+
+export interface Recipe {
+  id: string
+  user_id: string
+  name: string
+  servings: number
+  created_at: string
+}
+
+export interface RecipeIngredient {
+  id: string
+  user_id: string
+  recipe_id: string
+  ingredient_id: string
+  grams: number
+  position: number
+}
+
+export interface FoodLogEntry {
+  id: string
+  user_id: string
+  date: string
+  recipe_id: string | null
+  servings: number | null
+  ingredient_id: string | null
+  grams: number | null
+  created_at: string
+}

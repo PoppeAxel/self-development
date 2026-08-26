@@ -5,10 +5,11 @@ import { todayISO, weekStartISO, localTimeToUTC, utcTimeToLocal, DAY_LABELS } fr
 import { rolloverRecurringGoals } from '../lib/goals'
 import { ensureDefaultCategories, CATEGORY_STYLES } from '../lib/categories'
 import { AUTO_METRICS, METRIC_INFO, isAutoMetric, upsertMetricValue, type AutoMetric } from '../lib/metrics'
+import { addMacros, logEntryMacros, ZERO_MACROS } from '../lib/food'
 import { ProgressRing } from '../components/ProgressRing'
 import { RefreshButton } from '../components/RefreshButton'
 import { ConfirmDialog } from '../components/ConfirmDialog'
-import type { Category, DailyTask, Reminder, WeeklyGoal } from '../lib/types'
+import type { Category, DailyTask, Reminder, RecipeIngredient, WeeklyGoal } from '../lib/types'
 
 export function Today() {
   const [tasks, setTasks] = useState<DailyTask[]>([])
@@ -35,6 +36,7 @@ export function Today() {
   const [weightToday, setWeightToday] = useState<number | null>(null)
   const [goalWeight, setGoalWeight] = useState<number | null>(null)
   const [weightInput, setWeightInput] = useState('')
+  const [todayCalories, setTodayCalories] = useState<number | null>(null)
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [addFormOpen, setAddFormOpen] = useState(false)
   const [confirmTask, setConfirmTask] = useState<DailyTask | null>(null)
@@ -59,6 +61,10 @@ export function Today() {
       { data: settingsRow },
       { data: reminderRows },
       { data: weightRow },
+      { data: foodEntryRows },
+      { data: recipeRows },
+      { data: recipeIngredientRows },
+      { data: ingredientRows },
     ] = await Promise.all([
       supabase
         .from('daily_tasks')
@@ -87,6 +93,10 @@ export function Today() {
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle(),
+      supabase.from('food_log_entries').select('*').eq('date', date),
+      supabase.from('recipes').select('*'),
+      supabase.from('recipe_ingredients').select('*'),
+      supabase.from('ingredients').select('*'),
     ])
     const allTasks = taskRows ?? []
     const completed = new Set((completionRows ?? []).map((r) => r.task_id))
@@ -132,6 +142,21 @@ export function Today() {
     setGoalWeight(settingsRow?.goal_weight != null ? Number(settingsRow.goal_weight) : null)
     setWeightToday(weightRow?.value_numeric != null ? Number(weightRow.value_numeric) : null)
     setWeightInput(weightRow?.value_numeric != null ? String(weightRow.value_numeric) : '')
+
+    const recipesById = new Map((recipeRows ?? []).map((r) => [r.id, r]))
+    const recipeLinesByRecipe = new Map<string, RecipeIngredient[]>()
+    for (const line of recipeIngredientRows ?? []) {
+      const arr = recipeLinesByRecipe.get(line.recipe_id) ?? []
+      arr.push(line)
+      recipeLinesByRecipe.set(line.recipe_id, arr)
+    }
+    const ingredientsById = new Map((ingredientRows ?? []).map((i) => [i.id, i]))
+    const dayTotal = (foodEntryRows ?? []).reduce(
+      (sum, entry) => addMacros(sum, logEntryMacros(entry, recipesById, recipeLinesByRecipe, ingredientsById)),
+      ZERO_MACROS,
+    )
+    setTodayCalories((foodEntryRows ?? []).length > 0 ? Math.round(dayTotal.kcal) : null)
+
     setLoading(false)
   }
 
@@ -357,7 +382,7 @@ export function Today() {
         </button>
       </div>
 
-      {(tasks.length > 0 || steps != null || weightToday != null) && (
+      {(tasks.length > 0 || steps != null || weightToday != null || todayCalories != null) && (
         <div className="rounded-3xl border border-gray-100 bg-white shadow-sm">
           <button
             onClick={() => setSummaryOpen((o) => !o)}
@@ -372,6 +397,7 @@ export function Today() {
                 </span>
               )}
               {weightToday != null && <span>⚖️ {weightToday} kg</span>}
+              {todayCalories != null && <span>🔥 {todayCalories.toLocaleString()} kcal</span>}
             </span>
             <span className={`text-gray-400 transition-transform ${summaryOpen ? 'rotate-180' : ''}`}>⌄</span>
           </button>
@@ -434,6 +460,15 @@ export function Today() {
                   )}
                 </div>
               </div>
+              {todayCalories != null && (
+                <div className="flex items-center gap-4">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-lg">🔥</span>
+                  <div>
+                    <p className="font-semibold text-gray-900">{todayCalories.toLocaleString()} kcal</p>
+                    <p className="text-sm text-gray-500">Logged {isToday ? 'today' : 'that day'} — see Journal for a breakdown</p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
