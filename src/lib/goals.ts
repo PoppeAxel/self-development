@@ -1,7 +1,39 @@
 import { supabase } from './supabase'
 import { weekEndISO, weekStartISO, weekStartsInRange } from './dates'
 import { isAutoMetric, METRIC_INFO, type AutoMetric } from './metrics'
+import { isStrengthWorkout } from './workouts'
 import type { WeeklyGoal } from './types'
+
+// Counts workouts (not minutes) synced from Strava, e.g. "2x gym sessions/week" — distinct
+// from AUTO_METRICS in metrics.ts, which sums a daily journal_entries value. Kept separate
+// from that registry so Today.tsx's daily-task auto-complete (built around a single day's
+// journal value) doesn't have to account for a workouts-table, count-based metric.
+export const SESSION_METRICS = ['strength_sessions', 'cardio_sessions'] as const
+export type SessionMetric = (typeof SESSION_METRICS)[number]
+
+export const SESSION_METRIC_INFO: Record<SessionMetric, { label: string; icon: string; unit: string }> = {
+  strength_sessions: { label: 'Gym sessions (Strava)', icon: '🏋️', unit: 'sessions' },
+  cardio_sessions: { label: 'Cardio sessions (Strava)', icon: '🏃', unit: 'sessions' },
+}
+
+export function isSessionMetric(value: string | null): value is SessionMetric {
+  return value != null && (SESSION_METRICS as readonly string[]).includes(value)
+}
+
+export type GoalMetric = AutoMetric | SessionMetric
+
+export function isGoalMetric(value: string | null): value is GoalMetric {
+  return isAutoMetric(value) || isSessionMetric(value)
+}
+
+export function goalMetricInfo(metric: GoalMetric): { label: string; icon: string; unit: string } {
+  return isAutoMetric(metric) ? METRIC_INFO[metric] : SESSION_METRIC_INFO[metric]
+}
+
+async function countWorkoutSessions(metric: SessionMetric, startDate: string, endDate: string): Promise<number> {
+  const { data } = await supabase.from('workouts').select('sport_type').gte('date', startDate).lte('date', endDate)
+  return (data ?? []).filter((w) => isStrengthWorkout(w.sport_type) === (metric === 'strength_sessions')).length
+}
 
 // Ensures every recurring goal series has a row for the current week, carrying forward
 // title/target/category from its most recent instance. Safe to call on every page load.
@@ -38,9 +70,13 @@ export async function rolloverRecurringGoals() {
   )
 }
 
-// Live progress for an auto-metric goal: sum of that metric's journal entries across the
-// goal's week, so progress always reflects the latest sync instead of a stale bumped value.
+// Live progress for a metric-linked goal: sum (journal metrics) or count (session metrics)
+// across the goal's week, so progress always reflects the latest sync instead of a stale
+// bumped value.
 export async function autoMetricProgress(goal: WeeklyGoal): Promise<number> {
+  if (isSessionMetric(goal.auto_metric)) {
+    return countWorkoutSessions(goal.auto_metric, goal.week_start, weekEndISO(goal.week_start))
+  }
   if (!isAutoMetric(goal.auto_metric)) return goal.progress
   const { data } = await supabase
     .from('journal_entries')
@@ -52,7 +88,7 @@ export async function autoMetricProgress(goal: WeeklyGoal): Promise<number> {
 }
 
 export interface GoalMetricStat {
-  metric: AutoMetric
+  metric: GoalMetric
   achieved: number
   target: number
 }
@@ -78,15 +114,18 @@ export async function computeGoalStats(periodStart: string, periodEnd: string): 
     .lte('week_start', weekStarts[weekStarts.length - 1])
   const goals = (data ?? []) as WeeklyGoal[]
 
-  const metricTypes = [...new Set(goals.map((g) => g.auto_metric).filter(isAutoMetric))]
-  const weeklySumsByMetric = new Map<AutoMetric, Map<string, number>>()
-  for (const metric of metricTypes) {
+  const periodStartWeek = weekStarts[0]
+  const periodEndWeek = weekEndISO(weekStarts[weekStarts.length - 1])
+  const weeklySumsByMetric = new Map<GoalMetric, Map<string, number>>()
+
+  const journalMetricTypes = [...new Set(goals.map((g) => g.auto_metric).filter(isAutoMetric))]
+  for (const metric of journalMetricTypes) {
     const { data: entries } = await supabase
       .from('journal_entries')
       .select('date, value_numeric')
       .eq('type', METRIC_INFO[metric].journalType)
-      .gte('date', weekStarts[0])
-      .lte('date', weekEndISO(weekStarts[weekStarts.length - 1]))
+      .gte('date', periodStartWeek)
+      .lte('date', periodEndWeek)
     const byWeek = new Map<string, number>()
     for (const e of entries ?? []) {
       const ws = weekStartISO(new Date(e.date + 'T00:00:00'))
@@ -95,10 +134,28 @@ export async function computeGoalStats(periodStart: string, periodEnd: string): 
     weeklySumsByMetric.set(metric, byWeek)
   }
 
+  const sessionMetricTypes = [...new Set(goals.map((g) => g.auto_metric).filter(isSessionMetric))]
+  if (sessionMetricTypes.length) {
+    const { data: workouts } = await supabase
+      .from('workouts')
+      .select('date, sport_type')
+      .gte('date', periodStartWeek)
+      .lte('date', periodEndWeek)
+    for (const metric of sessionMetricTypes) {
+      const byWeek = new Map<string, number>()
+      for (const w of workouts ?? []) {
+        if (isStrengthWorkout(w.sport_type) !== (metric === 'strength_sessions')) continue
+        const ws = weekStartISO(new Date(w.date + 'T00:00:00'))
+        byWeek.set(ws, (byWeek.get(ws) ?? 0) + 1)
+      }
+      weeklySumsByMetric.set(metric, byWeek)
+    }
+  }
+
   let completedGoals = 0
-  const metricTotals = new Map<AutoMetric, { achieved: number; target: number }>()
+  const metricTotals = new Map<GoalMetric, { achieved: number; target: number }>()
   for (const goal of goals) {
-    if (isAutoMetric(goal.auto_metric)) {
+    if (isGoalMetric(goal.auto_metric)) {
       const achieved = weeklySumsByMetric.get(goal.auto_metric)?.get(goal.week_start) ?? 0
       if (goal.target_value != null && achieved >= goal.target_value) completedGoals++
       const totals = metricTotals.get(goal.auto_metric) ?? { achieved: 0, target: 0 }

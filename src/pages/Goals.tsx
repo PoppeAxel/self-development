@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { weekStartISO } from '../lib/dates'
-import { autoMetricProgress, rolloverRecurringGoals } from '../lib/goals'
-import { AUTO_METRICS, isAutoMetric, METRIC_INFO } from '../lib/metrics'
+import { autoMetricProgress, goalMetricInfo, isGoalMetric, rolloverRecurringGoals, SESSION_METRIC_INFO, SESSION_METRICS } from '../lib/goals'
+import { AUTO_METRICS, METRIC_INFO } from '../lib/metrics'
 import { ProgressRing } from '../components/ProgressRing'
 import { RefreshButton } from '../components/RefreshButton'
 import { GoalStatsView } from '../components/GoalStats'
@@ -29,7 +29,7 @@ export function Goals() {
       .order('created_at')
     const loaded = (data ?? []) as WeeklyGoal[]
     setGoals(loaded)
-    const autoGoals = loaded.filter((g) => isAutoMetric(g.auto_metric))
+    const autoGoals = loaded.filter((g) => isGoalMetric(g.auto_metric))
     if (autoGoals.length) {
       const entries = await Promise.all(autoGoals.map(async (g) => [g.id, await autoMetricProgress(g)] as const))
       setLiveProgress(new Map(entries))
@@ -106,11 +106,11 @@ export function Goals() {
       ) : (
         <ul className="flex flex-col gap-3">
           {goals.map((goal) => {
-            const isAuto = isAutoMetric(goal.auto_metric)
+            const isAuto = isGoalMetric(goal.auto_metric)
             const progress = isAuto ? liveProgress.get(goal.id) ?? 0 : goal.progress
             const pct = goal.target_value ? Math.min(100, (progress / goal.target_value) * 100) : 0
             const done = isAuto ? goal.target_value != null && progress >= goal.target_value : goal.status === 'done'
-            const metricInfo = isAutoMetric(goal.auto_metric) ? METRIC_INFO[goal.auto_metric] : null
+            const metricInfo = isGoalMetric(goal.auto_metric) ? goalMetricInfo(goal.auto_metric) : null
             return (
               <li key={goal.id} className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-2">
@@ -204,11 +204,20 @@ export function Goals() {
             className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-violet-400"
           >
             <option value="">Manual progress (tap +/− to update)</option>
-            {AUTO_METRICS.map((m) => (
-              <option key={m} value={m}>
-                Auto-track {METRIC_INFO[m].label}
-              </option>
-            ))}
+            <optgroup label="Track a daily total">
+              {AUTO_METRICS.map((m) => (
+                <option key={m} value={m}>
+                  Auto-track {METRIC_INFO[m].label}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="Track number of sessions">
+              {SESSION_METRICS.map((m) => (
+                <option key={m} value={m}>
+                  Auto-track {SESSION_METRIC_INFO[m].label}
+                </option>
+              ))}
+            </optgroup>
           </select>
           {!autoMetric && (
             <label className="flex items-center gap-2 text-sm text-gray-500">

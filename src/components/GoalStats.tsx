@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-import { computeGoalStats, type GoalStats } from '../lib/goals'
-import { METRIC_INFO } from '../lib/metrics'
+import { computeGoalStats, goalMetricInfo, type GoalStats } from '../lib/goals'
 import { monthStartISO, todayISO, weekStartISO } from '../lib/dates'
 import { ProgressRing } from './ProgressRing'
 
@@ -69,7 +68,7 @@ export function GoalStatsView() {
             </div>
           </div>
           {stats.metrics.map(({ metric, achieved, target }) => {
-            const info = METRIC_INFO[metric]
+            const info = goalMetricInfo(metric)
             const pct = target > 0 ? Math.min(100, Math.round((achieved / target) * 100)) : 0
             return (
               <div key={metric} className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
