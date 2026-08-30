@@ -40,6 +40,7 @@ export interface WeeklyGoal {
   status: 'active' | 'done'
   series_id: string
   recurring: boolean
+  auto_metric: string | null
 }
 
 export type JournalEntryType = 'weight' | 'mood' | 'note' | 'steps' | 'sleep_hours' | 'cardio_minutes' | 'strength_minutes'

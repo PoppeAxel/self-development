@@ -19,6 +19,18 @@ export function isAutoMetric(value: string | null): value is AutoMetric {
   return value != null && (AUTO_METRICS as readonly string[]).includes(value)
 }
 
+// Sums a synced metric's journal entries over an inclusive date range, e.g. to compute a
+// weekly goal's progress from daily Garmin/Strava syncs without storing a derived total.
+export async function sumMetric(metric: AutoMetric, startDate: string, endDate: string): Promise<number> {
+  const { data } = await supabase
+    .from('journal_entries')
+    .select('value_numeric')
+    .eq('type', METRIC_INFO[metric].journalType)
+    .gte('date', startDate)
+    .lte('date', endDate)
+  return (data ?? []).reduce((sum, e) => sum + (e.value_numeric ?? 0), 0)
+}
+
 // Manually set a synced metric's value for a given day, e.g. when Garmin/phone
 // failed to record steps. Upserts by (type, date), same shape as the auto sync
 // writes, so it flows through the normal auto-complete + Stats logic afterward.
