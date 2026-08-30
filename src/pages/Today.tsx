@@ -11,6 +11,12 @@ import { RefreshButton } from '../components/RefreshButton'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import type { Category, DailyTask, Goal, Reminder, RecipeIngredient } from '../lib/types'
 
+// A task whose auto_metric is this sentinel auto-completes off today's Food-log total
+// instead of a synced journal metric — and unlike every other auto_metric (which only
+// grows toward a floor), it's a ceiling: done means "at or under budget," so it can
+// un-complete itself later in the day if more food gets logged and the total goes over.
+const CALORIE_BUDGET_METRIC = 'calorie_budget'
+
 export function Today() {
   const [tasks, setTasks] = useState<DailyTask[]>([])
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set())
@@ -344,7 +350,16 @@ export function Today() {
     load()
   }
 
-  const doneCount = tasks.filter((t) => completedIds.has(t.id)).length
+  // Calorie-budget tasks aren't in completedIds (see CALORIE_BUDGET_METRIC) — their done
+  // state is derived live from today's Food-log total instead of a stored completion row.
+  function isTaskDone(task: DailyTask): boolean {
+    if (task.auto_metric === CALORIE_BUDGET_METRIC) {
+      return task.auto_metric_target != null && (todayCalories ?? 0) <= task.auto_metric_target
+    }
+    return completedIds.has(task.id)
+  }
+
+  const doneCount = tasks.filter(isTaskDone).length
   const pct = tasks.length ? (doneCount / tasks.length) * 100 : 0
   const categoryById = new Map(categories.map((c) => [c.id, c]))
   const metricEntryInfo = metricEntryTask && isAutoMetric(metricEntryTask.auto_metric) ? METRIC_INFO[metricEntryTask.auto_metric] : null
@@ -486,7 +501,8 @@ export function Today() {
       ) : (
         <ul className="flex flex-col gap-2">
           {tasks.map((task) => {
-            const done = completedIds.has(task.id)
+            const isBudget = task.auto_metric === CALORIE_BUDGET_METRIC
+            const done = isTaskDone(task)
             const category = task.category_id ? categoryById.get(task.category_id) : undefined
             const style = category ? CATEGORY_STYLES[category.color] : CATEGORY_STYLES.violet
             const goal = task.goal_series_id ? weekGoals.find((g) => g.series_id === task.goal_series_id) : undefined
@@ -501,7 +517,7 @@ export function Today() {
               >
                 <span className={`h-full w-1.5 self-stretch ${style.dot}`} />
                 <button
-                  onClick={() => (metric ? openMetricEntry(task) : toggle(task))}
+                  onClick={() => (metric ? openMetricEntry(task) : isBudget ? undefined : toggle(task))}
                   className="flex flex-1 items-center gap-3 px-4 py-3.5 text-left"
                 >
                   <span
@@ -533,6 +549,12 @@ export function Today() {
                           {metricInfo.icon} {(metricValues.get(metric) ?? 0).toLocaleString()}
                           {task.auto_metric_target != null && `/${task.auto_metric_target.toLocaleString()}`} {metricInfo.unit} — tap to
                           set manually
+                        </span>
+                      )}
+                      {isBudget && (
+                        <span className="text-[11px] text-gray-400">
+                          🔥 {(todayCalories ?? 0).toLocaleString()}
+                          {task.auto_metric_target != null && `/${task.auto_metric_target.toLocaleString()}`} kcal from Food log
                         </span>
                       )}
                       {isLate ? (
@@ -617,22 +639,34 @@ export function Today() {
                     Auto from {METRIC_INFO[m].label}
                   </option>
                 ))}
+                <option value={CALORIE_BUDGET_METRIC}>Stay under budget: Calories (Food log)</option>
               </select>
               {newAutoMetric && (
                 <input
                   value={newAutoMetricTarget}
                   onChange={(e) => setNewAutoMetricTarget(e.target.value)}
                   type="number"
-                  placeholder={`Target (optional), e.g. 10000 ${METRIC_INFO[newAutoMetric as AutoMetric]?.unit ?? ''}`}
+                  placeholder={
+                    newAutoMetric === CALORIE_BUDGET_METRIC
+                      ? 'Target, e.g. 2400 kcal'
+                      : `Target (optional), e.g. 10000 ${METRIC_INFO[newAutoMetric as AutoMetric]?.unit ?? ''}`
+                  }
                   className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
                 />
               )}
             </div>
-            {newAutoMetric && !newAutoMetricTarget && (
+            {newAutoMetric === CALORIE_BUDGET_METRIC ? (
               <p className="text-xs text-gray-400">
-                No target set — this task auto-completes as soon as any {METRIC_INFO[newAutoMetric as AutoMetric].label.toLowerCase()} is
-                logged today.
+                Checked off while today's logged Food total stays at or under the target — unchecks itself if you go over.
               </p>
+            ) : (
+              newAutoMetric &&
+              !newAutoMetricTarget && (
+                <p className="text-xs text-gray-400">
+                  No target set — this task auto-completes as soon as any {METRIC_INFO[newAutoMetric as AutoMetric].label.toLowerCase()}{' '}
+                  is logged today.
+                </p>
+              )
             )}
             <div className="flex gap-2 rounded-2xl bg-gray-100 p-1">
               <button
