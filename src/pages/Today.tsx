@@ -553,8 +553,8 @@ export function Today() {
                       )}
                       {isBudget && (
                         <span className="text-[11px] text-gray-400">
-                          🔥 {(todayCalories ?? 0).toLocaleString()}
-                          {task.auto_metric_target != null && `/${task.auto_metric_target.toLocaleString()}`} kcal from Food log
+                          🔥 {todayCalories ?? 0}
+                          {task.auto_metric_target != null && `/${task.auto_metric_target}`} kcal
                         </span>
                       )}
                       {isLate ? (
