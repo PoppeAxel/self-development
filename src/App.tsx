@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { Login } from './components/Login'
 import { TabBar, type Tab } from './components/TabBar'
+import { TopIcons } from './components/TopIcons'
 import { Today } from './pages/Today'
 import { Calendar } from './pages/Calendar'
 import { Goals } from './pages/Goals'
@@ -20,6 +21,7 @@ function Shell() {
   return (
     <div className="flex h-full flex-col">
       <div className="safe-top" />
+      <TopIcons active={tab} onChange={setTab} />
       <div className="min-h-0 flex-1 overflow-y-auto">
         {tab === 'today' && <Today />}
         {tab === 'calendar' && <Calendar />}

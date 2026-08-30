@@ -1,13 +1,12 @@
 export type Tab = 'today' | 'calendar' | 'goals' | 'journal' | 'food' | 'finance' | 'settings'
 
+// Calendar and Settings are reachable from TopIcons instead of a bottom-bar slot — see there.
 const TABS: { id: Tab; label: string; icon: string; active: string; iconBg: string }[] = [
   { id: 'today', label: 'Today', icon: '✓', active: 'text-pink-600', iconBg: 'bg-pink-100' },
-  { id: 'calendar', label: 'Calendar', icon: '📅', active: 'text-rose-600', iconBg: 'bg-rose-100' },
   { id: 'goals', label: 'Goals', icon: '◎', active: 'text-amber-600', iconBg: 'bg-amber-100' },
   { id: 'journal', label: 'Journal', icon: '✎', active: 'text-violet-600', iconBg: 'bg-violet-100' },
   { id: 'food', label: 'Food', icon: '🍽', active: 'text-teal-600', iconBg: 'bg-teal-100' },
   { id: 'finance', label: 'Finance', icon: '💰', active: 'text-sky-600', iconBg: 'bg-sky-100' },
-  { id: 'settings', label: 'Settings', icon: '⚙', active: 'text-emerald-600', iconBg: 'bg-emerald-100' },
 ]
 
 export function TabBar({ active, onChange }: { active: Tab; onChange: (tab: Tab) => void }) {
