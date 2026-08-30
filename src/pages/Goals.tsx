@@ -1,40 +1,50 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { weekStartISO } from '../lib/dates'
-import { autoMetricProgress, goalMetricInfo, isGoalMetric, rolloverRecurringGoals, SESSION_METRIC_INFO, SESSION_METRICS } from '../lib/goals'
+import { PARENT_PERIOD, PERIOD_LABELS, PERIOD_TYPES, periodStartISO } from '../lib/dates'
+import { goalMetricInfo, isGoalMetric, resolveGoalProgress, rolloverRecurringGoals, SESSION_METRIC_INFO, SESSION_METRICS } from '../lib/goals'
 import { AUTO_METRICS, METRIC_INFO } from '../lib/metrics'
 import { ProgressRing } from '../components/ProgressRing'
 import { RefreshButton } from '../components/RefreshButton'
-import { GoalStatsView } from '../components/GoalStats'
-import type { WeeklyGoal } from '../lib/types'
+import type { Goal, PeriodType } from '../lib/types'
 
 export function Goals() {
-  const [view, setView] = useState<'goals' | 'stats'>('goals')
-  const [goals, setGoals] = useState<WeeklyGoal[]>([])
-  const [liveProgress, setLiveProgress] = useState<Map<string, number>>(new Map())
+  const [periodType, setPeriodType] = useState<PeriodType>('week')
+  const [goals, setGoals] = useState<Goal[]>([])
+  const [progress, setProgress] = useState<Map<string, { progress: number; isRollup: boolean }>>(new Map())
+  const [parentOptions, setParentOptions] = useState<Goal[]>([])
   const [title, setTitle] = useState('')
   const [target, setTarget] = useState('')
   const [recurring, setRecurring] = useState(false)
   const [autoMetric, setAutoMetric] = useState('')
+  const [parentSeriesId, setParentSeriesId] = useState('')
   const [loading, setLoading] = useState(true)
-  const weekStart = weekStartISO()
+  const periodStart = periodStartISO(periodType)
+  const parentPeriod = PARENT_PERIOD[periodType]
 
   async function load() {
     setLoading(true)
     await rolloverRecurringGoals()
     const { data } = await supabase
-      .from('weekly_goals')
+      .from('goals')
       .select('*')
-      .eq('week_start', weekStart)
+      .eq('period_type', periodType)
+      .eq('period_start', periodStart)
       .order('created_at')
-    const loaded = (data ?? []) as WeeklyGoal[]
+    const loaded = (data ?? []) as Goal[]
     setGoals(loaded)
-    const autoGoals = loaded.filter((g) => isGoalMetric(g.auto_metric))
-    if (autoGoals.length) {
-      const entries = await Promise.all(autoGoals.map(async (g) => [g.id, await autoMetricProgress(g)] as const))
-      setLiveProgress(new Map(entries))
+    const entries = await Promise.all(loaded.map(async (g) => [g.id, await resolveGoalProgress(g)] as const))
+    setProgress(new Map(entries))
+
+    if (parentPeriod) {
+      const { data: parents } = await supabase
+        .from('goals')
+        .select('*')
+        .eq('period_type', parentPeriod)
+        .eq('period_start', periodStartISO(parentPeriod))
+        .order('created_at')
+      setParentOptions((parents ?? []) as Goal[])
     } else {
-      setLiveProgress(new Map())
+      setParentOptions([])
     }
     setLoading(false)
   }
@@ -42,7 +52,7 @@ export function Goals() {
   useEffect(() => {
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [periodType])
 
   async function addGoal(e: React.FormEvent) {
     e.preventDefault()
@@ -51,32 +61,42 @@ export function Goals() {
       data: { user },
     } = await supabase.auth.getUser()
     if (!user) return
-    await supabase.from('weekly_goals').insert({
+    await supabase.from('goals').insert({
       title: title.trim(),
       target_value: target ? Number(target) : null,
-      week_start: weekStart,
+      period_type: periodType,
+      period_start: periodStart,
       user_id: user.id,
       recurring: recurring || !!autoMetric,
       auto_metric: autoMetric || null,
+      parent_series_id: parentSeriesId || null,
     })
     setTitle('')
     setTarget('')
     setRecurring(false)
     setAutoMetric('')
+    setParentSeriesId('')
     load()
   }
 
-  async function bump(goal: WeeklyGoal, delta: number) {
-    const progress = Math.max(0, goal.progress + delta)
-    const status = goal.target_value && progress >= goal.target_value ? 'done' : 'active'
-    setGoals((gs) => gs.map((g) => (g.id === goal.id ? { ...g, progress, status } : g)))
-    await supabase.from('weekly_goals').update({ progress, status }).eq('id', goal.id)
+  async function bump(goal: Goal, delta: number) {
+    const newProgress = Math.max(0, goal.progress + delta)
+    const status = goal.target_value && newProgress >= goal.target_value ? 'done' : 'active'
+    setGoals((gs) => gs.map((g) => (g.id === goal.id ? { ...g, progress: newProgress, status } : g)))
+    setProgress((p) => new Map(p).set(goal.id, { progress: newProgress, isRollup: false }))
+    await supabase.from('goals').update({ progress: newProgress, status }).eq('id', goal.id)
   }
 
-  async function remove(goal: WeeklyGoal) {
+  async function remove(goal: Goal) {
     setGoals((gs) => gs.filter((g) => g.id !== goal.id))
-    await supabase.from('weekly_goals').delete().eq('id', goal.id)
+    await supabase.from('goals').delete().eq('id', goal.id)
   }
+
+  const completedCount = goals.filter((g) => {
+    const p = progress.get(g.id)
+    const isAuto = isGoalMetric(g.auto_metric) || p?.isRollup
+    return isAuto ? g.target_value != null && (p?.progress ?? 0) >= g.target_value : g.status === 'done'
+  }).length
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
@@ -85,31 +105,43 @@ export function Goals() {
         <RefreshButton onRefresh={load} />
       </div>
       <div className="flex gap-1 rounded-2xl bg-gray-100 p-1">
-        {(['goals', 'stats'] as const).map((v) => (
+        {PERIOD_TYPES.map((p) => (
           <button
-            key={v}
-            onClick={() => setView(v)}
-            className={`flex-1 rounded-xl py-1.5 text-sm font-semibold capitalize transition ${
-              view === v ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500'
+            key={p}
+            onClick={() => setPeriodType(p)}
+            className={`flex-1 rounded-xl py-1.5 text-xs font-semibold transition ${
+              periodType === p ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500'
             }`}
           >
-            {v === 'goals' ? "This Week" : 'Stats'}
+            {PERIOD_LABELS[p]}
           </button>
         ))}
       </div>
-      {view === 'stats' ? (
-        <GoalStatsView />
-      ) : loading ? (
+      {!loading && goals.length > 0 && (
+        <div className="flex items-center gap-3 rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
+          <ProgressRing percent={(completedCount / goals.length) * 100} size={48} strokeWidth={5} color="#7c3aed" trackColor="#ede9fe">
+            <span className="text-xs font-bold text-gray-900">
+              {completedCount}/{goals.length}
+            </span>
+          </ProgressRing>
+          <p className="text-sm text-gray-500">
+            {completedCount} of {goals.length} {PERIOD_LABELS[periodType].toLowerCase()} goals done
+          </p>
+        </div>
+      )}
+      {loading ? (
         <p className="text-sm text-gray-400">Loading…</p>
       ) : goals.length === 0 ? (
-        <p className="text-sm text-gray-400">No goals yet for this week.</p>
+        <p className="text-sm text-gray-400">No {PERIOD_LABELS[periodType].toLowerCase()} goals yet.</p>
       ) : (
         <ul className="flex flex-col gap-3">
           {goals.map((goal) => {
-            const isAuto = isGoalMetric(goal.auto_metric)
-            const progress = isAuto ? liveProgress.get(goal.id) ?? 0 : goal.progress
-            const pct = goal.target_value ? Math.min(100, (progress / goal.target_value) * 100) : 0
-            const done = isAuto ? goal.target_value != null && progress >= goal.target_value : goal.status === 'done'
+            const goalProgress = progress.get(goal.id)
+            const isRollup = goalProgress?.isRollup ?? false
+            const isAuto = isGoalMetric(goal.auto_metric) || isRollup
+            const value = isAuto ? goalProgress?.progress ?? 0 : goal.progress
+            const pct = goal.target_value ? Math.min(100, (value / goal.target_value) * 100) : 0
+            const done = isAuto ? goal.target_value != null && value >= goal.target_value : goal.status === 'done'
             const metricInfo = isGoalMetric(goal.auto_metric) ? goalMetricInfo(goal.auto_metric) : null
             return (
               <li key={goal.id} className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
@@ -125,12 +157,17 @@ export function Goals() {
                     </span>
                     {goal.recurring && (
                       <span className="ml-1.5 mt-1 inline-block rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-medium text-sky-600">
-                        ↻ Weekly
+                        ↻ {PERIOD_LABELS[periodType]}
                       </span>
                     )}
                     {metricInfo && (
                       <span className="ml-1.5 mt-1 inline-block rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-medium text-violet-600">
                         {metricInfo.icon} Auto
+                      </span>
+                    )}
+                    {isRollup && (
+                      <span className="ml-1.5 mt-1 inline-block rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-600">
+                        🔗 From sub-goals
                       </span>
                     )}
                   </div>
@@ -145,7 +182,7 @@ export function Goals() {
                     </ProgressRing>
                     <div className="flex flex-1 items-center justify-between">
                       <span className="text-sm text-gray-500">
-                        {progress.toLocaleString()} / {goal.target_value.toLocaleString()} {metricInfo?.unit ?? ''}
+                        {value.toLocaleString()} / {goal.target_value.toLocaleString()} {metricInfo?.unit ?? ''}
                       </span>
                       {!isAuto && (
                         <div className="flex gap-2">
@@ -163,7 +200,7 @@ export function Goals() {
                   <button
                     onClick={() =>
                       supabase
-                        .from('weekly_goals')
+                        .from('goals')
                         .update({ status: done ? 'active' : 'done' })
                         .eq('id', goal.id)
                         .then(load)
@@ -178,55 +215,67 @@ export function Goals() {
           })}
         </ul>
       )}
-      {view === 'goals' && (
-        <form onSubmit={addGoal} className="flex flex-col gap-2">
+      <form onSubmit={addGoal} className="flex flex-col gap-2">
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder={`New ${PERIOD_LABELS[periodType].toLowerCase()} goal`}
+          className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+        />
+        <div className="flex gap-2">
           <input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="New weekly goal"
-            className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            placeholder="Target number (optional)"
+            type="number"
+            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
           />
-          <div className="flex gap-2">
-            <input
-              value={target}
-              onChange={(e) => setTarget(e.target.value)}
-              placeholder="Target number (optional)"
-              type="number"
-              className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
-            />
-            <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
-              Add
-            </button>
-          </div>
+          <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
+            Add
+          </button>
+        </div>
+        <select
+          value={autoMetric}
+          onChange={(e) => setAutoMetric(e.target.value)}
+          className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+        >
+          <option value="">Manual progress (tap +/− to update)</option>
+          <optgroup label="Track a daily total">
+            {AUTO_METRICS.map((m) => (
+              <option key={m} value={m}>
+                Auto-track {METRIC_INFO[m].label}
+              </option>
+            ))}
+          </optgroup>
+          <optgroup label="Track number of sessions">
+            {SESSION_METRICS.map((m) => (
+              <option key={m} value={m}>
+                Auto-track {SESSION_METRIC_INFO[m].label}
+              </option>
+            ))}
+          </optgroup>
+        </select>
+        {parentPeriod && (
           <select
-            value={autoMetric}
-            onChange={(e) => setAutoMetric(e.target.value)}
+            value={parentSeriesId}
+            onChange={(e) => setParentSeriesId(e.target.value)}
             className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-violet-400"
           >
-            <option value="">Manual progress (tap +/− to update)</option>
-            <optgroup label="Track a daily total">
-              {AUTO_METRICS.map((m) => (
-                <option key={m} value={m}>
-                  Auto-track {METRIC_INFO[m].label}
-                </option>
-              ))}
-            </optgroup>
-            <optgroup label="Track number of sessions">
-              {SESSION_METRICS.map((m) => (
-                <option key={m} value={m}>
-                  Auto-track {SESSION_METRIC_INFO[m].label}
-                </option>
-              ))}
-            </optgroup>
+            <option value="">No parent goal</option>
+            {parentOptions.map((g) => (
+              <option key={g.id} value={g.series_id}>
+                Roll up into: {g.title} ({PERIOD_LABELS[parentPeriod]})
+              </option>
+            ))}
           </select>
-          {!autoMetric && (
-            <label className="flex items-center gap-2 text-sm text-gray-500">
-              <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} className="accent-violet-600" />
-              Recurring every week
-            </label>
-          )}
-        </form>
-      )}
+        )}
+        {!autoMetric && (
+          <label className="flex items-center gap-2 text-sm text-gray-500">
+            <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} className="accent-violet-600" />
+            Recurring every {PERIOD_LABELS[periodType].toLowerCase().replace('ly', '')}
+          </label>
+        )}
+      </form>
     </div>
   )
 }

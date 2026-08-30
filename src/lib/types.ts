@@ -30,17 +30,21 @@ export interface TaskCompletion {
   completed_at: string
 }
 
-export interface WeeklyGoal {
+export type PeriodType = 'week' | 'month' | 'quarter' | 'year'
+
+export interface Goal {
   id: string
   user_id: string
   title: string
   target_value: number | null
   progress: number
-  week_start: string
+  period_type: PeriodType
+  period_start: string
   status: 'active' | 'done'
   series_id: string
   recurring: boolean
   auto_metric: string | null
+  parent_series_id: string | null
 }
 
 export type JournalEntryType = 'weight' | 'mood' | 'note' | 'steps' | 'sleep_hours' | 'cardio_minutes' | 'strength_minutes'
@@ -164,6 +168,24 @@ export interface RecipeIngredient {
   ingredient_id: string
   grams: number
   position: number
+}
+
+export interface Portfolio {
+  id: string
+  user_id: string
+  name: string
+  position: number
+  created_at: string
+}
+
+export interface PortfolioEntry {
+  id: string
+  user_id: string
+  portfolio_id: string
+  date: string
+  total_value: number
+  contribution: number
+  created_at: string
 }
 
 export interface FoodLogEntry {

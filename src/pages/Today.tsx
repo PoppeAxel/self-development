@@ -9,13 +9,13 @@ import { addMacros, logEntryMacros, ZERO_MACROS } from '../lib/food'
 import { ProgressRing } from '../components/ProgressRing'
 import { RefreshButton } from '../components/RefreshButton'
 import { ConfirmDialog } from '../components/ConfirmDialog'
-import type { Category, DailyTask, Reminder, RecipeIngredient, WeeklyGoal } from '../lib/types'
+import type { Category, DailyTask, Goal, Reminder, RecipeIngredient } from '../lib/types'
 
 export function Today() {
   const [tasks, setTasks] = useState<DailyTask[]>([])
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set())
   const [categories, setCategories] = useState<Category[]>([])
-  const [weekGoals, setWeekGoals] = useState<WeeklyGoal[]>([])
+  const [weekGoals, setWeekGoals] = useState<Goal[]>([])
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [editingTask, setEditingTask] = useState<DailyTask | null>(null)
   const [newTitle, setNewTitle] = useState('')
@@ -74,7 +74,12 @@ export function Today() {
         .order('created_at'),
       supabase.from('task_completions').select('task_id').eq('date', date),
       supabase.from('categories').select('*').order('name'),
-      supabase.from('weekly_goals').select('*').eq('week_start', weekStart).not('target_value', 'is', null),
+      supabase
+        .from('goals')
+        .select('*')
+        .eq('period_type', 'week')
+        .eq('period_start', weekStart)
+        .not('target_value', 'is', null),
       supabase
         .from('journal_entries')
         .select('type, value_numeric')
@@ -274,7 +279,7 @@ export function Today() {
     const progress = Math.max(0, goal.progress + delta)
     const status = goal.target_value && progress >= goal.target_value ? 'done' : 'active'
     setWeekGoals((gs) => gs.map((g) => (g.id === goal.id ? { ...g, progress, status } : g)))
-    await supabase.from('weekly_goals').update({ progress, status }).eq('id', goal.id)
+    await supabase.from('goals').update({ progress, status }).eq('id', goal.id)
   }
 
   async function toggle(task: DailyTask) {
