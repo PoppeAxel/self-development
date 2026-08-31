@@ -13,6 +13,7 @@ import {
   fetchLivsmedelsverketMacros,
   fetchOpenFoodFactsProduct,
   defaultMealTypeForNow,
+  matchesSearch,
   MEAL_TYPES,
   MEAL_TYPE_INFO,
   ZERO_MACROS,
@@ -232,9 +233,8 @@ export function Food() {
     .sort((a, b) => a.fullDate.localeCompare(b.fullDate))
     .slice(-14)
 
-  const logSearchQuery = addLogQuery.trim().toLowerCase()
-  const matchingRecipes = recipes.filter((r) => !logSearchQuery || r.name.toLowerCase().includes(logSearchQuery))
-  const matchingIngredients = ingredients.filter((i) => !logSearchQuery || i.name.toLowerCase().includes(logSearchQuery))
+  const matchingRecipes = recipes.filter((r) => matchesSearch(r.name, addLogQuery))
+  const matchingIngredients = ingredients.filter((i) => matchesSearch(i.name, addLogQuery))
 
   // --- Recipe builder ---
 
@@ -919,8 +919,7 @@ export function Food() {
               </div>
               <div className="flex-1 overflow-y-auto px-4 pb-4">
                 {(() => {
-                  const q = ingredientPickQuery.trim().toLowerCase()
-                  const candidates = ingredients.filter((i) => !q || i.name.toLowerCase().includes(q))
+                  const candidates = ingredients.filter((i) => matchesSearch(i.name, ingredientPickQuery))
                   return (
                     <div className="flex flex-col gap-2">
                       {candidates.length === 0 && <p className="text-sm text-gray-400">No matches — add it above.</p>}

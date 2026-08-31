@@ -103,6 +103,41 @@ export function logEntryMacros(
   return ZERO_MACROS
 }
 
+// Folds accented characters to their plain form (kycklingfilé → kycklingfile, ägg → agg)
+// so a query typed without diacritics still matches — most people don't bother typing é/å
+// on a phone keyboard mid-search. NFD decomposes accented letters into base+combining-mark
+// pairs; stripping the combining marks (U+0300–U+036f) leaves the plain base letter.
+const COMBINING_DIACRITICS = new RegExp('[\\u0300-\\u036f]', 'g')
+
+function foldDiacritics(s: string): string {
+  return s.normalize('NFD').replace(COMBINING_DIACRITICS, '')
+}
+
+// A query word matches if it's a plain substring of the name, OR — for a compound word
+// with no space (e.g. "kycklingfile") — if it can be split into two halves that both
+// appear in the name, even with something else between them. This covers official names
+// that insert an extra word the user's shorthand skips, e.g. "kycklingfile" naturally
+// means "Kyckling bröstfilé" (chicken BREAST fillet) — literally missing "bröst" — which
+// a plain substring or even a two-word "kyckling filé" search can't bridge on its own.
+function wordMatches(name: string, word: string): boolean {
+  if (name.includes(word)) return true
+  for (let i = 3; i <= word.length - 3; i++) {
+    if (name.includes(word.slice(0, i)) && name.includes(word.slice(i))) return true
+  }
+  return false
+}
+
+// Matches if every word in the query appears somewhere in the name, independent of word
+// order or exact phrasing — so "ägg nudlar" matches a name like "Nudlar, ägg" just as well
+// as "Ägg nudlar", and a single word like "nudlar" matches regardless of where in the name
+// it falls. Diacritic-folded on both sides first (see foldDiacritics).
+export function matchesSearch(name: string, query: string): boolean {
+  const normalizedName = foldDiacritics(name.toLowerCase())
+  const words = foldDiacritics(query.toLowerCase()).trim().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return true
+  return words.every((w) => wordMatches(normalizedName, w))
+}
+
 // --- Livsmedelsverket (Swedish Food Agency) open food-composition API ---
 // Free, no API key, CORS-open. https://dataportal.livsmedelsverket.se/livsmedel
 // License: CC BY 4.0 — "Livsmedelsverket" must be credited as the source (see Settings).
@@ -130,10 +165,9 @@ async function loadCatalog(): Promise<LivsmedelsverketFood[]> {
 }
 
 export async function searchLivsmedelsverket(query: string): Promise<LivsmedelsverketFood[]> {
-  const trimmed = query.trim().toLowerCase()
-  if (!trimmed) return []
+  if (!query.trim()) return []
   const catalog = await loadCatalog()
-  return catalog.filter((f) => f.namn.toLowerCase().includes(trimmed)).slice(0, 25)
+  return catalog.filter((f) => matchesSearch(f.namn, query)).slice(0, 25)
 }
 
 // The API's naringsvarden endpoint returns one flat array of nutrient rows per food,
