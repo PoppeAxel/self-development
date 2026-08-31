@@ -90,7 +90,11 @@ export function Food() {
   const [logDate, setLogDate] = useState(todayISO())
   const [addLogOpen, setAddLogOpen] = useState(false)
   const [addLogQuery, setAddLogQuery] = useState('')
-  const [quantifying, setQuantifying] = useState<{ kind: 'recipe' | 'ingredient'; id: string; name: string } | null>(null)
+  // entryId set means this is editing an existing food_log_entries row (update) rather
+  // than logging a new one (insert) — same dialog, same fields, different save target.
+  const [quantifying, setQuantifying] = useState<{ kind: 'recipe' | 'ingredient'; id: string; name: string; entryId?: string } | null>(
+    null,
+  )
   const [quantifyValue, setQuantifyValue] = useState('')
   const [quantifyMealType, setQuantifyMealType] = useState<MealType | null>(null)
   const [confirmDeleteEntry, setConfirmDeleteEntry] = useState<FoodLogEntry | null>(null)
@@ -170,19 +174,42 @@ export function Food() {
     setAddLogOpen(false)
   }
 
+  // Opens the same quantity/meal dialog as beginQuantify, but pre-filled from an
+  // existing log entry and tagged with its id so confirmQuantify updates it in place
+  // instead of inserting a new row.
+  function beginEditEntry(entry: FoodLogEntry) {
+    if (entry.recipe_id) {
+      const recipe = recipesById.get(entry.recipe_id)
+      setQuantifying({ kind: 'recipe', id: entry.recipe_id, name: recipe?.name ?? 'Recipe', entryId: entry.id })
+      setQuantifyValue(String(entry.servings ?? 1))
+    } else if (entry.ingredient_id) {
+      const ingredient = ingredientsById.get(entry.ingredient_id)
+      setQuantifying({ kind: 'ingredient', id: entry.ingredient_id, name: ingredient?.name ?? 'Ingredient', entryId: entry.id })
+      setQuantifyValue(String(entry.grams ?? 0))
+    } else {
+      return
+    }
+    setQuantifyMealType(entry.meal_type)
+  }
+
   async function confirmQuantify() {
     if (!quantifying) return
     const value = Number(quantifyValue)
     if (!quantifyValue || Number.isNaN(value) || value <= 0) return
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-    if (!user) return
-    const payload =
-      quantifying.kind === 'recipe'
-        ? { recipe_id: quantifying.id, servings: value, ingredient_id: null, grams: null }
-        : { ingredient_id: quantifying.id, grams: value, recipe_id: null, servings: null }
-    await supabase.from('food_log_entries').insert({ ...payload, meal_type: quantifyMealType, date: logDate, user_id: user.id })
+    if (quantifying.entryId) {
+      const payload = quantifying.kind === 'recipe' ? { servings: value } : { grams: value }
+      await supabase.from('food_log_entries').update({ ...payload, meal_type: quantifyMealType }).eq('id', quantifying.entryId)
+    } else {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return
+      const payload =
+        quantifying.kind === 'recipe'
+          ? { recipe_id: quantifying.id, servings: value, ingredient_id: null, grams: null }
+          : { ingredient_id: quantifying.id, grams: value, recipe_id: null, servings: null }
+      await supabase.from('food_log_entries').insert({ ...payload, meal_type: quantifyMealType, date: logDate, user_id: user.id })
+    }
     setQuantifying(null)
     load()
   }
@@ -529,6 +556,9 @@ export function Food() {
                                 {round(m.kcal)} kcal · P {round(m.protein)}g C {round(m.carbs)}g F {round(m.fat)}g
                               </p>
                             </div>
+                            <button onClick={() => beginEditEntry(entry)} className="pl-3 text-gray-300" aria-label="Edit entry">
+                              ✎
+                            </button>
                             <button onClick={() => setConfirmDeleteEntry(entry)} className="pl-3 text-gray-300" aria-label="Remove entry">
                               ✕
                             </button>
@@ -734,7 +764,10 @@ export function Food() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6" onClick={() => setQuantifying(null)}>
           <div className="w-full max-w-xs rounded-3xl bg-white p-5 shadow-lg" onClick={(e) => e.stopPropagation()}>
             <p className="font-semibold text-gray-900">{quantifying.name}</p>
-            <p className="mt-1 text-sm text-gray-500">{quantifying.kind === 'recipe' ? 'How many servings?' : 'How many grams?'}</p>
+            <p className="mt-1 text-sm text-gray-500">
+              {quantifying.entryId ? 'Editing this entry — ' : ''}
+              {quantifying.kind === 'recipe' ? 'How many servings?' : 'How many grams?'}
+            </p>
             <input
               autoFocus
               value={quantifyValue}
@@ -770,7 +803,7 @@ export function Food() {
                 Cancel
               </button>
               <button onClick={confirmQuantify} className="flex-1 rounded-2xl bg-teal-600 px-4 py-2.5 font-semibold text-white">
-                Log
+                {quantifying.entryId ? 'Save' : 'Log'}
               </button>
             </div>
           </div>
