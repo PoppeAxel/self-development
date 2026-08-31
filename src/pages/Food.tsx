@@ -66,10 +66,12 @@ interface IngredientFormState {
   carbs: string
   fat: string
   fiber: string
+  portionLabel: string
+  portionGrams: string
 }
 
 function emptyIngredientForm(): IngredientFormState {
-  return { name: '', kcal: '', protein: '', carbs: '', fat: '', fiber: '' }
+  return { name: '', kcal: '', protein: '', carbs: '', fat: '', fiber: '', portionLabel: '', portionGrams: '' }
 }
 
 type FoodSubTab = 'log' | 'recipes' | 'library'
@@ -155,7 +157,10 @@ export function Food() {
 
   function beginQuantify(kind: 'recipe' | 'ingredient', id: string, name: string) {
     setQuantifying({ kind, id, name })
-    setQuantifyValue(kind === 'recipe' ? '1' : '100')
+    // Default to "1 portion" worth of grams when the ingredient has a standard portion
+    // set (e.g. banana → 120g) — a much more useful starting point than a flat 100g.
+    const portionGrams = kind === 'ingredient' ? ingredientsById.get(id)?.portion_grams : null
+    setQuantifyValue(kind === 'recipe' ? '1' : portionGrams != null ? String(portionGrams) : '100')
     // A recipe's own meal tag (if it has one) is a better default than a time-of-day
     // guess — e.g. a recipe tagged "Dinner" logged the next day as lunch leftovers is
     // the exception, not the rule.
@@ -260,7 +265,8 @@ export function Food() {
 
   function addIngredientToRecipe(ingredient: Ingredient) {
     if (pickingIngredientFor === 'new' || pickingIngredientFor === null) {
-      setRecipeRows((rows) => [...rows, { ingredientId: ingredient.id, name: ingredient.name, grams: '100' }])
+      const defaultGrams = ingredient.portion_grams != null ? String(ingredient.portion_grams) : '100'
+      setRecipeRows((rows) => [...rows, { ingredientId: ingredient.id, name: ingredient.name, grams: defaultGrams }])
     } else {
       setRecipeRows((rows) =>
         rows.map((r, i) => (i === pickingIngredientFor ? { ...r, ingredientId: ingredient.id, name: ingredient.name } : r)),
@@ -339,6 +345,8 @@ export function Food() {
       carbs: String(ingredient.carbs_per_100g),
       fat: String(ingredient.fat_per_100g),
       fiber: String(ingredient.fiber_per_100g),
+      portionLabel: ingredient.portion_label ?? '',
+      portionGrams: ingredient.portion_grams != null ? String(ingredient.portion_grams) : '',
     })
     setIngredientFormMode('manual')
     setIngredientFormOrigin('library')
@@ -357,14 +365,15 @@ export function Food() {
   async function importLsvFood(food: LivsmedelsverketFood) {
     const macros = await fetchLivsmedelsverketMacros(food.nummer)
     if (!macros) return
-    setIngredientForm({
+    setIngredientForm((f) => ({
+      ...f,
       name: food.namn,
       kcal: String(round(macros.kcal, 1)),
       protein: String(round(macros.protein, 1)),
       carbs: String(round(macros.carbs, 1)),
       fat: String(round(macros.fat, 1)),
       fiber: String(round(macros.fiber, 1)),
-    })
+    }))
     setIngredientFormMode('manual')
   }
 
@@ -387,14 +396,15 @@ export function Food() {
       setScanLookupError(`Detected barcode ${barcode}, but couldn't find it on Open Food Facts — try manual entry instead.`)
       return
     }
-    setIngredientForm({
+    setIngredientForm((f) => ({
+      ...f,
       name: product.name,
       kcal: String(round(product.macros.kcal, 1)),
       protein: String(round(product.macros.protein, 1)),
       carbs: String(round(product.macros.carbs, 1)),
       fat: String(round(product.macros.fat, 1)),
       fiber: String(round(product.macros.fiber, 1)),
-    })
+    }))
     setIngredientFormMode('manual')
   }
 
@@ -407,6 +417,12 @@ export function Food() {
       data: { user },
     } = await supabase.auth.getUser()
     if (!user) return
+    // Both halves of the portion shortcut are required together, or neither — a label
+    // with no gram equivalent (or vice versa) isn't usable, so treat a partial entry as
+    // "no portion set" rather than saving something unusable.
+    const portionLabel = ingredientForm.portionLabel.trim()
+    const portionGrams = Number(ingredientForm.portionGrams)
+    const hasPortion = portionLabel !== '' && !Number.isNaN(portionGrams) && portionGrams > 0
     const payload = {
       name,
       kcal_per_100g: kcal,
@@ -414,6 +430,8 @@ export function Food() {
       carbs_per_100g: Number(ingredientForm.carbs) || 0,
       fat_per_100g: Number(ingredientForm.fat) || 0,
       fiber_per_100g: Number(ingredientForm.fiber) || 0,
+      portion_label: hasPortion ? portionLabel : null,
+      portion_grams: hasPortion ? portionGrams : null,
     }
 
     if (editingIngredient) {
@@ -627,6 +645,9 @@ export function Food() {
                     <p className="font-medium text-gray-900">{ingredient.name}</p>
                     <p className="text-[11px] text-gray-400">
                       {ingredient.kcal_per_100g} kcal/100g
+                      {ingredient.portion_label && ingredient.portion_grams
+                        ? ` · 1 ${ingredient.portion_label} = ${ingredient.portion_grams}g`
+                        : ''}
                       {ingredient.source === 'livsmedelsverket' ? ' · Livsmedelsverket' : ''}
                     </p>
                   </div>
@@ -722,6 +743,25 @@ export function Food() {
               step={quantifying.kind === 'recipe' ? '0.5' : '1'}
               className="mt-3 w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-teal-400"
             />
+            {(() => {
+              if (quantifying.kind !== 'ingredient') return null
+              const ing = ingredientsById.get(quantifying.id)
+              if (!ing?.portion_label || !ing.portion_grams) return null
+              return (
+                <div className="mt-2 flex gap-1.5">
+                  {[1, 2, 3].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setQuantifyValue(String(round(ing.portion_grams! * n, 1)))}
+                      className="flex-1 rounded-xl bg-gray-100 py-1.5 text-xs font-medium text-gray-600"
+                    >
+                      {n} {ing.portion_label}
+                    </button>
+                  ))}
+                </div>
+              )
+            })()}
             <div className="mt-3">
               <MealTypePicker value={quantifyMealType} onChange={setQuantifyMealType} />
             </div>
@@ -778,35 +818,60 @@ export function Food() {
             </div>
 
             <div className="flex flex-col gap-2">
-              {recipeRows.map((row, i) => (
-                <div key={i} className="flex items-center gap-2 rounded-2xl border border-gray-100 p-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPickingIngredientFor(i)
-                      setIngredientPickQuery('')
-                    }}
-                    className="min-w-0 flex-1 text-left font-medium text-gray-900"
-                  >
-                    {row.name || 'Choose ingredient…'}
-                  </button>
-                  <input
-                    value={row.grams}
-                    onChange={(e) => setRecipeRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, grams: e.target.value } : r)))}
-                    type="number"
-                    placeholder="g"
-                    className="w-16 min-w-0 rounded-xl border border-gray-200 bg-white px-2 py-2 text-center text-gray-900 outline-none focus:border-teal-400"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setRecipeRows((rows) => rows.filter((_, idx) => idx !== i))}
-                    className="shrink-0 px-1 text-gray-300"
-                    aria-label="Remove ingredient"
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
+              {recipeRows.map((row, i) => {
+                const portionIngredient = row.ingredientId ? ingredientsById.get(row.ingredientId) : null
+                return (
+                  <div key={i} className="flex flex-col gap-2 rounded-2xl border border-gray-100 p-3">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPickingIngredientFor(i)
+                          setIngredientPickQuery('')
+                        }}
+                        className="min-w-0 flex-1 text-left font-medium text-gray-900"
+                      >
+                        {row.name || 'Choose ingredient…'}
+                      </button>
+                      <input
+                        value={row.grams}
+                        onChange={(e) => setRecipeRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, grams: e.target.value } : r)))}
+                        type="number"
+                        placeholder="g"
+                        className="w-16 min-w-0 rounded-xl border border-gray-200 bg-white px-2 py-2 text-center text-gray-900 outline-none focus:border-teal-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setRecipeRows((rows) => rows.filter((_, idx) => idx !== i))}
+                        className="shrink-0 px-1 text-gray-300"
+                        aria-label="Remove ingredient"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    {portionIngredient?.portion_label && portionIngredient.portion_grams && (
+                      <div className="flex gap-1.5">
+                        {[1, 2, 3].map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() =>
+                              setRecipeRows((rows) =>
+                                rows.map((r, idx) =>
+                                  idx === i ? { ...r, grams: String(round(portionIngredient.portion_grams! * n, 1)) } : r,
+                                ),
+                              )
+                            }
+                            className="flex-1 rounded-xl bg-gray-100 py-1 text-xs font-medium text-gray-600"
+                          >
+                            {n} {portionIngredient.portion_label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
             <button
               type="button"
@@ -1030,6 +1095,28 @@ export function Food() {
                 />
               </label>
             </div>
+
+            <div>
+              <p className="mb-1 text-xs text-gray-400">
+                Standard portion (optional) — a quick shortcut like "tbsp" or "banana" so you don't have to type grams every time
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  value={ingredientForm.portionLabel}
+                  onChange={(e) => setIngredientForm((f) => ({ ...f, portionLabel: e.target.value }))}
+                  placeholder="e.g. tbsp, banana, scoop"
+                  className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
+                />
+                <input
+                  value={ingredientForm.portionGrams}
+                  onChange={(e) => setIngredientForm((f) => ({ ...f, portionGrams: e.target.value }))}
+                  type="number"
+                  placeholder="grams each, e.g. 14"
+                  className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
+                />
+              </div>
+            </div>
+
             <button type="submit" className="mt-2 rounded-2xl bg-teal-600 px-4 py-2.5 font-semibold text-white">
               {editingIngredient ? 'Save changes' : 'Save ingredient'}
             </button>
