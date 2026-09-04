@@ -9,6 +9,9 @@ import {
   addMacros,
   logEntryMacros,
   recipePerServingMacros,
+  recipeTotalMacros,
+  scaleMacros,
+  ingredientMacros,
   searchLivsmedelsverket,
   fetchLivsmedelsverketMacros,
   fetchOpenFoodFactsProduct,
@@ -103,6 +106,7 @@ export function Food() {
   const [quantifyMealType, setQuantifyMealType] = useState<MealType | null>(null)
   const [confirmDeleteEntry, setConfirmDeleteEntry] = useState<FoodLogEntry | null>(null)
 
+  const [viewingRecipe, setViewingRecipe] = useState<Recipe | null>(null)
   const [recipeBuilderOpen, setRecipeBuilderOpen] = useState(false)
   const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null)
   const [recipeName, setRecipeName] = useState('')
@@ -656,7 +660,7 @@ export function Food() {
                     key={recipe.id}
                     className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm"
                   >
-                    <div className="flex-1">
+                    <button onClick={() => setViewingRecipe(recipe)} className="flex-1 text-left">
                       <p className="font-medium text-gray-900">
                         {recipe.name}
                         {recipe.meal_type && (
@@ -667,9 +671,9 @@ export function Food() {
                       </p>
                       <p className="text-[11px] text-gray-400">
                         {round(perServing.kcal)} kcal/serving · {recipe.servings} serving{recipe.servings === 1 ? '' : 's'} ·{' '}
-                        {lines.length} ingredient{lines.length === 1 ? '' : 's'}
+                        {lines.length} ingredient{lines.length === 1 ? '' : 's'} — tap to see breakdown
                       </p>
-                    </div>
+                    </button>
                     <button onClick={() => openEditRecipe(recipe)} className="pl-3 text-gray-300" aria-label="Edit recipe">
                       ✎
                     </button>
@@ -765,6 +769,79 @@ export function Food() {
           })()}
         </>
       )}
+
+      {/* View recipe — read-only breakdown of which ingredients drive the recipe's
+          calories/macros, sorted highest-kcal-first, so a suspiciously high-calorie
+          recipe can be traced back to the actual line that's off (wrong grams, wrong
+          ingredient) instead of just seeing the wrong total. */}
+      {viewingRecipe &&
+        (() => {
+          const lines = (recipeLines.get(viewingRecipe.id) ?? []).slice().sort((a, b) => a.position - b.position)
+          const total = recipeTotalMacros(lines, ingredientsById)
+          const perServing = recipePerServingMacros(viewingRecipe, lines, ingredientsById)
+          const breakdown = lines
+            .map((line) => {
+              const ingredient = ingredientsById.get(line.ingredient_id)
+              const macros = ingredient ? scaleMacros(ingredientMacros(ingredient), line.grams) : ZERO_MACROS
+              return { line, ingredient, macros }
+            })
+            .sort((a, b) => b.macros.kcal - a.macros.kcal)
+          const maxKcal = Math.max(...breakdown.map((r) => r.macros.kcal), 1)
+          return (
+            <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+              <div className="flex items-center justify-between px-4 pt-4">
+                <h2 className="text-lg font-bold text-gray-900">{viewingRecipe.name}</h2>
+                <button
+                  onClick={() => setViewingRecipe(null)}
+                  className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
+                >
+                  Close ✕
+                </button>
+              </div>
+              <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+                <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                  <p className="text-lg font-bold text-gray-900">{round(perServing.kcal)} kcal/serving</p>
+                  <MacroRow macros={perServing} />
+                  <p className="mt-1 text-xs text-gray-400">
+                    {round(total.kcal)} kcal total · {viewingRecipe.servings} serving{viewingRecipe.servings === 1 ? '' : 's'}
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="mb-2 text-xs font-semibold uppercase text-gray-400">Ingredients, by calorie contribution</h3>
+                  <div className="flex flex-col gap-2">
+                    {breakdown.map(({ line, ingredient, macros }) => (
+                      <div key={line.id} className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-medium text-gray-900">{ingredient?.name ?? 'Unknown ingredient'}</p>
+                          <p className="shrink-0 text-sm font-semibold text-gray-900">{round(macros.kcal)} kcal</p>
+                        </div>
+                        <p className="text-[11px] text-gray-400">
+                          {line.grams}g · P {round(macros.protein)}g C {round(macros.carbs)}g F {round(macros.fat)}g
+                        </p>
+                        <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-gray-100">
+                          <div className="h-full rounded-full bg-teal-500" style={{ width: `${(macros.kcal / maxKcal) * 100}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2 border-t border-gray-100 p-4">
+                <button
+                  onClick={() => {
+                    const recipe = viewingRecipe
+                    setViewingRecipe(null)
+                    openEditRecipe(recipe)
+                  }}
+                  className="flex-1 rounded-2xl bg-teal-600 px-4 py-2.5 font-semibold text-white"
+                >
+                  Edit recipe
+                </button>
+              </div>
+            </div>
+          )
+        })()}
 
       {/* Add to log */}
       {addLogOpen && (
