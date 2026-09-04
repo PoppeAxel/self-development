@@ -149,6 +149,7 @@ export interface Ingredient {
   fiber_per_100g: number
   portion_label: string | null
   portion_grams: number | null
+  category: string | null
   created_at: string
 }
 

@@ -16,6 +16,7 @@ import {
   matchesSearch,
   MEAL_TYPES,
   MEAL_TYPE_INFO,
+  INGREDIENT_CATEGORIES,
   ZERO_MACROS,
   type Macros,
   type LivsmedelsverketFood,
@@ -69,10 +70,11 @@ interface IngredientFormState {
   fiber: string
   portionLabel: string
   portionGrams: string
+  category: string
 }
 
 function emptyIngredientForm(): IngredientFormState {
-  return { name: '', kcal: '', protein: '', carbs: '', fat: '', fiber: '', portionLabel: '', portionGrams: '' }
+  return { name: '', kcal: '', protein: '', carbs: '', fat: '', fiber: '', portionLabel: '', portionGrams: '', category: '' }
 }
 
 type FoodSubTab = 'log' | 'recipes' | 'library'
@@ -81,6 +83,8 @@ const SUB_TAB_LABELS: Record<FoodSubTab, string> = { log: 'Log', recipes: 'Recip
 
 export function Food() {
   const [subTab, setSubTab] = useState<FoodSubTab>('log')
+  const [recipeSearchQuery, setRecipeSearchQuery] = useState('')
+  const [librarySearchQuery, setLibrarySearchQuery] = useState('')
   const [ingredients, setIngredients] = useState<Ingredient[]>([])
   const [recipes, setRecipes] = useState<Recipe[]>([])
   const [recipeLines, setRecipeLines] = useState<Map<string, RecipeIngredient[]>>(new Map())
@@ -374,6 +378,7 @@ export function Food() {
       fiber: String(ingredient.fiber_per_100g),
       portionLabel: ingredient.portion_label ?? '',
       portionGrams: ingredient.portion_grams != null ? String(ingredient.portion_grams) : '',
+      category: ingredient.category ?? '',
     })
     setIngredientFormMode('manual')
     setIngredientFormOrigin('library')
@@ -459,6 +464,7 @@ export function Food() {
       fiber_per_100g: Number(ingredientForm.fiber) || 0,
       portion_label: hasPortion ? portionLabel : null,
       portion_grams: hasPortion ? portionGrams : null,
+      category: ingredientForm.category.trim() || null,
     }
 
     if (editingIngredient) {
@@ -609,13 +615,22 @@ export function Food() {
           >
             + New recipe
           </button>
-          {loading ? (
-            <p className="text-sm text-gray-400">Loading…</p>
-          ) : recipes.length === 0 ? (
-            <p className="text-sm text-gray-400">No recipes yet — add one above.</p>
-          ) : (
+          {recipes.length > 0 && (
+            <input
+              value={recipeSearchQuery}
+              onChange={(e) => setRecipeSearchQuery(e.target.value)}
+              placeholder="Search recipes"
+              className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
+            />
+          )}
+          {(() => {
+            const filteredRecipes = recipes.filter((r) => matchesSearch(r.name, recipeSearchQuery))
+            if (loading) return <p className="text-sm text-gray-400">Loading…</p>
+            if (recipes.length === 0) return <p className="text-sm text-gray-400">No recipes yet — add one above.</p>
+            if (filteredRecipes.length === 0) return <p className="text-sm text-gray-400">No recipes match "{recipeSearchQuery}".</p>
+            return (
             <div className="flex flex-col gap-2">
-              {recipes.map((recipe) => {
+              {filteredRecipes.map((recipe) => {
                 const lines = recipeLines.get(recipe.id) ?? []
                 const perServing = recipePerServingMacros(recipe, lines, ingredientsById)
                 return (
@@ -647,7 +662,8 @@ export function Food() {
                 )
               })}
             </div>
-          )}
+            )
+          })()}
         </>
       )}
 
@@ -660,41 +676,75 @@ export function Food() {
             + New ingredient
           </button>
           <p className="text-[11px] text-gray-400">Nutrition data via Livsmedelsverket's Livsmedelsdatabasen (CC BY 4.0).</p>
-          {loading ? (
-            <p className="text-sm text-gray-400">Loading…</p>
-          ) : ingredients.length === 0 ? (
-            <p className="text-sm text-gray-400">No ingredients yet — add one above.</p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {ingredients.map((ingredient) => (
-                <div
-                  key={ingredient.id}
-                  className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm"
-                >
-                  <div className="flex-1">
-                    <p className="font-medium text-gray-900">{ingredient.name}</p>
-                    <p className="text-[11px] text-gray-400">
-                      {ingredient.kcal_per_100g} kcal/100g
-                      {ingredient.portion_label && ingredient.portion_grams
-                        ? ` · 1 ${ingredient.portion_label} = ${ingredient.portion_grams}g`
-                        : ''}
-                      {ingredient.source === 'livsmedelsverket' ? ' · Livsmedelsverket' : ''}
-                    </p>
+          {ingredients.length > 0 && (
+            <input
+              value={librarySearchQuery}
+              onChange={(e) => setLibrarySearchQuery(e.target.value)}
+              placeholder="Search ingredients"
+              className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
+            />
+          )}
+          {(() => {
+            const filteredIngredients = ingredients.filter((i) => matchesSearch(i.name, librarySearchQuery))
+            if (loading) return <p className="text-sm text-gray-400">Loading…</p>
+            if (ingredients.length === 0) return <p className="text-sm text-gray-400">No ingredients yet — add one above.</p>
+            if (filteredIngredients.length === 0)
+              return <p className="text-sm text-gray-400">No ingredients match "{librarySearchQuery}".</p>
+            // Grouped by category — known categories in their defined order, then any
+            // custom ones alphabetically, then uncategorized last (not hidden/merged).
+            const groups = new Map<string, Ingredient[]>()
+            for (const ingredient of filteredIngredients) {
+              const key = ingredient.category ?? 'Uncategorized'
+              const arr = groups.get(key) ?? []
+              arr.push(ingredient)
+              groups.set(key, arr)
+            }
+            const knownOrder = INGREDIENT_CATEGORIES as readonly string[]
+            const customCategories = [...groups.keys()]
+              .filter((k) => k !== 'Uncategorized' && !knownOrder.includes(k))
+              .sort((a, b) => a.localeCompare(b))
+            const orderedKeys = [...knownOrder, ...customCategories, 'Uncategorized'].filter((k) => groups.has(k))
+            return (
+            <div className="flex flex-col gap-4">
+              {orderedKeys.map((key) => (
+                <div key={key}>
+                  <h3 className="mb-2 text-xs font-semibold uppercase text-gray-400">
+                    {key} ({groups.get(key)!.length})
+                  </h3>
+                  <div className="flex flex-col gap-2">
+                    {groups.get(key)!.map((ingredient) => (
+                      <div
+                        key={ingredient.id}
+                        className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm"
+                      >
+                        <div className="flex-1">
+                          <p className="font-medium text-gray-900">{ingredient.name}</p>
+                          <p className="text-[11px] text-gray-400">
+                            {ingredient.kcal_per_100g} kcal/100g
+                            {ingredient.portion_label && ingredient.portion_grams
+                              ? ` · 1 ${ingredient.portion_label} = ${ingredient.portion_grams}g`
+                              : ''}
+                            {ingredient.source === 'livsmedelsverket' ? ' · Livsmedelsverket' : ''}
+                          </p>
+                        </div>
+                        <button onClick={() => openEditIngredient(ingredient)} className="pl-3 text-gray-300" aria-label="Edit ingredient">
+                          ✎
+                        </button>
+                        <button
+                          onClick={() => setConfirmDeleteIngredient(ingredient)}
+                          className="pl-3 text-gray-300"
+                          aria-label="Remove ingredient"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                  <button onClick={() => openEditIngredient(ingredient)} className="pl-3 text-gray-300" aria-label="Edit ingredient">
-                    ✎
-                  </button>
-                  <button
-                    onClick={() => setConfirmDeleteIngredient(ingredient)}
-                    className="pl-3 text-gray-300"
-                    aria-label="Remove ingredient"
-                  >
-                    ✕
-                  </button>
                 </div>
               ))}
             </div>
-          )}
+            )
+          })()}
         </>
       )}
 
@@ -1147,6 +1197,30 @@ export function Food() {
                   className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
                 />
               </div>
+            </div>
+
+            <div>
+              <p className="mb-1 text-xs text-gray-400">Category (optional) — groups the Library list</p>
+              <div className="flex flex-wrap gap-1.5">
+                {INGREDIENT_CATEGORIES.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setIngredientForm((f) => ({ ...f, category: f.category === c ? '' : c }))}
+                    className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                      ingredientForm.category === c ? 'bg-teal-100 text-teal-700' : 'bg-gray-100 text-gray-500'
+                    }`}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+              <input
+                value={ingredientForm.category}
+                onChange={(e) => setIngredientForm((f) => ({ ...f, category: e.target.value }))}
+                placeholder="Or type a custom category"
+                className="mt-2 w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-teal-400"
+              />
             </div>
 
             <button type="submit" className="mt-2 rounded-2xl bg-teal-600 px-4 py-2.5 font-semibold text-white">

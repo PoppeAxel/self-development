@@ -19,6 +19,21 @@ export function defaultMealTypeForNow(): MealType {
   return 'snack'
 }
 
+// Suggested ingredient categories — quick-tap starting points in the ingredient form,
+// not an enforced enum (ingredients.category is free text, so a custom value works too).
+export const INGREDIENT_CATEGORIES = [
+  'Protein',
+  'Vegetable',
+  'Fruit',
+  'Dairy',
+  'Grains & Carbs',
+  'Fats & Oils',
+  'Sauces & Condiments',
+  'Spices & Seasoning',
+  'Sweets & Snacks',
+  'Beverages',
+] as const
+
 export interface Macros {
   kcal: number
   protein: number
