@@ -16,8 +16,12 @@ export function ConfirmDialog({
   onCancel: () => void
 }) {
   if (!open) return null
+  // z-[80]: must always render above every other overlay in the app, including ones
+  // it can be triggered from mid-flow (e.g. the ingredient form sheet at z-[65] and the
+  // barcode scanner at z-[70]) — a confirm dialog rendered behind its trigger is
+  // invisible and unusable, not just visually off.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6" onClick={onCancel}>
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 px-6" onClick={onCancel}>
       <div className="w-full max-w-xs rounded-3xl bg-white p-5 shadow-lg" onClick={(e) => e.stopPropagation()}>
         <p className="font-semibold text-gray-900">{title}</p>
         {message && <p className="mt-1 text-sm text-gray-500">{message}</p>}

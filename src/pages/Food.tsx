@@ -125,6 +125,7 @@ export function Food() {
   const [lsvResults, setLsvResults] = useState<LivsmedelsverketFood[]>([])
   const [lsvSearching, setLsvSearching] = useState(false)
   const [confirmDeleteIngredient, setConfirmDeleteIngredient] = useState<Ingredient | null>(null)
+  const [confirmDuplicateName, setConfirmDuplicateName] = useState<string | null>(null)
   const [scannerOpen, setScannerOpen] = useState(false)
   const [scanLookingUp, setScanLookingUp] = useState(false)
   const [scanLookupError, setScanLookupError] = useState<string | null>(null)
@@ -440,8 +441,25 @@ export function Food() {
     setIngredientFormMode('manual')
   }
 
-  async function saveIngredientForm(e: React.FormEvent) {
+  function saveIngredientForm(e: React.FormEvent) {
     e.preventDefault()
+    const name = ingredientForm.name.trim()
+    if (!name) return
+    // Warn (don't block — a legitimate reason to have two same-named entries is rare
+    // but not impossible) if another ingredient already has this exact name, so
+    // duplicates like the ones just cleaned up don't quietly pile back up.
+    const isDuplicate = ingredients.some(
+      (i) => i.id !== editingIngredient?.id && i.name.trim().toLowerCase() === name.toLowerCase(),
+    )
+    if (isDuplicate) {
+      setConfirmDuplicateName(name)
+    } else {
+      saveIngredientNow()
+    }
+  }
+
+  async function saveIngredientNow() {
+    setConfirmDuplicateName(null)
     const name = ingredientForm.name.trim()
     const kcal = Number(ingredientForm.kcal)
     if (!name || Number.isNaN(kcal)) return
@@ -1266,6 +1284,15 @@ export function Food() {
           setConfirmDeleteIngredient(null)
         }}
         onCancel={() => setConfirmDeleteIngredient(null)}
+      />
+
+      <ConfirmDialog
+        open={confirmDuplicateName !== null}
+        title={`An ingredient named "${confirmDuplicateName ?? ''}" already exists`}
+        message="Save this as a separate entry anyway? (Consider searching the Library first to reuse the existing one.)"
+        confirmLabel="Save anyway"
+        onConfirm={saveIngredientNow}
+        onCancel={() => setConfirmDuplicateName(null)}
       />
     </div>
   )
