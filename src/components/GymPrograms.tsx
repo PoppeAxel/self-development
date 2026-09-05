@@ -373,23 +373,26 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
     setEditingSession(session)
   }
 
-  // Swaps a session row's exercise (e.g. equipment unavailable, an injury) without
-  // touching the underlying program — this only affects the session being logged.
+  // Adds the picked exercise as a new row right after the one being swapped, rather than
+  // overwriting it — the original exercise (and anything already logged for it this
+  // session) stays put; use the row's own ✕ to remove it if you actually meant to replace
+  // it. This only affects the session being logged, not the underlying program.
   function pickSubstituteForSession(newExerciseName: string) {
     if (substitutingSessionIndex == null) return
     const previous = lastLoggedSets(newExerciseName)
-    setSessionRows((rows) =>
-      rows.map((r, idx) => {
-        if (idx !== substitutingSessionIndex) return r
-        return {
-          exerciseName: newExerciseName,
-          sets: Array.from({ length: r.sets.length }, (_, i) => ({
-            reps: previous?.[i]?.reps != null ? String(previous[i].reps) : '',
-            weight: previous?.[i]?.weight != null ? String(previous[i].weight) : '',
-          })),
-        }
-      }),
-    )
+    const currentRow = sessionRows[substitutingSessionIndex]
+    const newRow: SessionExerciseRow = {
+      exerciseName: newExerciseName,
+      sets: Array.from({ length: currentRow.sets.length }, (_, i) => ({
+        reps: previous?.[i]?.reps != null ? String(previous[i].reps) : '',
+        weight: previous?.[i]?.weight != null ? String(previous[i].weight) : '',
+      })),
+    }
+    setSessionRows((rows) => [
+      ...rows.slice(0, substitutingSessionIndex + 1),
+      newRow,
+      ...rows.slice(substitutingSessionIndex + 1),
+    ])
     setSubstitutingSessionIndex(null)
   }
 
@@ -963,17 +966,27 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                       </span>
                     )}
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSubstitutingSessionIndex(exIdx)
-                      setSubstituteSessionQuery('')
-                    }}
-                    className="shrink-0 pl-2 text-gray-400"
-                    aria-label="Swap exercise"
-                  >
-                    ⇄
-                  </button>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSubstitutingSessionIndex(exIdx)
+                        setSubstituteSessionQuery('')
+                      }}
+                      className="pl-2 text-gray-400"
+                      aria-label="Swap exercise"
+                    >
+                      ⇄
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSessionRows((rows) => rows.filter((_, ri) => ri !== exIdx))}
+                      className="pl-2 text-gray-300"
+                      aria-label="Remove exercise from this session"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   {row.sets.map((set, setIdx) => (
@@ -1010,8 +1023,31 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                         placeholder="kg"
                         className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
                       />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSessionRows((rows) =>
+                            rows.map((r, ri) => (ri === exIdx ? { ...r, sets: r.sets.filter((_, si) => si !== setIdx) } : r)),
+                          )
+                        }
+                        className="shrink-0 px-1 text-gray-300"
+                        aria-label="Remove set"
+                      >
+                        ✕
+                      </button>
                     </div>
                   ))}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSessionRows((rows) =>
+                        rows.map((r, ri) => (ri === exIdx ? { ...r, sets: [...r.sets, { reps: '', weight: '' }] } : r)),
+                      )
+                    }
+                    className="ml-12 self-start text-xs font-semibold text-rose-600"
+                  >
+                    + Add set
+                  </button>
                 </div>
               </div>
               )
