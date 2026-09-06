@@ -9,6 +9,7 @@ import { addMacros, logEntryMacros, ZERO_MACROS } from '../lib/food'
 import { ProgressRing } from '../components/ProgressRing'
 import { RefreshButton } from '../components/RefreshButton'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { MorningCheckIn } from '../components/MorningCheckIn'
 import type { Category, DailyTask, Goal, Reminder, RecipeIngredient } from '../lib/types'
 
 // A task whose auto_metric is this sentinel auto-completes off today's Food-log total
@@ -372,6 +373,7 @@ export function Today() {
 
   return (
     <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
+      <MorningCheckIn onSaved={load} />
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Manage Your Daily Tasks</h1>
         <RefreshButton onRefresh={load} />
