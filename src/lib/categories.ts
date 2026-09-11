@@ -25,5 +25,13 @@ export async function ensureDefaultCategories() {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return
-  await supabase.from('categories').insert(DEFAULT_CATEGORIES.map((c) => ({ ...c, user_id: user.id })))
+  // Multiple pages (Today, Settings) call this on every mount, so two can race here —
+  // both see count === 0 above and both try to insert. `ignoreDuplicates` against the
+  // (user_id, name) unique constraint makes that harmless instead of creating duplicates.
+  await supabase
+    .from('categories')
+    .upsert(
+      DEFAULT_CATEGORIES.map((c) => ({ ...c, user_id: user.id })),
+      { onConflict: 'user_id,name', ignoreDuplicates: true },
+    )
 }

@@ -55,6 +55,9 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
   const [sessionRows, setSessionRows] = useState<SessionExerciseRow[]>([])
   const [substitutingSessionIndex, setSubstitutingSessionIndex] = useState<number | null>(null)
   const [substituteSessionQuery, setSubstituteSessionQuery] = useState('')
+  const [addingExercise, setAddingExercise] = useState(false)
+  const [addExerciseQuery, setAddExerciseQuery] = useState('')
+  const [addToProgramToo, setAddToProgramToo] = useState(false)
 
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [exerciseFormOpen, setExerciseFormOpen] = useState(false)
@@ -373,27 +376,62 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
     setEditingSession(session)
   }
 
-  // Adds the picked exercise as a new row right after the one being swapped, rather than
-  // overwriting it — the original exercise (and anything already logged for it this
-  // session) stays put; use the row's own ✕ to remove it if you actually meant to replace
-  // it. This only affects the session being logged, not the underlying program.
+  // Replaces a session row's exercise in place (e.g. equipment unavailable, an injury) —
+  // this only affects the session being logged, not the underlying program. To log an
+  // extra exercise without losing the original, use "+ Add exercise" instead of swapping.
   function pickSubstituteForSession(newExerciseName: string) {
     if (substitutingSessionIndex == null) return
     const previous = lastLoggedSets(newExerciseName)
-    const currentRow = sessionRows[substitutingSessionIndex]
-    const newRow: SessionExerciseRow = {
-      exerciseName: newExerciseName,
-      sets: Array.from({ length: currentRow.sets.length }, (_, i) => ({
-        reps: previous?.[i]?.reps != null ? String(previous[i].reps) : '',
-        weight: previous?.[i]?.weight != null ? String(previous[i].weight) : '',
-      })),
-    }
-    setSessionRows((rows) => [
-      ...rows.slice(0, substitutingSessionIndex + 1),
-      newRow,
-      ...rows.slice(substitutingSessionIndex + 1),
-    ])
+    setSessionRows((rows) =>
+      rows.map((r, idx) => {
+        if (idx !== substitutingSessionIndex) return r
+        return {
+          exerciseName: newExerciseName,
+          sets: Array.from({ length: r.sets.length }, (_, i) => ({
+            reps: previous?.[i]?.reps != null ? String(previous[i].reps) : '',
+            weight: previous?.[i]?.weight != null ? String(previous[i].weight) : '',
+          })),
+        }
+      }),
+    )
     setSubstitutingSessionIndex(null)
+  }
+
+  // The program a session belongs to, if any — a brand-new session logs against
+  // `loggingProgram`, an existing one carries `editingSession.program_id` (nullable, since
+  // a session can outlive its program being deleted). Used to offer "also add to the
+  // program" when adding an ad-hoc exercise mid-session.
+  function sessionProgram(): GymProgram | null {
+    if (loggingProgram) return loggingProgram
+    if (editingSession?.program_id) return programs.find((p) => p.id === editingSession.program_id) ?? null
+    return null
+  }
+
+  // Adds an exercise to just this session (3 blank sets, same starting point as a new
+  // program row) without touching anything else already logged. Optionally also persists
+  // it onto the underlying program's exercise list so it shows up automatically next time.
+  async function addExerciseToSession(name: string, alsoAddToProgram: boolean) {
+    setSessionRows((rows) => [...rows, { exerciseName: name, sets: Array.from({ length: 3 }, () => ({ reps: '', weight: '' })) }])
+    setAddingExercise(false)
+
+    const program = alsoAddToProgram ? sessionProgram() : null
+    if (!program) return
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    const exerciseId = await upsertExercise(user.id, name, '', '')
+    const position = (exercisesByProgram.get(program.id) ?? []).length
+    await supabase.from('gym_program_exercises').insert({
+      program_id: program.id,
+      user_id: user.id,
+      name,
+      target_sets: 3,
+      target_reps: 10,
+      position,
+      exercise_id: exerciseId,
+    })
+    load()
   }
 
   async function saveSession() {
@@ -1052,6 +1090,17 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
               </div>
               )
             })}
+            <button
+              type="button"
+              onClick={() => {
+                setAddExerciseQuery('')
+                setAddToProgramToo(false)
+                setAddingExercise(true)
+              }}
+              className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-rose-600"
+            >
+              + Add exercise
+            </button>
             <button onClick={saveSession} className="mt-2 rounded-2xl bg-rose-600 px-4 py-2.5 font-semibold text-white">
               {editingSession ? 'Save changes' : 'Save session'}
             </button>
@@ -1100,6 +1149,83 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                           key={ex.id}
                           type="button"
                           onClick={() => pickSubstituteForSession(ex.name)}
+                          className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 text-left shadow-sm"
+                        >
+                          <span className="font-medium text-gray-900">{ex.name}</span>
+                          <span className="text-xs text-gray-400">{ex.primary_muscle ?? 'Uncategorized'}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )
+                })()}
+              </div>
+            </div>
+          )}
+
+          {addingExercise && (
+            <div className="fixed inset-0 z-[60] flex flex-col bg-white safe-top safe-bottom">
+              <div className="flex items-center justify-between px-4 pt-4">
+                <h2 className="text-lg font-bold text-gray-900">Add exercise</h2>
+                <button
+                  onClick={() => setAddingExercise(false)}
+                  className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
+                >
+                  Close ✕
+                </button>
+              </div>
+              <div className="p-4">
+                <input
+                  autoFocus
+                  value={addExerciseQuery}
+                  onChange={(e) => setAddExerciseQuery(e.target.value)}
+                  placeholder="Search exercises or type a new name"
+                  className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+                />
+              </div>
+              {sessionProgram() && (
+                <div className="flex items-center justify-between px-4 pb-3">
+                  <span className="pr-3 text-sm text-gray-600">Also add to {sessionProgram()!.name} for next time</span>
+                  <button
+                    type="button"
+                    onClick={() => setAddToProgramToo((v) => !v)}
+                    className={`h-6 w-11 shrink-0 rounded-full transition ${addToProgramToo ? 'bg-rose-600' : 'bg-gray-200'}`}
+                  >
+                    <span
+                      className={`block h-5 w-5 translate-y-0.5 rounded-full bg-white transition ${
+                        addToProgramToo ? 'translate-x-5' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </button>
+                </div>
+              )}
+              <div className="flex-1 overflow-y-auto px-4 pb-4">
+                {(() => {
+                  const query = addExerciseQuery.trim().toLowerCase()
+                  const currentNames = new Set(sessionRows.map((r) => r.exerciseName.toLowerCase()))
+                  const candidates = exercises
+                    .filter((ex) => !currentNames.has(ex.name.toLowerCase()))
+                    .filter((ex) => !query || ex.name.toLowerCase().includes(query))
+                    .sort((a, b) => a.name.localeCompare(b.name))
+                  const exactMatch = exercises.some((ex) => ex.name.toLowerCase() === query)
+                  return (
+                    <div className="flex flex-col gap-2">
+                      {query && !exactMatch && (
+                        <button
+                          type="button"
+                          onClick={() => addExerciseToSession(addExerciseQuery.trim(), addToProgramToo)}
+                          className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-rose-600"
+                        >
+                          + Add "{addExerciseQuery.trim()}" as a new exercise
+                        </button>
+                      )}
+                      {candidates.length === 0 && !query && (
+                        <p className="text-sm text-gray-400">Type to search, or enter a new exercise name.</p>
+                      )}
+                      {candidates.map((ex) => (
+                        <button
+                          key={ex.id}
+                          type="button"
+                          onClick={() => addExerciseToSession(ex.name, addToProgramToo)}
                           className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 text-left shadow-sm"
                         >
                           <span className="font-medium text-gray-900">{ex.name}</span>

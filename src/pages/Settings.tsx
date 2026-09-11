@@ -56,23 +56,38 @@ export function Settings() {
 
   async function addCategory(e: React.FormEvent) {
     e.preventDefault()
-    if (!categoryName.trim()) return
+    const name = categoryName.trim()
+    if (!name) return
+    // Names are unique per user at the DB level now — a duplicate insert would just error.
+    // Reusing the existing label (rather than erroring or silently failing) is the least
+    // surprising outcome for what's just a label picker.
+    if (categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+      setCategoryName('')
+      return
+    }
     const {
       data: { user },
     } = await supabase.auth.getUser()
     if (!user) return
-    await supabase.from('categories').insert({ name: categoryName.trim(), color: categoryColor, user_id: user.id })
+    await supabase.from('categories').insert({ name, color: categoryColor, user_id: user.id })
     setCategoryName('')
     load()
   }
 
   async function renameCategory(category: Category) {
-    if (!editingName.trim() || editingName === category.name) {
+    const name = editingName.trim()
+    if (!name || name === category.name) {
       setEditingCategoryId(null)
       return
     }
-    setCategories((cs) => cs.map((c) => (c.id === category.id ? { ...c, name: editingName.trim() } : c)))
-    await supabase.from('categories').update({ name: editingName.trim() }).eq('id', category.id)
+    // Same uniqueness constraint as addCategory — colliding into an existing name would
+    // otherwise error at the DB after already having optimistically renamed it locally.
+    if (categories.some((c) => c.id !== category.id && c.name.toLowerCase() === name.toLowerCase())) {
+      setEditingCategoryId(null)
+      return
+    }
+    setCategories((cs) => cs.map((c) => (c.id === category.id ? { ...c, name } : c)))
+    await supabase.from('categories').update({ name }).eq('id', category.id)
     setEditingCategoryId(null)
   }
 
