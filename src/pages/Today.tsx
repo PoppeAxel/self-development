@@ -6,8 +6,9 @@ import { rolloverRecurringGoals } from '../lib/goals'
 import { ensureDefaultCategories, CATEGORY_STYLES } from '../lib/categories'
 import { AUTO_METRICS, METRIC_INFO, isAutoMetric, upsertMetricValue, type AutoMetric } from '../lib/metrics'
 import { addMacros, logEntryMacros, ZERO_MACROS } from '../lib/food'
+import { THEME } from '../lib/theme'
 import { ProgressRing } from '../components/ProgressRing'
-import { RefreshButton } from '../components/RefreshButton'
+import { Screen, HeroChip } from '../components/Screen'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { MorningCheckIn } from '../components/MorningCheckIn'
 import type { Category, DailyTask, Goal, Reminder, RecipeIngredient } from '../lib/types'
@@ -371,137 +372,128 @@ export function Today() {
     : [getDay(new Date((newScheduledDate || viewDate) + 'T00:00:00'))]
   const activeReminderDays = reminderDays.length ? reminderDays : defaultReminderDays
 
-  return (
-    <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
-      <MorningCheckIn onSaved={load} />
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Manage Your Daily Tasks</h1>
-        <RefreshButton onRefresh={load} />
-      </div>
+  const hero = (
+    <>
+      {(tasks.length > 0 || steps != null || weightToday != null || todayCalories != null) && (
+        <button onClick={() => setSummaryOpen((o) => !o)} className="mt-5 flex w-full items-center gap-4 text-left">
+          {tasks.length > 0 && (
+            <ProgressRing
+              percent={pct}
+              size={66}
+              strokeWidth={6}
+              color={THEME.pineArc}
+              trackColor={THEME.heroRingTrack}
+              disc={THEME.pineDisc}
+            >
+              <span className="text-base font-semibold text-white">
+                {doneCount}/{tasks.length}
+              </span>
+            </ProgressRing>
+          )}
+          <span className="flex flex-wrap gap-1.5">
+            {steps != null && <HeroChip>🚶 {steps.toLocaleString()}</HeroChip>}
+            {weightToday != null && <HeroChip>⚖️ {weightToday} kg</HeroChip>}
+            {todayCalories != null && <HeroChip>🔥 {todayCalories.toLocaleString()} kcal</HeroChip>}
+          </span>
+        </button>
+      )}
 
-      <div className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-2 py-1.5 shadow-sm">
+      <div className="mt-4 flex items-center justify-between gap-2 rounded-[18px] bg-white/14 px-2.5 py-[7px]">
         <button
           onClick={() => setViewDate((d) => format(subDays(new Date(d + 'T00:00:00'), 1), 'yyyy-MM-dd'))}
-          className="flex h-8 w-8 items-center justify-center rounded-full text-gray-500"
+          aria-label="Previous day"
+          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-white/18 text-white"
         >
           ‹
         </button>
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-gray-900">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-medium text-white">
             {isToday ? 'Today' : format(new Date(viewDate + 'T00:00:00'), 'EEEE, MMM d')}
           </span>
           {!isToday && (
-            <button onClick={() => setViewDate(todayISO())} className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-600">
+            <button
+              onClick={() => setViewDate(todayISO())}
+              className="shrink-0 rounded-full bg-surface px-2.5 py-0.5 text-xs font-semibold text-pine"
+            >
               Jump to today
             </button>
           )}
         </div>
         <button
           onClick={() => setViewDate((d) => format(addDays(new Date(d + 'T00:00:00'), 1), 'yyyy-MM-dd'))}
-          className="flex h-8 w-8 items-center justify-center rounded-full text-gray-500"
+          aria-label="Next day"
+          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-white/18 text-white"
         >
           ›
         </button>
       </div>
+    </>
+  )
 
-      {(tasks.length > 0 || steps != null || weightToday != null || todayCalories != null) && (
-        <div className="rounded-3xl border border-gray-100 bg-white shadow-sm">
-          <button
-            onClick={() => setSummaryOpen((o) => !o)}
-            className="flex w-full items-center justify-between px-4 py-3 text-left"
-          >
-            <span className="flex flex-wrap items-center gap-3 text-sm font-medium text-gray-700">
-              {tasks.length > 0 && <span>✓ {doneCount}/{tasks.length} tasks</span>}
-              {steps != null && (
-                <span>
-                  🚶 {steps.toLocaleString()}
-                  {stepGoal ? `/${stepGoal.toLocaleString()}` : ''} steps
-                </span>
-              )}
-              {weightToday != null && <span>⚖️ {weightToday} kg</span>}
-              {todayCalories != null && <span>🔥 {todayCalories.toLocaleString()} kcal</span>}
-            </span>
-            <span className={`text-gray-400 transition-transform ${summaryOpen ? 'rotate-180' : ''}`}>⌄</span>
-          </button>
+  return (
+    <Screen title="Today" onRefresh={load} hero={hero}>
+      <MorningCheckIn onSaved={load} />
 
-          {summaryOpen && (
-            <div className="flex flex-col gap-3 border-t border-gray-100 p-4">
-              {tasks.length > 0 && (
-                <div className="flex items-center gap-4">
-                  <ProgressRing percent={pct} color="#db2777" trackColor="#fce7f3">
-                    <span className="text-sm font-bold text-gray-900">{Math.round(pct)}%</span>
-                  </ProgressRing>
-                  <div>
-                    <p className="font-semibold text-gray-900">
-                      {doneCount}/{tasks.length} done
-                    </p>
-                    <p className="text-sm text-gray-500">Keep it up today</p>
-                  </div>
-                </div>
-              )}
-              {steps != null && (
-                <div className="flex items-center gap-4">
-                  <ProgressRing percent={stepGoal ? (steps / stepGoal) * 100 : 0} color="#0284c7" trackColor="#e0f2fe">
-                    <span className="text-xs">🚶</span>
-                  </ProgressRing>
-                  <div>
-                    <p className="font-semibold text-gray-900">
-                      {steps.toLocaleString()} {stepGoal ? `/ ${stepGoal.toLocaleString()}` : ''} steps
-                    </p>
-                    <p className="text-sm text-gray-500">Synced from Garmin</p>
-                  </div>
-                </div>
-              )}
-              <div className="flex items-center gap-4">
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-violet-100 text-lg">⚖️</span>
-                <div className="flex-1">
-                  {weightToday != null ? (
-                    <>
-                      <p className="font-semibold text-gray-900">{weightToday} kg</p>
-                      <p className="text-sm text-gray-500">
-                        {goalWeight != null ? `Goal ${goalWeight} kg` : `Logged ${isToday ? 'today' : 'that day'}`}
-                      </p>
-                    </>
-                  ) : (
-                    <div className="flex gap-2">
-                      <input
-                        value={weightInput}
-                        onChange={(e) => setWeightInput(e.target.value)}
-                        type="number"
-                        step="0.1"
-                        placeholder="Log weight (kg)"
-                        className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
-                      />
-                      <button
-                        onClick={logWeight}
-                        className="shrink-0 rounded-2xl bg-violet-600 px-3 py-2 text-sm font-semibold text-white"
-                      >
-                        Log
-                      </button>
-                    </div>
-                  )}
-                </div>
+      {summaryOpen && (
+        <div className="flex flex-col gap-3 rounded-3xl border border-line bg-surface p-4 shadow-card">
+          {steps != null && (
+            <div className="flex items-center gap-4">
+              <ProgressRing percent={stepGoal ? (steps / stepGoal) * 100 : 0} size={48} strokeWidth={5}>
+                <span className="text-xs">🚶</span>
+              </ProgressRing>
+              <div>
+                <p className="font-semibold text-ink">
+                  {steps.toLocaleString()} {stepGoal ? `/ ${stepGoal.toLocaleString()}` : ''} steps
+                </p>
+                <p className="text-xs font-medium text-ink-muted">Synced from Garmin</p>
               </div>
-              {todayCalories != null && (
-                <div className="flex items-center gap-4">
-                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-lg">🔥</span>
-                  <div>
-                    <p className="font-semibold text-gray-900">{todayCalories.toLocaleString()} kcal</p>
-                    <p className="text-sm text-gray-500">Logged {isToday ? 'today' : 'that day'} — see Journal for a breakdown</p>
-                  </div>
+            </div>
+          )}
+          <div className="flex items-center gap-4">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[15px] bg-cat-violet-tint text-lg">⚖️</span>
+            <div className="flex-1">
+              {weightToday != null ? (
+                <>
+                  <p className="font-semibold text-ink">{weightToday} kg</p>
+                  <p className="text-xs font-medium text-ink-muted">
+                    {goalWeight != null ? `Goal ${goalWeight} kg` : `Logged ${isToday ? 'today' : 'that day'}`}
+                  </p>
+                </>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    value={weightInput}
+                    onChange={(e) => setWeightInput(e.target.value)}
+                    type="number"
+                    step="0.1"
+                    placeholder="Log weight (kg)"
+                    className="min-w-0 flex-1 rounded-[20px] border border-line bg-surface px-3 py-2 text-sm text-ink placeholder-ink-disabled outline-none focus:border-pine"
+                  />
+                  <button onClick={logWeight} className="shrink-0 rounded-[20px] bg-pine px-4 py-2 text-sm font-semibold text-white">
+                    Log
+                  </button>
                 </div>
               )}
+            </div>
+          </div>
+          {todayCalories != null && (
+            <div className="flex items-center gap-4">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[15px] bg-cat-amber-tint text-lg">🔥</span>
+              <div>
+                <p className="font-semibold text-ink">{todayCalories.toLocaleString()} kcal</p>
+                <p className="text-xs font-medium text-ink-muted">See Journal for a breakdown</p>
+              </div>
             </div>
           )}
         </div>
       )}
 
       {loading ? (
-        <p className="text-sm text-gray-400">Loading…</p>
+        <p className="text-sm text-ink-disabled">Loading…</p>
       ) : tasks.length === 0 ? (
-        <p className="text-sm text-gray-400">No daily tasks yet. Add one below.</p>
+        <p className="text-sm text-ink-disabled">No daily tasks yet. Add one below.</p>
       ) : (
-        <ul className="flex flex-col gap-2">
+        <ul className="flex flex-col gap-2.5">
           {tasks.map((task) => {
             const isBudget = task.auto_metric === CALORIE_BUDGET_METRIC
             const done = isTaskDone(task)
@@ -512,68 +504,95 @@ export function Today() {
             const metricInfo = metric ? METRIC_INFO[metric] : null
             const effectiveStartDate = task.scheduled_date ?? task.created_at.slice(0, 10)
             const isLate = !task.recurring && !done && effectiveStartDate < viewDate
+            const metricValue = metric ? metricValues.get(metric) ?? 0 : null
+            // A metric with a target trades the long caption for a bar + percentage; without
+            // one there's nothing to fill, so it keeps a plain value readout.
+            const metricPct =
+              metric && metricValue != null && task.auto_metric_target
+                ? Math.min(100, (metricValue / task.auto_metric_target) * 100)
+                : null
+            // One metadata line, in category ink — category, linked goal, and the one-time
+            // or late state, rather than a row of separate badges.
+            const metaParts: React.ReactNode[] = []
+            if (category) metaParts.push(category.name)
+            if (goal) metaParts.push(`→ ${goal.title} ${goal.progress}/${goal.target_value}`)
+            if (!task.recurring) {
+              metaParts.push(isLate ? <span className="text-cat-rose-ink">late</span> : 'one-time')
+            }
             return (
               <li
                 key={task.id}
-                className="flex items-center justify-between overflow-hidden rounded-3xl border border-gray-100 bg-white shadow-sm"
+                className="flex items-center gap-3 overflow-hidden rounded-[22px] border border-line bg-surface shadow-card"
               >
-                <span className={`h-full w-1.5 self-stretch ${style.dot}`} />
+                <span className="w-[5px] self-stretch" style={{ background: style.accent }} />
                 <button
                   onClick={() => (metric ? openMetricEntry(task) : isBudget ? undefined : toggle(task))}
-                  className="flex flex-1 items-center gap-3 px-4 py-3.5 text-left"
+                  className="flex min-w-0 flex-1 items-center gap-3 py-3.5 text-left"
                 >
                   <span
-                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 ${
-                      done ? `border-transparent ${style.dot}` : 'border-gray-300'
-                    }`}
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[15px] text-lg font-semibold"
+                    style={{ background: style.tint, color: style.ink }}
                   >
-                    {done && (
-                      <svg viewBox="0 0 24 24" className="h-4 w-4 text-white" fill="none">
-                        <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
+                    {isBudget ? '🔥' : metricInfo ? metricInfo.icon : category ? category.name.charAt(0).toUpperCase() : '•'}
+                  </span>
+                  <span className="flex min-w-0 flex-1 flex-col gap-1">
+                    {/* Two lines at most — the design draws one, but a real title like
+                        "Stay under calorie budget" doesn't fit beside the row controls. */}
+                    <span
+                      className={`line-clamp-2 text-[15px] leading-snug ${done ? 'text-ink-disabled line-through' : 'font-medium text-ink'}`}
+                    >
+                      {task.title}
+                    </span>
+                    {metricPct != null ? (
+                      <span className="flex items-center gap-2">
+                        <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
+                          <span
+                            className="block h-full rounded-full"
+                            style={{ width: `${metricPct}%`, background: style.accent }}
+                          />
+                        </span>
+                        <span className="text-[11px] font-semibold" style={{ color: style.ink }}>
+                          {Math.round(metricPct)}%
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="truncate text-[11px] font-semibold" style={{ color: style.ink }}>
+                        {isBudget ? (
+                          <>
+                            {(todayCalories ?? 0).toLocaleString()}
+                            {task.auto_metric_target != null && ` / ${task.auto_metric_target.toLocaleString()}`} kcal
+                          </>
+                        ) : metricInfo ? (
+                          `${metricValue?.toLocaleString()} ${metricInfo.unit}`
+                        ) : (
+                          metaParts.map((part, i) => (
+                            <span key={i}>
+                              {i > 0 && ' · '}
+                              {part}
+                            </span>
+                          ))
+                        )}
+                      </span>
                     )}
                   </span>
-                  <span className="flex flex-col">
-                    <span className={done ? 'text-gray-400 line-through' : 'font-medium text-gray-900'}>{task.title}</span>
-                    <span className="flex items-center gap-1.5">
-                      {category && (
-                        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${style.bg} ${style.text}`}>
-                          {category.name}
-                        </span>
-                      )}
-                      {goal && (
-                        <span className="text-[11px] text-gray-400">
-                          → {goal.title} {goal.progress}/{goal.target_value}
-                        </span>
-                      )}
-                      {metric && metricInfo && (
-                        <span className="text-[11px] text-gray-400">
-                          {metricInfo.icon} {(metricValues.get(metric) ?? 0).toLocaleString()}
-                          {task.auto_metric_target != null && `/${task.auto_metric_target.toLocaleString()}`} {metricInfo.unit} — tap to
-                          set manually
-                        </span>
-                      )}
-                      {isBudget && (
-                        <span className="text-[11px] text-gray-400">
-                          🔥 {todayCalories ?? 0}
-                          {task.auto_metric_target != null && `/${task.auto_metric_target}`} kcal
-                        </span>
-                      )}
-                      {isLate ? (
-                        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-600">Late</span>
-                      ) : (
-                        !task.recurring && (
-                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">One-time</span>
-                        )
-                      )}
-                    </span>
-                  </span>
                 </button>
-                <button onClick={() => openEditForm(task)} className="px-2 text-gray-300" aria-label="Edit task">
+                <button onClick={() => openEditForm(task)} className="shrink-0 px-0.5 text-sm text-ink-faint" aria-label="Edit task">
                   ✎
                 </button>
-                <button onClick={() => setConfirmTask(task)} className="px-4 text-gray-300" aria-label="Remove task">
+                <button onClick={() => setConfirmTask(task)} className="shrink-0 px-0.5 text-sm text-ink-faint" aria-label="Remove task">
                   ✕
+                </button>
+                <button
+                  onClick={() => (metric ? openMetricEntry(task) : isBudget ? undefined : toggle(task))}
+                  aria-label={done ? 'Mark not done' : 'Mark done'}
+                  className="mx-3 flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                  style={done ? { background: style.check } : { border: `2px solid ${THEME.lineStrong}` }}
+                >
+                  {done && (
+                    <svg viewBox="0 0 24 24" className="h-4 w-4 text-white" fill="none">
+                      <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
                 </button>
               </li>
             )
@@ -582,16 +601,16 @@ export function Today() {
       )}
       <button
         onClick={openAddForm}
-        className="rounded-2xl border-2 border-dashed border-gray-200 py-3 text-sm font-semibold text-violet-600"
+        className="rounded-[20px] border border-line-strong bg-surface p-3.5 text-[15px] font-semibold text-pine"
       >
         + Add task
       </button>
 
       {addFormOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+        <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
           <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-gray-900">{editingTask ? 'Edit task' : 'New task'}</h2>
-            <button onClick={closeForm} className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600">
+            <h2 className="text-lg font-bold text-ink">{editingTask ? 'Edit task' : 'New task'}</h2>
+            <button onClick={closeForm} className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2">
               Close ✕
             </button>
           </div>
@@ -601,13 +620,13 @@ export function Today() {
               value={newTitle}
               onChange={(e) => setNewTitle(e.target.value)}
               placeholder="New daily task"
-              className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+              className="rounded-[20px] border border-line bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
             />
             <div className="flex gap-2">
               <select
                 value={newCategoryId}
                 onChange={(e) => setNewCategoryId(e.target.value)}
-                className="flex-1 rounded-2xl border border-gray-200 bg-white px-3 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+                className="min-w-0 flex-1 rounded-[20px] border border-line bg-surface px-3 py-2.5 text-sm text-ink outline-none focus:border-pine"
               >
                 <option value="">No label</option>
                 {categories.map((c) => (
@@ -619,7 +638,7 @@ export function Today() {
               <select
                 value={newGoalSeriesId}
                 onChange={(e) => setNewGoalSeriesId(e.target.value)}
-                className="flex-1 rounded-2xl border border-gray-200 bg-white px-3 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+                className="min-w-0 flex-1 rounded-[20px] border border-line bg-surface px-3 py-2.5 text-sm text-ink outline-none focus:border-pine"
               >
                 <option value="">No linked goal</option>
                 {weekGoals.map((g) => (
@@ -633,7 +652,7 @@ export function Today() {
               <select
                 value={newAutoMetric}
                 onChange={(e) => setNewAutoMetric(e.target.value)}
-                className="flex-1 rounded-2xl border border-gray-200 bg-white px-3 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+                className="min-w-0 flex-1 rounded-[20px] border border-line bg-surface px-3 py-2.5 text-sm text-ink outline-none focus:border-pine"
               >
                 <option value="">Manual check-off</option>
                 {AUTO_METRICS.map((m) => (
@@ -653,29 +672,29 @@ export function Today() {
                       ? 'Target, e.g. 2400 kcal'
                       : `Target (optional), e.g. 10000 ${METRIC_INFO[newAutoMetric as AutoMetric]?.unit ?? ''}`
                   }
-                  className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+                  className="min-w-0 flex-1 rounded-[20px] border border-line bg-surface px-4 py-2.5 text-sm text-ink placeholder-ink-disabled outline-none focus:border-pine"
                 />
               )}
             </div>
             {newAutoMetric === CALORIE_BUDGET_METRIC ? (
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-ink-disabled">
                 Checked off while today's logged Food total stays at or under the target — unchecks itself if you go over.
               </p>
             ) : (
               newAutoMetric &&
               !newAutoMetricTarget && (
-                <p className="text-xs text-gray-400">
+                <p className="text-xs text-ink-disabled">
                   No target set — this task auto-completes as soon as any {METRIC_INFO[newAutoMetric as AutoMetric].label.toLowerCase()}{' '}
                   is logged today.
                 </p>
               )
             )}
-            <div className="flex gap-2 rounded-2xl bg-gray-100 p-1">
+            <div className="flex gap-2 rounded-[20px] bg-track p-1">
               <button
                 type="button"
                 onClick={() => setNewRecurring(true)}
                 className={`flex-1 rounded-xl px-3 py-2 text-sm font-medium transition ${
-                  newRecurring ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500'
+                  newRecurring ? 'bg-surface text-pine shadow-card' : 'text-ink-3'
                 }`}
               >
                 Recurring daily
@@ -684,43 +703,43 @@ export function Today() {
                 type="button"
                 onClick={() => setNewRecurring(false)}
                 className={`flex-1 rounded-xl px-3 py-2 text-sm font-medium transition ${
-                  !newRecurring ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500'
+                  !newRecurring ? 'bg-surface text-pine shadow-card' : 'text-ink-3'
                 }`}
               >
                 One-time
               </button>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-500">Starts on</span>
+              <span className="shrink-0 text-sm text-ink-3">Starts on</span>
               <input
                 value={newScheduledDate}
                 onChange={(e) => setNewScheduledDate(e.target.value)}
                 type="date"
-                className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+                className="min-w-0 flex-1 rounded-[20px] border border-line bg-surface px-4 py-2.5 text-sm text-ink outline-none focus:border-pine"
               />
             </div>
-            <div className="flex flex-col gap-2 rounded-2xl border border-gray-200 p-3">
+            <div className="flex flex-col gap-2 rounded-[20px] border border-line-strong p-3">
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-500">Remind me at</span>
+                <span className="shrink-0 text-sm text-ink-3">Remind me at</span>
                 <input
                   value={reminderTime}
                   onChange={(e) => setReminderTime(e.target.value)}
                   type="time"
-                  className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+                  className="min-w-0 flex-1 rounded-[20px] border border-line bg-surface px-4 py-2.5 text-sm text-ink outline-none focus:border-pine"
                 />
-                <span className="text-sm text-gray-500">if not done</span>
+                <span className="shrink-0 text-sm text-ink-3">if not done</span>
               </div>
               {reminderTime && (
                 <>
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-500">Reminder enabled</span>
+                    <span className="text-sm text-ink-3">Reminder enabled</span>
                     <button
                       type="button"
                       onClick={() => setReminderEnabled((v) => !v)}
-                      className={`h-6 w-11 rounded-full transition ${reminderEnabled ? 'bg-violet-600' : 'bg-gray-200'}`}
+                      className={`h-6 w-11 rounded-full transition ${reminderEnabled ? 'bg-pine' : 'bg-line'}`}
                     >
                       <span
-                        className={`block h-5 w-5 translate-y-0.5 rounded-full bg-white transition ${
+                        className={`block h-5 w-5 translate-y-0.5 rounded-full bg-surface transition ${
                           reminderEnabled ? 'translate-x-5' : 'translate-x-0.5'
                         }`}
                       />
@@ -738,7 +757,7 @@ export function Today() {
                           })
                         }
                         className={`flex-1 rounded-xl py-1 text-xs font-medium ${
-                          activeReminderDays.includes(i) ? 'bg-violet-100 text-violet-600' : 'bg-gray-100 text-gray-400'
+                          activeReminderDays.includes(i) ? 'bg-cat-emerald-tint text-pine' : 'bg-track text-ink-disabled'
                         }`}
                       >
                         {d}
@@ -746,14 +765,14 @@ export function Today() {
                     ))}
                   </div>
                   {reminderId && (
-                    <button type="button" onClick={() => setReminderTime('')} className="text-left text-sm font-medium text-rose-600">
+                    <button type="button" onClick={() => setReminderTime('')} className="text-left text-sm font-medium text-cat-rose-ink">
                       Delete reminder
                     </button>
                   )}
                 </>
               )}
             </div>
-            <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
+            <button type="submit" className="rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white">
               {editingTask ? 'Save changes' : 'Add task'}
             </button>
           </form>
@@ -762,9 +781,9 @@ export function Today() {
 
       {metricEntryTask && metricEntryInfo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6" onClick={() => setMetricEntryTask(null)}>
-          <div className="w-full max-w-xs rounded-3xl bg-white p-5 shadow-lg" onClick={(e) => e.stopPropagation()}>
-            <p className="font-semibold text-gray-900">{metricEntryTask.title}</p>
-            <p className="mt-1 text-sm text-gray-500">
+          <div className="w-full max-w-xs rounded-3xl border border-line bg-surface p-5 shadow-card" onClick={(e) => e.stopPropagation()}>
+            <p className="font-semibold text-ink">{metricEntryTask.title}</p>
+            <p className="mt-1 text-sm text-ink-3">
               Enter {isToday ? "today's" : "that day's"} {metricEntryInfo.label.toLowerCase()} if it didn't sync automatically.
             </p>
             <input
@@ -773,16 +792,16 @@ export function Today() {
               onChange={(e) => setMetricEntryValue(e.target.value)}
               type="number"
               placeholder={`e.g. ${metricEntryTask.auto_metric_target ?? ''} ${metricEntryInfo.unit}`}
-              className="mt-3 w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+              className="mt-3 w-full rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
             />
             <div className="mt-4 flex gap-2">
               <button
                 onClick={() => setMetricEntryTask(null)}
-                className="flex-1 rounded-2xl bg-gray-100 px-4 py-2.5 font-medium text-gray-600"
+                className="flex-1 rounded-[20px] bg-track px-4 py-2.5 font-medium text-ink-2"
               >
                 Cancel
               </button>
-              <button onClick={saveMetricEntry} className="flex-1 rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
+              <button onClick={saveMetricEntry} className="flex-1 rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white">
                 Save
               </button>
             </div>
@@ -801,6 +820,6 @@ export function Today() {
         }}
         onCancel={() => setConfirmTask(null)}
       />
-    </div>
+    </Screen>
   )
 }

@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { NavContext } from './contexts/NavContext'
 import { Login } from './components/Login'
 import { TabBar, type Tab } from './components/TabBar'
-import { TopIcons } from './components/TopIcons'
 import { Today } from './pages/Today'
 import { Calendar } from './pages/Calendar'
 import { Goals } from './pages/Goals'
@@ -18,21 +18,23 @@ function Shell() {
     new URLSearchParams(window.location.search).has('code') ? 'settings' : 'today',
   )
 
+  // Each page owns its own scroll area below a fixed hero (see `Screen`), so the shell
+  // just hands it the full height between the top of the screen and the tab bar.
   return (
-    <div className="flex h-full flex-col">
-      <div className="safe-top" />
-      <TopIcons active={tab} onChange={setTab} />
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {tab === 'today' && <Today />}
-        {tab === 'calendar' && <Calendar />}
-        {tab === 'goals' && <Goals />}
-        {tab === 'journal' && <Journal />}
-        {tab === 'food' && <Food />}
-        {tab === 'finance' && <Finance />}
-        {tab === 'settings' && <Settings />}
+    <NavContext value={{ tab, setTab }}>
+      <div className="flex h-full flex-col">
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {tab === 'today' && <Today />}
+          {tab === 'calendar' && <Calendar />}
+          {tab === 'goals' && <Goals />}
+          {tab === 'journal' && <Journal />}
+          {tab === 'food' && <Food />}
+          {tab === 'finance' && <Finance />}
+          {tab === 'settings' && <Settings />}
+        </div>
+        <TabBar active={tab} onChange={setTab} />
       </div>
-      <TabBar active={tab} onChange={setTab} />
-    </div>
+    </NavContext>
   )
 }
 
@@ -40,7 +42,7 @@ function Root() {
   const { session, loading } = useAuth()
 
   if (loading) {
-    return <div className="flex min-h-full items-center justify-center text-gray-400">Loading…</div>
+    return <div className="flex min-h-full items-center justify-center text-ink-muted">Loading…</div>
   }
 
   return session ? <Shell /> : <Login />

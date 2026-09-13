@@ -3,9 +3,22 @@ import { supabase } from '../lib/supabase'
 import { PARENT_PERIOD, PERIOD_LABELS, PERIOD_TYPES, periodStartISO } from '../lib/dates'
 import { goalMetricInfo, isGoalMetric, resolveGoalProgress, rolloverRecurringGoals, SESSION_METRIC_INFO, SESSION_METRICS } from '../lib/goals'
 import { AUTO_METRICS, METRIC_INFO } from '../lib/metrics'
+import { CATEGORY_STYLES } from '../lib/categories'
+import { THEME } from '../lib/theme'
 import { ProgressRing } from '../components/ProgressRing'
-import { RefreshButton } from '../components/RefreshButton'
+import { Screen, HeroSegments } from '../components/Screen'
 import type { Goal, PeriodType } from '../lib/types'
+
+// Goals have no category column of their own, so the card's accent hue comes from what
+// drives the goal instead: a finished goal and a sleep target read as Health pine, any
+// other synced metric as Training terracotta, a roll-up of sub-goals as Work blue, and a
+// plain manual goal as General plum.
+function goalHue(goal: Goal, done: boolean, isRollup: boolean) {
+  if (done || goal.auto_metric === 'sleep_hours') return CATEGORY_STYLES.emerald
+  if (isGoalMetric(goal.auto_metric)) return CATEGORY_STYLES.pink
+  if (isRollup) return CATEGORY_STYLES.sky
+  return CATEGORY_STYLES.violet
+}
 
 export function Goals() {
   const [periodType, setPeriodType] = useState<PeriodType>('week')
@@ -98,41 +111,41 @@ export function Goals() {
     return isAuto ? g.target_value != null && (p?.progress ?? 0) >= g.target_value : g.status === 'done'
   }).length
 
-  return (
-    <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Goals</h1>
-        <RefreshButton onRefresh={load} />
-      </div>
-      <div className="flex gap-1 rounded-2xl bg-gray-100 p-1">
-        {PERIOD_TYPES.map((p) => (
-          <button
-            key={p}
-            onClick={() => setPeriodType(p)}
-            className={`flex-1 rounded-xl py-1.5 text-xs font-semibold transition ${
-              periodType === p ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500'
-            }`}
-          >
-            {PERIOD_LABELS[p]}
-          </button>
-        ))}
-      </div>
+  const hero = (
+    <>
+      <HeroSegments
+        options={PERIOD_TYPES.map((p) => ({ id: p, label: PERIOD_LABELS[p] }))}
+        value={periodType}
+        onChange={setPeriodType}
+      />
       {!loading && goals.length > 0 && (
-        <div className="flex items-center gap-3 rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
-          <ProgressRing percent={(completedCount / goals.length) * 100} size={48} strokeWidth={5} color="#7c3aed" trackColor="#ede9fe">
-            <span className="text-xs font-bold text-gray-900">
+        <div className="mt-[18px] flex items-center gap-3.5">
+          <ProgressRing
+            percent={(completedCount / goals.length) * 100}
+            size={54}
+            strokeWidth={5}
+            color={THEME.pineArc}
+            trackColor={THEME.heroRingTrack}
+            disc={THEME.pineDisc}
+          >
+            <span className="text-[13px] font-semibold text-white">
               {completedCount}/{goals.length}
             </span>
           </ProgressRing>
-          <p className="text-sm text-gray-500">
-            {completedCount} of {goals.length} {PERIOD_LABELS[periodType].toLowerCase()} goals done
+          <p className="text-sm font-medium text-white">
+            {completedCount} of {goals.length} done this {PERIOD_LABELS[periodType].toLowerCase().replace('ly', '')}
           </p>
         </div>
       )}
+    </>
+  )
+
+  return (
+    <Screen title="Goals" onRefresh={load} hero={hero}>
       {loading ? (
-        <p className="text-sm text-gray-400">Loading…</p>
+        <p className="text-sm text-ink-disabled">Loading…</p>
       ) : goals.length === 0 ? (
-        <p className="text-sm text-gray-400">No {PERIOD_LABELS[periodType].toLowerCase()} goals yet.</p>
+        <p className="text-sm text-ink-disabled">No {PERIOD_LABELS[periodType].toLowerCase()} goals yet.</p>
       ) : (
         <ul className="flex flex-col gap-3">
           {goals.map((goal) => {
@@ -143,101 +156,106 @@ export function Goals() {
             const pct = goal.target_value ? Math.min(100, (value / goal.target_value) * 100) : 0
             const done = isAuto ? goal.target_value != null && value >= goal.target_value : goal.status === 'done'
             const metricInfo = isGoalMetric(goal.auto_metric) ? goalMetricInfo(goal.auto_metric) : null
+            const style = goalHue(goal, done, isRollup)
+            // One chip instead of four badges — what drives the goal, then its state.
+            const chipParts = [
+              metricInfo ? `${metricInfo.icon} auto` : isRollup ? '🔗 from sub-goals' : null,
+              goal.recurring && !metricInfo ? `↻ ${PERIOD_LABELS[periodType].toLowerCase()}` : null,
+              done ? 'done' : null,
+            ].filter(Boolean)
             return (
-              <li key={goal.id} className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className={`font-semibold ${done ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{goal.title}</p>
-                    <span
-                      className={`mt-1 inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                        done ? 'bg-emerald-100 text-emerald-600' : 'bg-pink-100 text-pink-600'
-                      }`}
-                    >
-                      {done ? 'Done' : 'Active'}
-                    </span>
-                    {goal.recurring && (
-                      <span className="ml-1.5 mt-1 inline-block rounded-full bg-sky-100 px-2.5 py-0.5 text-xs font-medium text-sky-600">
-                        ↻ {PERIOD_LABELS[periodType]}
+              <li
+                key={goal.id}
+                className="flex overflow-hidden rounded-3xl border border-line bg-surface shadow-card"
+              >
+                <span className="w-[5px] self-stretch" style={{ background: style.accent }} />
+                <div className="min-w-0 flex-1 px-[18px] py-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className={`text-[17px] font-semibold ${done ? 'text-ink-disabled line-through' : 'text-ink'}`}>{goal.title}</p>
+                      <span
+                        className="mt-1.5 inline-block rounded-full px-2.5 py-[3px] text-[11px] font-semibold"
+                        style={{ background: style.tint, color: style.ink }}
+                      >
+                        {chipParts.length ? chipParts.join(' · ') : 'active'}
                       </span>
-                    )}
-                    {metricInfo && (
-                      <span className="ml-1.5 mt-1 inline-block rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-medium text-violet-600">
-                        {metricInfo.icon} Auto
-                      </span>
-                    )}
-                    {isRollup && (
-                      <span className="ml-1.5 mt-1 inline-block rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-600">
-                        🔗 From sub-goals
-                      </span>
-                    )}
-                  </div>
-                  <button onClick={() => remove(goal)} className="text-gray-300">
-                    ✕
-                  </button>
-                </div>
-                {goal.target_value ? (
-                  <div className="mt-3 flex items-center gap-4">
-                    <ProgressRing percent={pct} size={56} strokeWidth={6} color="#d97706" trackColor="#fef3c7">
-                      <span className="text-xs font-bold text-gray-900">{Math.round(pct)}%</span>
-                    </ProgressRing>
-                    <div className="flex flex-1 items-center justify-between">
-                      <span className="text-sm text-gray-500">
-                        {value.toLocaleString()} / {goal.target_value.toLocaleString()} {metricInfo?.unit ?? ''}
-                      </span>
-                      {!isAuto && (
-                        <div className="flex gap-2">
-                          <button onClick={() => bump(goal, -1)} className="h-8 w-8 rounded-full bg-gray-100 font-semibold text-gray-600">
-                            −
-                          </button>
-                          <button onClick={() => bump(goal, 1)} className="h-8 w-8 rounded-full bg-violet-100 font-semibold text-violet-600">
-                            +
-                          </button>
-                        </div>
-                      )}
                     </div>
+                    <button onClick={() => remove(goal)} className="shrink-0 text-ink-faint" aria-label="Remove goal">
+                      ✕
+                    </button>
                   </div>
-                ) : isAuto ? null : (
-                  <button
-                    onClick={() =>
-                      supabase
-                        .from('goals')
-                        .update({ status: done ? 'active' : 'done' })
-                        .eq('id', goal.id)
-                        .then(load)
-                    }
-                    className="mt-3 text-sm font-medium text-violet-600"
-                  >
-                    {done ? 'Mark as active' : 'Mark as done'}
-                  </button>
-                )}
+                  {goal.target_value ? (
+                    <div className="mt-3.5 flex items-center gap-3.5">
+                      <ProgressRing percent={pct} size={56} strokeWidth={6} color={style.accent} disc={THEME.surface}>
+                        <span className="text-[13px] font-semibold text-ink">{Math.round(pct)}%</span>
+                      </ProgressRing>
+                      <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                        <span className="truncate text-[15px] font-medium text-ink-2">
+                          {value.toLocaleString()} / {goal.target_value.toLocaleString()} {metricInfo?.unit ?? ''}
+                        </span>
+                        {!isAuto && (
+                          <div className="flex shrink-0 gap-2">
+                            <button
+                              onClick={() => bump(goal, -1)}
+                              className="h-[34px] w-[34px] rounded-full bg-track font-semibold text-ink-3"
+                            >
+                              −
+                            </button>
+                            <button
+                              onClick={() => bump(goal, 1)}
+                              className="h-[34px] w-[34px] rounded-full font-semibold text-white"
+                              style={{ background: style.accent }}
+                            >
+                              +
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : isAuto ? null : (
+                    <button
+                      onClick={() =>
+                        supabase
+                          .from('goals')
+                          .update({ status: done ? 'active' : 'done' })
+                          .eq('id', goal.id)
+                          .then(load)
+                      }
+                      className="mt-3 text-sm font-semibold"
+                      style={{ color: style.ink }}
+                    >
+                      {done ? 'Mark as active' : 'Mark as done'}
+                    </button>
+                  )}
+                </div>
               </li>
             )
           })}
         </ul>
       )}
-      <form onSubmit={addGoal} className="flex flex-col gap-2">
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder={`New ${PERIOD_LABELS[periodType].toLowerCase()} goal`}
-          className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
-        />
-        <div className="flex gap-2">
+      <form onSubmit={addGoal} className="flex flex-col gap-2.5">
+        <div className="flex gap-2.5">
           <input
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-            placeholder="Target number (optional)"
-            type="number"
-            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder={`New ${PERIOD_LABELS[periodType].toLowerCase()} goal`}
+            className="min-w-0 flex-1 rounded-[20px] border border-line bg-surface px-4 py-3 text-sm text-ink placeholder-ink-disabled outline-none focus:border-pine"
           />
-          <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
+          <button type="submit" className="shrink-0 rounded-[20px] bg-pine px-5 py-3 text-sm font-semibold text-white">
             Add
           </button>
         </div>
+        <input
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+          placeholder="Target number (optional)"
+          type="number"
+          className="rounded-[20px] border border-line bg-surface px-4 py-3 text-sm text-ink placeholder-ink-disabled outline-none focus:border-pine"
+        />
         <select
           value={autoMetric}
           onChange={(e) => setAutoMetric(e.target.value)}
-          className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+          className="rounded-[20px] border border-line bg-surface px-4 py-3 text-sm text-ink outline-none focus:border-pine"
         >
           <option value="">Manual progress (tap +/− to update)</option>
           <optgroup label="Track a daily total">
@@ -259,7 +277,7 @@ export function Goals() {
           <select
             value={parentSeriesId}
             onChange={(e) => setParentSeriesId(e.target.value)}
-            className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+            className="rounded-[20px] border border-line bg-surface px-4 py-3 text-sm text-ink outline-none focus:border-pine"
           >
             <option value="">No parent goal</option>
             {parentOptions.map((g) => (
@@ -270,12 +288,12 @@ export function Goals() {
           </select>
         )}
         {!autoMetric && (
-          <label className="flex items-center gap-2 text-sm text-gray-500">
-            <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} className="accent-violet-600" />
+          <label className="flex items-center gap-2 text-sm text-ink-3">
+            <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} className="accent-pine" />
             Recurring every {PERIOD_LABELS[periodType].toLowerCase().replace('ly', '')}
           </label>
         )}
       </form>
-    </div>
+    </Screen>
   )
 }

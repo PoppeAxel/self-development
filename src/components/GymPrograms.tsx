@@ -516,9 +516,9 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
 
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="text-sm font-semibold text-gray-500">Lift progress</h2>
+      <h2 className="text-sm font-semibold text-ink-3">Lift progress</h2>
       {trackedLiftProgress.length === 0 ? (
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-ink-disabled">
           Log weight and reps for Squat, Bench press, Deadlift, or Military press (overhead press) to see your estimated 1-rep-max
           trend here.
         </p>
@@ -533,28 +533,28 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
             const current = recentAverage(points, windowSize)
             const trend = liftTrendPerWeek(points)
             return (
-              <div key={name} className="rounded-2xl border border-gray-100 bg-white p-3 shadow-sm">
+              <div key={name} className="rounded-[20px] border border-line bg-surface p-3 shadow-card">
                 <div className="flex items-center justify-between">
-                  <p className="font-medium text-gray-900">{name}</p>
+                  <p className="font-medium text-ink">{name}</p>
                   <div className="text-right">
-                    <p className="text-sm font-bold text-gray-900">{current.toFixed(1)} kg e1RM</p>
-                    <p className="text-[11px] text-gray-400">
+                    <p className="text-sm font-bold text-ink">{current.toFixed(1)} kg e1RM</p>
+                    <p className="text-[11px] text-ink-disabled">
                       {points.length > 1 ? `avg of last ${windowSize} session${windowSize === 1 ? '' : 's'}` : '1 session logged'}
                     </p>
                     {trend !== null ? (
                       <p
                         className={`text-xs font-semibold ${
-                          Math.abs(trend) < 0.05 ? 'text-gray-400' : trend > 0 ? 'text-emerald-500' : 'text-red-500'
+                          Math.abs(trend) < 0.05 ? 'text-ink-disabled' : trend > 0 ? 'text-cat-emerald-ink' : 'text-cat-rose-ink'
                         }`}
                       >
                         {trend > 0 ? '↗' : trend < 0 ? '↘' : '→'} {Math.abs(trend).toFixed(1)} kg/wk
                       </p>
                     ) : points.length < 3 ? (
-                      <p className="text-[11px] text-gray-400">
+                      <p className="text-[11px] text-ink-disabled">
                         Log {3 - points.length} more session{3 - points.length === 1 ? '' : 's'} for a trend
                       </p>
                     ) : (
-                      <p className="text-[11px] text-gray-400">Not enough date spread yet for a trend</p>
+                      <p className="text-[11px] text-ink-disabled">Not enough date spread yet for a trend</p>
                     )}
                   </div>
                 </div>
@@ -562,14 +562,14 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                   <div className="mt-2 h-24">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={points} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
-                        <XAxis dataKey="date" stroke="#9ca3af" fontSize={10} tickFormatter={(d: string) => d.slice(5)} />
-                        <YAxis stroke="#9ca3af" fontSize={10} domain={['dataMin - 5', 'dataMax + 5']} width={32} />
+                        <CartesianGrid strokeDasharray="3 3" stroke="#eae3d5" />
+                        <XAxis dataKey="date" stroke="#8b8577" fontSize={10} tickFormatter={(d: string) => d.slice(5)} />
+                        <YAxis stroke="#8b8577" fontSize={10} domain={['dataMin - 5', 'dataMax + 5']} width={32} />
                         <Tooltip
-                          contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }}
+                          contentStyle={{ background: '#fdfbf6', border: '1px solid #e9e2d4', fontSize: 12, borderRadius: 12, color: '#23241f' }}
                           formatter={(value) => [`${value} kg`, 'e1RM']}
                         />
-                        <Line type="monotone" dataKey="e1rm" stroke="#e11d48" strokeWidth={2.5} dot={{ r: 3, fill: '#e11d48' }} isAnimationActive={false} />
+                        <Line type="monotone" dataKey="e1rm" stroke="#a8563f" strokeWidth={2.5} dot={{ r: 3, fill: '#a8563f' }} isAnimationActive={false} />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
@@ -581,12 +581,12 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
       )}
 
       <div>
-        <h2 className="text-sm font-semibold text-gray-500">Muscle balance</h2>
-        <p className="mb-2 text-[11px] text-gray-400">
+        <h2 className="text-sm font-semibold text-ink-3">Muscle balance</h2>
+        <p className="mb-2 text-[11px] text-ink-disabled">
           Avg sets/week, last {muscleBalanceWindowDays / 7} weeks · secondary muscles (lighter) count half a set · tap a region for detail
         </p>
         {muscleBalanceData.every((m) => m.totalPerWeek === 0) ? (
-          <p className="text-sm text-gray-400">Log some sessions with categorized exercises to see your balance across muscle groups.</p>
+          <p className="text-sm text-ink-disabled">Log some sessions with categorized exercises to see your balance across muscle groups.</p>
         ) : (
           <div className="flex flex-col gap-2">
             {regionBalance.map(({ region, items, totalPerWeek }) => (
@@ -596,32 +596,32 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                   onClick={() => setExpandedRegion((r) => (r === region ? null : region))}
                   className="flex w-full items-center gap-2"
                 >
-                  <span className="w-20 shrink-0 text-left text-xs font-medium text-gray-700">{region}</span>
-                  <div className="h-4 flex-1 overflow-hidden rounded-full bg-gray-100">
+                  <span className="w-20 shrink-0 text-left text-xs font-medium text-ink-2">{region}</span>
+                  <div className="h-4 flex-1 overflow-hidden rounded-full bg-track">
                     <div className="flex h-full">
                       {items.map((m) => (
                         <Fragment key={m.muscle}>
-                          <div className="h-full bg-rose-500" style={{ width: `${(m.primaryPerWeek / regionMax) * 100}%` }} />
-                          <div className="h-full bg-rose-200" style={{ width: `${(m.secondaryPerWeek / regionMax) * 100}%` }} />
+                          <div className="h-full bg-cat-pink" style={{ width: `${(m.primaryPerWeek / regionMax) * 100}%` }} />
+                          <div className="h-full bg-cat-pink-tint" style={{ width: `${(m.secondaryPerWeek / regionMax) * 100}%` }} />
                         </Fragment>
                       ))}
                     </div>
                   </div>
-                  <span className="w-10 shrink-0 text-right text-xs font-medium text-gray-700">{totalPerWeek.toFixed(1)}</span>
-                  <span className="w-3 shrink-0 text-gray-400">{expandedRegion === region ? '▲' : '▼'}</span>
+                  <span className="w-10 shrink-0 text-right text-xs font-medium text-ink-2">{totalPerWeek.toFixed(1)}</span>
+                  <span className="w-3 shrink-0 text-ink-disabled">{expandedRegion === region ? '▲' : '▼'}</span>
                 </button>
                 {expandedRegion === region && (
-                  <div className="mt-2 ml-4 flex flex-col gap-1.5 border-l-2 border-gray-100 pl-3">
+                  <div className="mt-2 ml-4 flex flex-col gap-1.5 border-l-2 border-line pl-3">
                     {items.map((m) => (
                       <div key={m.muscle} className="flex items-center gap-2">
-                        <span className="w-24 shrink-0 text-xs text-gray-500">{m.muscle}</span>
-                        <div className="h-3 flex-1 overflow-hidden rounded-full bg-gray-100">
+                        <span className="w-24 shrink-0 text-xs text-ink-3">{m.muscle}</span>
+                        <div className="h-3 flex-1 overflow-hidden rounded-full bg-track">
                           <div className="flex h-full">
-                            <div className="h-full bg-rose-500" style={{ width: `${(m.primaryPerWeek / muscleBalanceMax) * 100}%` }} />
-                            <div className="h-full bg-rose-200" style={{ width: `${(m.secondaryPerWeek / muscleBalanceMax) * 100}%` }} />
+                            <div className="h-full bg-cat-pink" style={{ width: `${(m.primaryPerWeek / muscleBalanceMax) * 100}%` }} />
+                            <div className="h-full bg-cat-pink-tint" style={{ width: `${(m.secondaryPerWeek / muscleBalanceMax) * 100}%` }} />
                           </div>
                         </div>
-                        <span className="w-8 shrink-0 text-right text-xs text-gray-500">{m.totalPerWeek.toFixed(1)}</span>
+                        <span className="w-8 shrink-0 text-right text-xs text-ink-3">{m.totalPerWeek.toFixed(1)}</span>
                       </div>
                     ))}
                   </div>
@@ -634,13 +634,13 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
 
       <button
         onClick={() => setProgramsOpen((o) => !o)}
-        className="flex items-center justify-between text-sm font-semibold text-gray-500"
+        className="flex items-center justify-between text-sm font-semibold text-ink-3"
       >
         <span>Your programs ({programs.length})</span>
-        <span className="text-gray-400">{programsOpen ? 'Hide ▲' : 'Show ▼'}</span>
+        <span className="text-ink-disabled">{programsOpen ? 'Hide ▲' : 'Show ▼'}</span>
       </button>
       {programsOpen && (loading ? (
-        <p className="text-sm text-gray-400">Loading…</p>
+        <p className="text-sm text-ink-disabled">Loading…</p>
       ) : (
         <div className="flex flex-col gap-2">
           {programs.map((program) => {
@@ -648,18 +648,18 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
             return (
               <div
                 key={program.id}
-                className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm"
+                className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card"
               >
                 <button onClick={() => openLogSession(program)} className="flex-1 text-left">
-                  <p className="font-medium text-gray-900">{program.name}</p>
-                  <p className="text-[11px] text-gray-400">
+                  <p className="font-medium text-ink">{program.name}</p>
+                  <p className="text-[11px] text-ink-disabled">
                     {exercises.length} exercise{exercises.length === 1 ? '' : 's'} — tap to log
                   </p>
                 </button>
-                <button onClick={() => openEditProgram(program)} className="pl-3 text-gray-300" aria-label="Edit program">
+                <button onClick={() => openEditProgram(program)} className="pl-3 text-ink-faint" aria-label="Edit program">
                   ✎
                 </button>
-                <button onClick={() => setConfirmDeleteProgram(program)} className="pl-3 text-gray-300" aria-label="Remove program">
+                <button onClick={() => setConfirmDeleteProgram(program)} className="pl-3 text-ink-faint" aria-label="Remove program">
                   ✕
                 </button>
               </div>
@@ -669,11 +669,11 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
       ))}
       <button
         onClick={openBuilder}
-        className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-rose-600"
+        className="rounded-[20px] border border-line-strong bg-surface py-3 text-sm font-semibold text-pine"
       >
         + New program
       </button>
-      <button onClick={() => setLibraryOpen(true)} className="text-sm font-medium text-gray-500">
+      <button onClick={() => setLibraryOpen(true)} className="text-sm font-medium text-ink-3">
         📋 Exercise library ({exercises.length})
       </button>
 
@@ -681,10 +681,10 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
         <div className="mt-2">
           <button
             onClick={() => setSessionsOpen((o) => !o)}
-            className="mb-2 flex w-full items-center justify-between text-sm font-semibold text-gray-500"
+            className="mb-2 flex w-full items-center justify-between text-sm font-semibold text-ink-3"
           >
             <span>Recent sessions ({sessions.length})</span>
-            <span className="text-gray-400">{sessionsOpen ? 'Hide ▲' : 'Show ▼'}</span>
+            <span className="text-ink-disabled">{sessionsOpen ? 'Hide ▲' : 'Show ▼'}</span>
           </button>
           {sessionsOpen && (
           <ul className="flex flex-col gap-2">
@@ -697,22 +697,22 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                 byExercise.set(s.exercise_name, arr)
               }
               return (
-                <li key={session.id} className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                <li key={session.id} className="rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-gray-900">{session.program_name ?? 'Session'}</span>
+                    <span className="text-sm font-medium text-ink">{session.program_name ?? 'Session'}</span>
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-gray-400">{session.date}</span>
-                      <button onClick={() => openEditSession(session)} className="text-gray-300" aria-label="Edit session">
+                      <span className="text-[11px] text-ink-disabled">{session.date}</span>
+                      <button onClick={() => openEditSession(session)} className="text-ink-faint" aria-label="Edit session">
                         ✎
                       </button>
-                      <button onClick={() => setConfirmDeleteSession(session)} className="text-gray-300" aria-label="Remove session">
+                      <button onClick={() => setConfirmDeleteSession(session)} className="text-ink-faint" aria-label="Remove session">
                         ✕
                       </button>
                     </div>
                   </div>
                   {[...byExercise.entries()].map(([name, exSets]) => (
-                    <p key={name} className="mt-1 text-[11px] text-gray-500">
-                      <span className="font-medium text-gray-700">{name}:</span>{' '}
+                    <p key={name} className="mt-1 text-[11px] text-ink-3">
+                      <span className="font-medium text-ink-2">{name}:</span>{' '}
                       {exSets
                         .sort((a, b) => a.set_number - b.set_number)
                         .map(summarizeSet)
@@ -724,11 +724,11 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                     (() => {
                       const linkedWorkout = workoutById.get(session.strava_workout_id)
                       return (
-                        <div className="mt-2 flex items-center justify-between rounded-xl bg-orange-50 px-2.5 py-1.5">
-                          <span className="text-[11px] text-orange-600">
+                        <div className="mt-2 flex items-center justify-between rounded-xl bg-cat-amber-tint px-2.5 py-1.5">
+                          <span className="text-[11px] text-cat-amber-ink">
                             🔗 {linkedWorkout ? `${linkedWorkout.name} · ${formatWorkoutDuration(linkedWorkout.duration_seconds)}` : 'Linked'}
                           </span>
-                          <button onClick={() => unlinkSession(session)} className="text-[11px] font-medium text-gray-400">
+                          <button onClick={() => unlinkSession(session)} className="text-[11px] font-medium text-ink-disabled">
                             Unlink
                           </button>
                         </div>
@@ -745,15 +745,15 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                         )
                         .slice(0, 5)
                       return (
-                        <div className="mt-2 flex flex-col gap-1 rounded-xl bg-gray-50 p-2">
+                        <div className="mt-2 flex flex-col gap-1 rounded-xl bg-track p-2">
                           {candidates.length === 0 ? (
-                            <p className="text-[11px] text-gray-400">No unlinked Strava workouts found yet.</p>
+                            <p className="text-[11px] text-ink-disabled">No unlinked Strava workouts found yet.</p>
                           ) : (
                             candidates.map((w) => (
                               <button
                                 key={w.id}
                                 onClick={() => linkSession(session, w)}
-                                className="rounded-lg bg-white px-2 py-1.5 text-left text-[11px] text-gray-700 shadow-sm"
+                                className="rounded-lg bg-surface px-2 py-1.5 text-left text-[11px] text-ink-2 shadow-card"
                               >
                                 {w.date} · {w.name} · {formatWorkoutDuration(w.duration_seconds)}
                               </button>
@@ -761,7 +761,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                           )}
                           <button
                             onClick={() => setLinkingSessionId(null)}
-                            className="text-left text-[11px] font-medium text-gray-400"
+                            className="text-left text-[11px] font-medium text-ink-disabled"
                           >
                             Cancel
                           </button>
@@ -771,7 +771,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                   ) : (
                     <button
                       onClick={() => setLinkingSessionId(session.id)}
-                      className="mt-2 text-[11px] font-medium text-rose-600"
+                      className="mt-2 text-[11px] font-medium text-cat-rose-ink"
                     >
                       Link to Strava workout
                     </button>
@@ -785,15 +785,15 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
       )}
 
       {builderOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+        <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
           <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-gray-900">{editingProgram ? 'Edit program' : 'New program'}</h2>
+            <h2 className="text-lg font-bold text-ink">{editingProgram ? 'Edit program' : 'New program'}</h2>
             <button
               onClick={() => {
                 setBuilderOpen(false)
                 setEditingProgram(null)
               }}
-              className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
+              className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2"
             >
               Close ✕
             </button>
@@ -804,11 +804,11 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
               value={programName}
               onChange={(e) => setProgramName(e.target.value)}
               placeholder="Program name, e.g. Push Day"
-              className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+              className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
             />
             <div className="flex flex-col gap-2">
               {exerciseRows.map((row, i) => (
-                <div key={i} className="flex flex-col gap-2 rounded-2xl border border-gray-100 p-3">
+                <div key={i} className="flex flex-col gap-2 rounded-[20px] border border-line p-3">
                   <div className="flex gap-2">
                     <input
                       value={row.name}
@@ -816,7 +816,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                         setExerciseRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, name: e.target.value } : r)))
                       }
                       placeholder="Exercise, e.g. Bench Press"
-                      className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+                      className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
                     />
                     <button
                       type="button"
@@ -824,7 +824,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                         setSubstitutingIndex(i)
                         setSubstituteQuery('')
                       }}
-                      className="shrink-0 px-2 text-gray-400"
+                      className="shrink-0 px-2 text-ink-disabled"
                       aria-label="Swap exercise"
                     >
                       ⇄
@@ -832,7 +832,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                     <button
                       type="button"
                       onClick={() => setExerciseRows((rows) => rows.filter((_, idx) => idx !== i))}
-                      className="shrink-0 px-2 text-gray-300"
+                      className="shrink-0 px-2 text-ink-faint"
                       aria-label="Remove exercise"
                     >
                       ✕
@@ -846,7 +846,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                       }
                       type="number"
                       placeholder="Sets"
-                      className="w-16 min-w-0 rounded-2xl border border-gray-200 bg-white px-2 py-2.5 text-center text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+                      className="w-16 min-w-0 rounded-[20px] border border-line-strong bg-surface px-2 py-2.5 text-center text-ink placeholder-ink-disabled outline-none focus:border-pine"
                     />
                     <input
                       value={row.reps}
@@ -855,14 +855,14 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                       }
                       type="number"
                       placeholder="Reps"
-                      className="w-16 min-w-0 rounded-2xl border border-gray-200 bg-white px-2 py-2.5 text-center text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+                      className="w-16 min-w-0 rounded-[20px] border border-line-strong bg-surface px-2 py-2.5 text-center text-ink placeholder-ink-disabled outline-none focus:border-pine"
                     />
                     <select
                       value={row.primaryMuscle}
                       onChange={(e) =>
                         setExerciseRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, primaryMuscle: e.target.value } : r)))
                       }
-                      className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-2 py-2.5 text-sm text-gray-900 outline-none focus:border-rose-400"
+                      className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-2 py-2.5 text-sm text-ink outline-none focus:border-pine"
                     >
                       <option value="">Primary muscle</option>
                       {MUSCLE_GROUPS.map((m) => (
@@ -876,7 +876,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                       onChange={(e) =>
                         setExerciseRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, secondaryMuscle: e.target.value } : r)))
                       }
-                      className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-2 py-2.5 text-sm text-gray-900 outline-none focus:border-rose-400"
+                      className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-2 py-2.5 text-sm text-ink outline-none focus:border-pine"
                     >
                       <option value="">Secondary (optional)</option>
                       {MUSCLE_GROUPS.map((m) => (
@@ -892,22 +892,22 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
             <button
               type="button"
               onClick={() => setExerciseRows((rows) => [...rows, emptyExerciseRow()])}
-              className="rounded-2xl border-2 border-dashed border-gray-200 py-2 text-sm font-semibold text-rose-600"
+              className="rounded-[20px] border border-line-strong bg-surface py-2.5 text-sm font-semibold text-pine"
             >
               + Add exercise
             </button>
-            <button type="submit" className="mt-2 rounded-2xl bg-rose-600 px-4 py-2.5 font-semibold text-white">
+            <button type="submit" className="mt-2 rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white">
               {editingProgram ? 'Save changes' : 'Save program'}
             </button>
           </form>
 
           {substitutingIndex !== null && (
-            <div className="fixed inset-0 z-[60] flex flex-col bg-white safe-top safe-bottom">
+            <div className="fixed inset-0 z-[60] flex flex-col bg-page safe-top safe-bottom">
               <div className="flex items-center justify-between px-4 pt-4">
-                <h2 className="text-lg font-bold text-gray-900">Swap exercise</h2>
+                <h2 className="text-lg font-bold text-ink">Swap exercise</h2>
                 <button
                   onClick={() => setSubstitutingIndex(null)}
-                  className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
+                  className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2"
                 >
                   Close ✕
                 </button>
@@ -918,7 +918,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                   value={substituteQuery}
                   onChange={(e) => setSubstituteQuery(e.target.value)}
                   placeholder="Search exercises"
-                  className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+                  className="w-full rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
                 />
               </div>
               <div className="flex-1 overflow-y-auto px-4 pb-4">
@@ -934,7 +934,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                       return aMatches !== bMatches ? aMatches - bMatches : a.name.localeCompare(b.name)
                     })
                   if (candidates.length === 0) {
-                    return <p className="text-sm text-gray-400">No matches — type a new name in the exercise field instead.</p>
+                    return <p className="text-sm text-ink-disabled">No matches — type a new name in the exercise field instead.</p>
                   }
                   return (
                     <div className="flex flex-col gap-2">
@@ -952,10 +952,10 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                             )
                             setSubstitutingIndex(null)
                           }}
-                          className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 text-left shadow-sm"
+                          className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 text-left shadow-card"
                         >
-                          <span className="font-medium text-gray-900">{ex.name}</span>
-                          <span className="text-xs text-gray-400">{ex.primary_muscle ?? 'Uncategorized'}</span>
+                          <span className="font-medium text-ink">{ex.name}</span>
+                          <span className="text-xs text-ink-disabled">{ex.primary_muscle ?? 'Uncategorized'}</span>
                         </button>
                       ))}
                     </div>
@@ -968,9 +968,9 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
       )}
 
       {(loggingProgram || editingSession) && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+        <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
           <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-gray-900">
+            <h2 className="text-lg font-bold text-ink">
               {editingSession ? (editingSession.program_name ?? 'Session') : loggingProgram!.name}
             </h2>
             <button
@@ -978,7 +978,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                 setLoggingProgram(null)
                 setEditingSession(null)
               }}
-              className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
+              className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2"
             >
               Close ✕
             </button>
@@ -988,17 +988,17 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
               value={sessionDate}
               onChange={(e) => setSessionDate(e.target.value)}
               type="date"
-              className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-rose-400"
+              className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink outline-none focus:border-pine"
             />
             {sessionRows.map((row, exIdx) => {
               const catalogEx = exerciseByName.get(row.exerciseName.toLowerCase())
               return (
-              <div key={exIdx} className="rounded-2xl border border-gray-100 bg-white p-3 shadow-sm">
+              <div key={exIdx} className="rounded-[20px] border border-line bg-surface p-3 shadow-card">
                 <div className="mb-2 flex items-center justify-between">
-                  <p className="font-medium text-gray-900">
+                  <p className="font-medium text-ink">
                     {row.exerciseName}
                     {catalogEx?.primary_muscle && (
-                      <span className="ml-2 text-xs font-normal text-gray-400">
+                      <span className="ml-2 text-xs font-normal text-ink-disabled">
                         {catalogEx.primary_muscle}
                         {catalogEx.secondary_muscle ? ` · ${catalogEx.secondary_muscle}` : ''}
                       </span>
@@ -1011,7 +1011,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                         setSubstitutingSessionIndex(exIdx)
                         setSubstituteSessionQuery('')
                       }}
-                      className="pl-2 text-gray-400"
+                      className="pl-2 text-ink-disabled"
                       aria-label="Swap exercise"
                     >
                       ⇄
@@ -1019,7 +1019,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                     <button
                       type="button"
                       onClick={() => setSessionRows((rows) => rows.filter((_, ri) => ri !== exIdx))}
-                      className="pl-2 text-gray-300"
+                      className="pl-2 text-ink-faint"
                       aria-label="Remove exercise from this session"
                     >
                       ✕
@@ -1029,7 +1029,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                 <div className="flex flex-col gap-1.5">
                   {row.sets.map((set, setIdx) => (
                     <div key={setIdx} className="flex items-center gap-2">
-                      <span className="w-12 shrink-0 text-xs text-gray-400">Set {setIdx + 1}</span>
+                      <span className="w-12 shrink-0 text-xs text-ink-disabled">Set {setIdx + 1}</span>
                       <input
                         value={set.reps}
                         onChange={(e) =>
@@ -1043,7 +1043,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                         }
                         type="number"
                         placeholder="Reps"
-                        className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+                        className="min-w-0 flex-1 rounded-xl border border-line-strong bg-surface px-3 py-2 text-ink placeholder-ink-disabled outline-none focus:border-pine"
                       />
                       <input
                         value={set.weight}
@@ -1059,7 +1059,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                         type="number"
                         step="0.5"
                         placeholder="kg"
-                        className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+                        className="min-w-0 flex-1 rounded-xl border border-line-strong bg-surface px-3 py-2 text-ink placeholder-ink-disabled outline-none focus:border-pine"
                       />
                       <button
                         type="button"
@@ -1068,7 +1068,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                             rows.map((r, ri) => (ri === exIdx ? { ...r, sets: r.sets.filter((_, si) => si !== setIdx) } : r)),
                           )
                         }
-                        className="shrink-0 px-1 text-gray-300"
+                        className="shrink-0 px-1 text-ink-faint"
                         aria-label="Remove set"
                       >
                         ✕
@@ -1082,7 +1082,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                         rows.map((r, ri) => (ri === exIdx ? { ...r, sets: [...r.sets, { reps: '', weight: '' }] } : r)),
                       )
                     }
-                    className="ml-12 self-start text-xs font-semibold text-rose-600"
+                    className="ml-12 self-start text-xs font-semibold text-cat-rose-ink"
                   >
                     + Add set
                   </button>
@@ -1097,22 +1097,22 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                 setAddToProgramToo(false)
                 setAddingExercise(true)
               }}
-              className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-rose-600"
+              className="rounded-[20px] border border-line-strong bg-surface py-3 text-sm font-semibold text-pine"
             >
               + Add exercise
             </button>
-            <button onClick={saveSession} className="mt-2 rounded-2xl bg-rose-600 px-4 py-2.5 font-semibold text-white">
+            <button onClick={saveSession} className="mt-2 rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white">
               {editingSession ? 'Save changes' : 'Save session'}
             </button>
           </div>
 
           {substitutingSessionIndex !== null && (
-            <div className="fixed inset-0 z-[60] flex flex-col bg-white safe-top safe-bottom">
+            <div className="fixed inset-0 z-[60] flex flex-col bg-page safe-top safe-bottom">
               <div className="flex items-center justify-between px-4 pt-4">
-                <h2 className="text-lg font-bold text-gray-900">Swap exercise</h2>
+                <h2 className="text-lg font-bold text-ink">Swap exercise</h2>
                 <button
                   onClick={() => setSubstitutingSessionIndex(null)}
-                  className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
+                  className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2"
                 >
                   Close ✕
                 </button>
@@ -1123,7 +1123,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                   value={substituteSessionQuery}
                   onChange={(e) => setSubstituteSessionQuery(e.target.value)}
                   placeholder="Search exercises"
-                  className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+                  className="w-full rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
                 />
               </div>
               <div className="flex-1 overflow-y-auto px-4 pb-4">
@@ -1140,7 +1140,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                       return aMatches !== bMatches ? aMatches - bMatches : a.name.localeCompare(b.name)
                     })
                   if (candidates.length === 0) {
-                    return <p className="text-sm text-gray-400">No matches.</p>
+                    return <p className="text-sm text-ink-disabled">No matches.</p>
                   }
                   return (
                     <div className="flex flex-col gap-2">
@@ -1149,10 +1149,10 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                           key={ex.id}
                           type="button"
                           onClick={() => pickSubstituteForSession(ex.name)}
-                          className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 text-left shadow-sm"
+                          className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 text-left shadow-card"
                         >
-                          <span className="font-medium text-gray-900">{ex.name}</span>
-                          <span className="text-xs text-gray-400">{ex.primary_muscle ?? 'Uncategorized'}</span>
+                          <span className="font-medium text-ink">{ex.name}</span>
+                          <span className="text-xs text-ink-disabled">{ex.primary_muscle ?? 'Uncategorized'}</span>
                         </button>
                       ))}
                     </div>
@@ -1163,12 +1163,12 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
           )}
 
           {addingExercise && (
-            <div className="fixed inset-0 z-[60] flex flex-col bg-white safe-top safe-bottom">
+            <div className="fixed inset-0 z-[60] flex flex-col bg-page safe-top safe-bottom">
               <div className="flex items-center justify-between px-4 pt-4">
-                <h2 className="text-lg font-bold text-gray-900">Add exercise</h2>
+                <h2 className="text-lg font-bold text-ink">Add exercise</h2>
                 <button
                   onClick={() => setAddingExercise(false)}
-                  className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
+                  className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2"
                 >
                   Close ✕
                 </button>
@@ -1179,19 +1179,19 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                   value={addExerciseQuery}
                   onChange={(e) => setAddExerciseQuery(e.target.value)}
                   placeholder="Search exercises or type a new name"
-                  className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+                  className="w-full rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
                 />
               </div>
               {sessionProgram() && (
                 <div className="flex items-center justify-between px-4 pb-3">
-                  <span className="pr-3 text-sm text-gray-600">Also add to {sessionProgram()!.name} for next time</span>
+                  <span className="pr-3 text-sm text-ink-2">Also add to {sessionProgram()!.name} for next time</span>
                   <button
                     type="button"
                     onClick={() => setAddToProgramToo((v) => !v)}
-                    className={`h-6 w-11 shrink-0 rounded-full transition ${addToProgramToo ? 'bg-rose-600' : 'bg-gray-200'}`}
+                    className={`h-6 w-11 shrink-0 rounded-full transition ${addToProgramToo ? 'bg-pine' : 'bg-line'}`}
                   >
                     <span
-                      className={`block h-5 w-5 translate-y-0.5 rounded-full bg-white transition ${
+                      className={`block h-5 w-5 translate-y-0.5 rounded-full bg-surface transition ${
                         addToProgramToo ? 'translate-x-5' : 'translate-x-0.5'
                       }`}
                     />
@@ -1213,23 +1213,23 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                         <button
                           type="button"
                           onClick={() => addExerciseToSession(addExerciseQuery.trim(), addToProgramToo)}
-                          className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-rose-600"
+                          className="rounded-[20px] border border-line-strong bg-surface py-3 text-sm font-semibold text-pine"
                         >
                           + Add "{addExerciseQuery.trim()}" as a new exercise
                         </button>
                       )}
                       {candidates.length === 0 && !query && (
-                        <p className="text-sm text-gray-400">Type to search, or enter a new exercise name.</p>
+                        <p className="text-sm text-ink-disabled">Type to search, or enter a new exercise name.</p>
                       )}
                       {candidates.map((ex) => (
                         <button
                           key={ex.id}
                           type="button"
                           onClick={() => addExerciseToSession(ex.name, addToProgramToo)}
-                          className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 text-left shadow-sm"
+                          className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 text-left shadow-card"
                         >
-                          <span className="font-medium text-gray-900">{ex.name}</span>
-                          <span className="text-xs text-gray-400">{ex.primary_muscle ?? 'Uncategorized'}</span>
+                          <span className="font-medium text-ink">{ex.name}</span>
+                          <span className="text-xs text-ink-disabled">{ex.primary_muscle ?? 'Uncategorized'}</span>
                         </button>
                       ))}
                     </div>
@@ -1266,35 +1266,35 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
       />
 
       {libraryOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+        <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
           <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-gray-900">Exercise library</h2>
-            <button onClick={() => setLibraryOpen(false)} className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600">
+            <h2 className="text-lg font-bold text-ink">Exercise library</h2>
+            <button onClick={() => setLibraryOpen(false)} className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2">
               Close ✕
             </button>
           </div>
           <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-4">
             <button
               onClick={openNewExercise}
-              className="rounded-2xl border-2 border-dashed border-gray-200 py-2.5 text-sm font-semibold text-rose-600"
+              className="rounded-[20px] border border-line-strong bg-surface py-3 text-sm font-semibold text-pine"
             >
               + New exercise
             </button>
-            {exercises.length === 0 && <p className="text-sm text-gray-400">No exercises yet — add one above.</p>}
+            {exercises.length === 0 && <p className="text-sm text-ink-disabled">No exercises yet — add one above.</p>}
             {[...MUSCLE_GROUPS, null].map((muscle) => {
               const group = exercises.filter((ex) => (ex.primary_muscle ?? null) === muscle).sort((a, b) => a.name.localeCompare(b.name))
               if (group.length === 0) return null
               return (
                 <div key={muscle ?? 'uncategorized'}>
-                  <h3 className="mb-1 mt-2 text-xs font-semibold uppercase text-gray-400">{muscle ?? 'Uncategorized'}</h3>
+                  <h3 className="mb-1 mt-2 text-xs font-semibold uppercase text-ink-disabled">{muscle ?? 'Uncategorized'}</h3>
                   <div className="flex flex-col gap-2">
                     {group.map((ex) => (
-                      <div key={ex.id} className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                      <div key={ex.id} className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
                         <button onClick={() => openEditExercise(ex)} className="flex-1 text-left">
-                          <p className="font-medium text-gray-900">{ex.name}</p>
-                          {ex.secondary_muscle && <p className="text-[11px] text-gray-400">+ {ex.secondary_muscle}</p>}
+                          <p className="font-medium text-ink">{ex.name}</p>
+                          {ex.secondary_muscle && <p className="text-[11px] text-ink-disabled">+ {ex.secondary_muscle}</p>}
                         </button>
-                        <button onClick={() => setConfirmDeleteExercise(ex)} className="pl-3 text-gray-300" aria-label="Remove exercise">
+                        <button onClick={() => setConfirmDeleteExercise(ex)} className="pl-3 text-ink-faint" aria-label="Remove exercise">
                           ✕
                         </button>
                       </div>
@@ -1306,12 +1306,12 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
           </div>
 
           {exerciseFormOpen && (
-            <div className="fixed inset-0 z-[60] flex flex-col bg-white safe-top safe-bottom">
+            <div className="fixed inset-0 z-[60] flex flex-col bg-page safe-top safe-bottom">
               <div className="flex items-center justify-between px-4 pt-4">
-                <h2 className="text-lg font-bold text-gray-900">{editingExercise ? 'Edit exercise' : 'New exercise'}</h2>
+                <h2 className="text-lg font-bold text-ink">{editingExercise ? 'Edit exercise' : 'New exercise'}</h2>
                 <button
                   onClick={() => setExerciseFormOpen(false)}
-                  className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
+                  className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2"
                 >
                   Close ✕
                 </button>
@@ -1322,12 +1322,12 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                   value={exerciseFormName}
                   onChange={(e) => setExerciseFormName(e.target.value)}
                   placeholder="Exercise name, e.g. Hack Squat"
-                  className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-rose-400"
+                  className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
                 />
                 <select
                   value={exerciseFormPrimary}
                   onChange={(e) => setExerciseFormPrimary(e.target.value)}
-                  className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-rose-400"
+                  className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink outline-none focus:border-pine"
                 >
                   <option value="">Primary muscle</option>
                   {MUSCLE_GROUPS.map((m) => (
@@ -1339,7 +1339,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                 <select
                   value={exerciseFormSecondary}
                   onChange={(e) => setExerciseFormSecondary(e.target.value)}
-                  className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-rose-400"
+                  className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink outline-none focus:border-pine"
                 >
                   <option value="">Secondary muscle (optional)</option>
                   {MUSCLE_GROUPS.map((m) => (
@@ -1348,7 +1348,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                     </option>
                   ))}
                 </select>
-                <button type="submit" className="mt-2 rounded-2xl bg-rose-600 px-4 py-2.5 font-semibold text-white">
+                <button type="submit" className="mt-2 rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white">
                   {editingExercise ? 'Save changes' : 'Add exercise'}
                 </button>
               </form>

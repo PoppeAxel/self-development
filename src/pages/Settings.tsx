@@ -3,8 +3,8 @@ import { supabase } from '../lib/supabase'
 import { enableNotifications, notificationsEnabled } from '../lib/push'
 import { connectStrava, stravaConnected, handleStravaOAuthRedirect } from '../lib/strava'
 import { localTimeToUTC, utcTimeToLocal, DAY_LABELS } from '../lib/dates'
-import { ensureDefaultCategories, CATEGORY_STYLES } from '../lib/categories'
-import { RefreshButton } from '../components/RefreshButton'
+import { ensureDefaultCategories, CATEGORY_STYLES, CATEGORY_COLOR_LABELS } from '../lib/categories'
+import { Screen } from '../components/Screen'
 import { CATEGORY_COLORS } from '../lib/types'
 import type { Category, CategoryColor, DailyTask, Reminder } from '../lib/types'
 
@@ -160,53 +160,49 @@ export function Settings() {
   }
 
   return (
-    <div className="flex flex-col gap-4 px-4 pt-6 pb-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
-        <RefreshButton onRefresh={load} />
-      </div>
+    <Screen title="Settings" onRefresh={load}>
 
-      <div className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
-        <p className="font-semibold text-gray-900">Push notifications</p>
-        <p className="mt-1 text-sm text-gray-500">
+      <div className="rounded-3xl border border-line bg-surface p-4 shadow-card">
+        <p className="font-semibold text-ink">Push notifications</p>
+        <p className="mt-1 text-sm text-ink-3">
           {pushOn ? 'Enabled on this device.' : 'Enable to get reminders sent to your lock screen.'}
         </p>
         {!pushOn && (
-          <button onClick={handleEnablePush} className="mt-3 rounded-2xl bg-violet-600 px-4 py-2 font-semibold text-white">
+          <button onClick={handleEnablePush} className="mt-3 rounded-[20px] bg-pine px-4 py-2 font-semibold text-white">
             Enable notifications
           </button>
         )}
         {pushOn && (
-          <button onClick={handleEnablePush} className="mt-3 text-sm font-medium text-violet-600">
+          <button onClick={handleEnablePush} className="mt-3 text-sm font-medium text-pine">
             Resync this device's subscription
           </button>
         )}
-        {status && <p className="mt-2 text-sm text-gray-400">{status}</p>}
+        {status && <p className="mt-2 text-sm text-ink-disabled">{status}</p>}
       </div>
 
-      <div className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
-        <p className="font-semibold text-gray-900">Strava</p>
-        <p className="mt-1 text-sm text-gray-500">
+      <div className="rounded-3xl border border-line bg-surface p-4 shadow-card">
+        <p className="font-semibold text-ink">Strava</p>
+        <p className="mt-1 text-sm text-ink-3">
           {stravaOn ? 'Connected — workouts sync automatically every few hours.' : 'Connect to sync your workouts into the Journal.'}
         </p>
         {!stravaOn && (
-          <button onClick={connectStrava} className="mt-3 rounded-2xl bg-orange-500 px-4 py-2 font-semibold text-white">
+          <button onClick={connectStrava} className="mt-3 rounded-[20px] bg-cat-amber px-4 py-2 font-semibold text-white">
             Connect Strava
           </button>
         )}
-        {stravaStatus && <p className="mt-2 text-sm text-gray-400">{stravaStatus}</p>}
+        {stravaStatus && <p className="mt-2 text-sm text-ink-disabled">{stravaStatus}</p>}
       </div>
 
-      <h2 className="text-sm font-semibold text-gray-500">Reminders</h2>
+      <h2 className="text-sm font-semibold text-ink-3">Reminders</h2>
       <ul className="flex flex-col gap-2">
         {reminders.map((reminder) => {
           const linkedTask = reminder.task_id ? tasks.find((t) => t.id === reminder.task_id) : undefined
           return (
-          <li key={reminder.id} className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
+          <li key={reminder.id} className="rounded-3xl border border-line bg-surface p-4 shadow-card">
             <div className="flex items-center justify-between">
               <div>
-                <p className="font-medium text-gray-900">{reminder.label}</p>
-                <p className="text-sm text-gray-400">
+                <p className="font-medium text-ink">{reminder.label}</p>
+                <p className="text-sm text-ink-disabled">
                   {utcTimeToLocal(reminder.time_of_day)}
                   {linkedTask && ` — only if "${linkedTask.title}" isn't done`}
                   {reminder.task_id && !linkedTask && ' — linked task no longer active'}
@@ -215,15 +211,15 @@ export function Settings() {
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => toggleReminder(reminder)}
-                  className={`h-6 w-11 rounded-full transition ${reminder.enabled ? 'bg-violet-600' : 'bg-gray-200'}`}
+                  className={`h-6 w-11 rounded-full transition ${reminder.enabled ? 'bg-pine' : 'bg-line'}`}
                 >
                   <span
-                    className={`block h-5 w-5 translate-y-0.5 rounded-full bg-white transition ${
+                    className={`block h-5 w-5 translate-y-0.5 rounded-full bg-surface transition ${
                       reminder.enabled ? 'translate-x-5' : 'translate-x-0.5'
                     }`}
                   />
                 </button>
-                <button onClick={() => removeReminder(reminder)} className="text-gray-300">
+                <button onClick={() => removeReminder(reminder)} className="text-ink-faint">
                   ✕
                 </button>
               </div>
@@ -234,7 +230,7 @@ export function Settings() {
                   key={d}
                   onClick={() => toggleDay(reminder, i)}
                   className={`flex-1 rounded-xl py-1 text-xs font-medium ${
-                    reminder.days_of_week.includes(i) ? 'bg-violet-100 text-violet-600' : 'bg-gray-100 text-gray-400'
+                    reminder.days_of_week.includes(i) ? 'bg-cat-emerald-tint text-pine' : 'bg-track text-ink-disabled'
                   }`}
                 >
                   {d}
@@ -251,23 +247,23 @@ export function Settings() {
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           placeholder="Reminder label, e.g. Log your weight"
-          className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+          className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
         />
         <div className="flex gap-2">
           <input
             value={time}
             onChange={(e) => setTime(e.target.value)}
             type="time"
-            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+            className="flex-1 rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink outline-none focus:border-pine"
           />
-          <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
+          <button type="submit" className="rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white">
             Add reminder
           </button>
         </div>
         <select
           value={newReminderTaskId}
           onChange={(e) => setNewReminderTaskId(e.target.value)}
-          className="rounded-2xl border border-gray-200 bg-white px-3 py-2.5 text-gray-900 outline-none focus:border-violet-400"
+          className="rounded-[20px] border border-line-strong bg-surface px-3 py-2.5 text-ink outline-none focus:border-pine"
         >
           <option value="">Always remind (not tied to a task)</option>
           {tasks.map((t) => (
@@ -278,8 +274,8 @@ export function Settings() {
         </select>
       </form>
 
-      <h2 className="text-sm font-semibold text-gray-500">Labels</h2>
-      <div className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
+      <h2 className="text-sm font-semibold text-ink-3">Labels</h2>
+      <div className="rounded-3xl border border-line bg-surface p-4 shadow-card">
         <div className="flex flex-wrap gap-2">
           {categories.map((category) => {
             const style = CATEGORY_STYLES[category.color]
@@ -307,40 +303,44 @@ export function Settings() {
                     {category.name}
                   </button>
                 )}
-                <button onClick={() => removeCategory(category)} className="text-gray-400">
+                <button onClick={() => removeCategory(category)} className="text-ink-disabled">
                   ✕
                 </button>
               </div>
             )
           })}
         </div>
-        <form onSubmit={addCategory} className="mt-3 flex gap-2">
+        {/* Two rows: name, then colour + Add. All three side by side overflows an
+            iPhone-width card. */}
+        <form onSubmit={addCategory} className="mt-3 flex flex-col gap-2">
           <input
             value={categoryName}
             onChange={(e) => setCategoryName(e.target.value)}
             placeholder="New label"
-            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+            className="w-full rounded-[20px] border border-line bg-surface px-4 py-2 text-ink placeholder-ink-disabled outline-none focus:border-pine"
           />
-          <select
-            value={categoryColor}
-            onChange={(e) => setCategoryColor(e.target.value as CategoryColor)}
-            className="rounded-2xl border border-gray-200 bg-white px-3 py-2 text-gray-900 outline-none focus:border-violet-400"
-          >
-            {CATEGORY_COLORS.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-          <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2 font-semibold text-white">
-            Add
-          </button>
+          <div className="flex gap-2">
+            <select
+              value={categoryColor}
+              onChange={(e) => setCategoryColor(e.target.value as CategoryColor)}
+              className="min-w-0 flex-1 rounded-[20px] border border-line bg-surface px-3 py-2 text-ink outline-none focus:border-pine"
+            >
+              {CATEGORY_COLORS.map((c) => (
+                <option key={c} value={c}>
+                  {CATEGORY_COLOR_LABELS[c]}
+                </option>
+              ))}
+            </select>
+            <button type="submit" className="shrink-0 rounded-[20px] bg-pine px-5 py-2 font-semibold text-white">
+              Add
+            </button>
+          </div>
         </form>
       </div>
 
-      <h2 className="text-sm font-semibold text-gray-500">Body goals</h2>
-      <form onSubmit={saveBodyGoals} className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
-        <p className="mb-2 text-sm text-gray-500">Shown as reference lines on your trends in Stats.</p>
+      <h2 className="text-sm font-semibold text-ink-3">Body goals</h2>
+      <form onSubmit={saveBodyGoals} className="rounded-3xl border border-line bg-surface p-4 shadow-card">
+        <p className="mb-2 text-sm text-ink-3">Shown as reference lines on your trends in Stats.</p>
         <div className="flex flex-col gap-2">
           <input
             value={goalWeight}
@@ -348,7 +348,7 @@ export function Settings() {
             type="number"
             step="0.1"
             placeholder="Goal weight (kg)"
-            className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+            className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
           />
           <input
             value={stepGoal}
@@ -356,21 +356,21 @@ export function Settings() {
             type="number"
             step="1"
             placeholder="Daily step goal, e.g. 10000"
-            className="rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+            className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
           />
-          <button type="submit" className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
+          <button type="submit" className="rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white">
             Save
           </button>
         </div>
-        {bodyGoalsStatus && <p className="mt-2 text-sm text-emerald-600">{bodyGoalsStatus}</p>}
+        {bodyGoalsStatus && <p className="mt-2 text-sm text-cat-emerald-ink">{bodyGoalsStatus}</p>}
       </form>
 
       <button
         onClick={() => supabase.auth.signOut()}
-        className="mt-4 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 font-medium text-gray-500"
+        className="mt-4 rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 font-medium text-ink-3"
       >
         Sign out
       </button>
-    </div>
+    </Screen>
   )
 }

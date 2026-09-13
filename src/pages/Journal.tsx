@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
-import { LineChart, Line, BarChart, Bar, ReferenceLine, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+import { AreaChart, Area, BarChart, Bar, ReferenceLine, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { parseISO } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { todayISO, weekStartISO } from '../lib/dates'
-import { RefreshButton } from '../components/RefreshButton'
+import { CATEGORY_STYLES } from '../lib/categories'
+import { THEME } from '../lib/theme'
+import { Screen, HeroSegments, HeroChip } from '../components/Screen'
 import { GymPrograms } from '../components/GymPrograms'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
@@ -41,6 +43,31 @@ const ENTRY_TYPE_LABELS: Partial<Record<JournalEntryType, string>> = {
   steps: 'steps entry',
 }
 
+// Each metric keeps its own hue, carried on the week-list accent edge and its chart bars,
+// so the Weight weeks and the Steps weeks don't read as the same list. Weight is plum,
+// matching the design; the rest take the category hue that fits what they measure.
+const METRIC_HUE: Record<JournalTab, (typeof CATEGORY_STYLES)[keyof typeof CATEGORY_STYLES]> = {
+  weight: CATEGORY_STYLES.violet,
+  sleep_hours: CATEGORY_STYLES.sky,
+  steps: CATEGORY_STYLES.emerald,
+  cardio: CATEGORY_STYLES.pink,
+  strength: CATEGORY_STYLES.amber,
+}
+
+// A hero chip that reads good or bad — pine tint for the direction you want, rose for the
+// other. Plain glass chips (no judgement attached) use HeroChip instead.
+function DeltaChip({ good, children }: { good: boolean; children: React.ReactNode }) {
+  const style = good ? CATEGORY_STYLES.emerald : CATEGORY_STYLES.rose
+  return (
+    <span
+      className="rounded-full px-[11px] py-[5px] text-xs font-semibold"
+      style={{ background: style.tint, color: style.ink }}
+    >
+      {children}
+    </span>
+  )
+}
+
 interface WeeklySleep {
   weekStart: string
   avg: number
@@ -65,33 +92,61 @@ interface WeeklySteps {
   days: number
 }
 
+// Shared recharts styling for the calm palette — warm grid lines, off-white tooltip,
+// muted axis ink. Passed as props rather than set in CSS since recharts draws to SVG.
+const AXIS = { stroke: THEME.inkMuted, fontSize: 10 } as const
+const GRID_STROKE = THEME.chartGrid
+const TOOLTIP_STYLE = {
+  background: THEME.surface,
+  border: `1px solid ${THEME.line}`,
+  fontSize: 12,
+  borderRadius: 12,
+  color: THEME.ink,
+} as const
+
 function WeightChart({ data, goalWeight, height }: { data: { date: string; value: number }[]; goalWeight: number | null; height: number }) {
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <LineChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
-        <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
+      <AreaChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
+        <defs>
+          <linearGradient id="weightFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={THEME.pine} stopOpacity={0.26} />
+            <stop offset="100%" stopColor={THEME.pine} stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
+        <XAxis dataKey="date" {...AXIS} />
         <YAxis
-          stroke="#9ca3af"
-          fontSize={11}
+          {...AXIS}
           domain={[
             (dataMin: number) => Math.floor(Math.min(dataMin, goalWeight ?? dataMin) - 2),
             (dataMax: number) => Math.ceil(Math.max(dataMax, goalWeight ?? dataMax) + 2),
           ]}
         />
-        <Tooltip contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }} />
+        <Tooltip contentStyle={TOOLTIP_STYLE} />
         {goalWeight != null && (
           <ReferenceLine
             y={goalWeight}
-            stroke="#059669"
+            stroke={THEME.pine}
             strokeWidth={2}
-            strokeDasharray="6 4"
+            strokeDasharray="6 5"
             ifOverflow="extendDomain"
-            label={{ value: `Goal ${goalWeight}kg`, fontSize: 12, fontWeight: 600, fill: '#059669', position: 'insideTopLeft' }}
+            label={{ value: `Goal ${goalWeight} kg`, fontSize: 10, fontWeight: 600, fill: '#1f6b5c', position: 'insideTopLeft' }}
           />
         )}
-        <Line type="monotone" dataKey="value" stroke="#7c3aed" strokeWidth={2.5} dot={{ r: 3, fill: '#7c3aed' }} isAnimationActive={false} />
-      </LineChart>
+        <Area
+          type="monotone"
+          dataKey="value"
+          stroke={THEME.pine}
+          strokeWidth={2.5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="url(#weightFill)"
+          dot={{ r: 2.5, fill: THEME.pine, strokeWidth: 0 }}
+          activeDot={{ r: 4.5, fill: '#fff', stroke: THEME.pine, strokeWidth: 2.5 }}
+          isAnimationActive={false}
+        />
+      </AreaChart>
     </ResponsiveContainer>
   )
 }
@@ -100,21 +155,21 @@ function StepsChart({ data, stepGoal, height }: { data: { date: string; value: n
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
-        <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
-        <YAxis stroke="#9ca3af" fontSize={11} />
-        <Tooltip contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }} />
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
+        <XAxis dataKey="date" {...AXIS} />
+        <YAxis {...AXIS} />
+        <Tooltip contentStyle={TOOLTIP_STYLE} />
         {stepGoal != null && (
           <ReferenceLine
             y={stepGoal}
-            stroke="#0284c7"
+            stroke={THEME.pine}
             strokeWidth={2}
-            strokeDasharray="6 4"
+            strokeDasharray="6 5"
             ifOverflow="extendDomain"
-            label={{ value: `Goal ${stepGoal.toLocaleString()}`, fontSize: 12, fontWeight: 600, fill: '#0284c7', position: 'insideTopLeft' }}
+            label={{ value: `Goal ${stepGoal.toLocaleString()}`, fontSize: 10, fontWeight: 600, fill: '#1f6b5c', position: 'insideTopLeft' }}
           />
         )}
-        <Bar dataKey="value" fill="#38bdf8" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+        <Bar dataKey="value" fill={METRIC_HUE.steps.accent} radius={[4, 4, 0, 0]} isAnimationActive={false} />
       </BarChart>
     </ResponsiveContainer>
   )
@@ -136,11 +191,11 @@ function WorkoutsChart({
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
-        <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
-        <YAxis stroke="#9ca3af" fontSize={11} />
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
+        <XAxis dataKey="date" {...AXIS} />
+        <YAxis {...AXIS} />
         <Tooltip
-          contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }}
+          contentStyle={TOOLTIP_STYLE}
           formatter={(value) => [`${Number(value).toFixed(decimals)} ${unit}`, 'Trained']}
         />
         <Bar dataKey="value" fill={color} radius={[4, 4, 0, 0]} isAnimationActive={false} />
@@ -213,11 +268,11 @@ function CardioChart({ data, sportTypes, height }: { data: WeeklyDistanceBySport
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
-        <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
-        <YAxis stroke="#9ca3af" fontSize={11} />
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
+        <XAxis dataKey="date" {...AXIS} />
+        <YAxis {...AXIS} />
         <Tooltip
-          contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }}
+          contentStyle={TOOLTIP_STYLE}
           formatter={(value, name) => [`${Number(value).toFixed(1)} km`, getSportStyle(String(name)).label]}
         />
         {sportTypes.map((sportType, i) => (
@@ -542,27 +597,97 @@ export function Journal() {
   const strengthTrendPerWeek = strengthDiffs.length > 0 ? strengthDiffs.reduce((a, b) => a + b, 0) / strengthDiffs.length : null
   const strengthWeeksDesc = [...weeklyStrengthMinutes].reverse()
 
+  // The screen's headline number, shown big on the hero: the latest weight, or the
+  // current week's figure for the synced metrics. Chips beside it carry the change.
+  const heroStat: { value: string; unit?: string; chips: React.ReactNode } | null =
+    tab === 'weight' && latestWeightEntry?.value_numeric != null
+      ? {
+          value: (latestWeightEntry.value_numeric as number).toFixed(1),
+          unit: 'kg',
+          chips: (
+            <>
+              {totalWeightChange !== null && (
+                <DeltaChip good={totalWeightChange <= 0}>
+                  {totalWeightChange > 0 ? '+' : ''}
+                  {totalWeightChange.toFixed(1)} kg
+                </DeltaChip>
+              )}
+              {goalWeight != null && distanceToGoal !== null && (
+                <HeroChip>
+                  {Math.abs(distanceToGoal) <= 0.05 ? 'goal reached 🎉' : `${Math.abs(distanceToGoal).toFixed(1)} to goal`}
+                </HeroChip>
+              )}
+            </>
+          ),
+        }
+      : tab === 'sleep_hours' && currentSleepWeek
+        ? {
+            value: formatSleepDuration(currentSleepWeek.avg),
+            unit: 'avg',
+            chips: weekSleepChange !== null && (
+              <DeltaChip good={weekSleepChange >= 0}>
+                {weekSleepChange > 0 ? '+' : '−'}
+                {formatSleepDuration(Math.abs(weekSleepChange))}
+              </DeltaChip>
+            ),
+          }
+        : tab === 'steps' && currentStepsWeek
+          ? {
+              value: Math.round(currentStepsWeek.avg).toLocaleString(),
+              unit: 'avg/day',
+              chips: (
+                <>
+                  {weekStepsChange !== null && (
+                    <DeltaChip good={weekStepsChange >= 0}>
+                      {weekStepsChange > 0 ? '+' : ''}
+                      {Math.round(weekStepsChange).toLocaleString()}
+                    </DeltaChip>
+                  )}
+                  {stepGoal != null && <HeroChip>goal {stepGoal.toLocaleString()}</HeroChip>}
+                </>
+              ),
+            }
+          : tab === 'cardio' && currentCardioWeek
+            ? {
+                value: currentCardioWeek.total.toFixed(1),
+                unit: 'km this week',
+                chips: weekCardioChange !== null && (
+                  <DeltaChip good={weekCardioChange >= 0}>
+                    {weekCardioChange > 0 ? '+' : ''}
+                    {weekCardioChange.toFixed(1)} km
+                  </DeltaChip>
+                ),
+              }
+            : tab === 'strength' && currentStrengthWeek
+              ? {
+                  value: formatWorkoutDuration(currentStrengthWeek.value * 60),
+                  unit: 'this week',
+                  chips: weekStrengthChange !== null && (
+                    <DeltaChip good={weekStrengthChange >= 0}>
+                      {weekStrengthChange > 0 ? '+' : ''}
+                      {Math.round(weekStrengthChange)} min
+                    </DeltaChip>
+                  ),
+                }
+              : null
+
+  const hero = (
+    <>
+      <HeroSegments options={TABS.map((t) => ({ id: t, label: TAB_LABELS[t] }))} value={tab} onChange={setTab} />
+      {heroStat && (
+        <div className="mt-5 flex items-end justify-between gap-3">
+          <p className="text-[40px] font-semibold leading-none">
+            {heroStat.value}
+            {heroStat.unit && <span className="ml-1 text-lg font-medium">{heroStat.unit}</span>}
+          </p>
+          <span className="flex flex-wrap justify-end gap-1.5">{heroStat.chips}</span>
+        </div>
+      )}
+    </>
+  )
+
   return (
-    <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Your Journal</h1>
-        <RefreshButton onRefresh={load} />
-      </div>
-
-      <div className="flex gap-2 rounded-2xl bg-gray-100 p-1">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`flex-1 rounded-xl px-2 py-2 text-sm font-medium transition ${
-              tab === t ? 'bg-white text-violet-600 shadow-sm' : 'text-gray-500'
-            }`}
-          >
-            {TAB_LABELS[t]}
-          </button>
-        ))}
-      </div>
-
+    <Screen title="Journal" onRefresh={load} hero={hero}>
       {tab === 'weight' && (
         <div className="flex gap-2">
           <input
@@ -571,7 +696,7 @@ export function Journal() {
             type="number"
             step="0.1"
             placeholder="Weight (kg)"
-            className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+            className="flex-1 rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
           />
           <button
             onClick={() => {
@@ -579,7 +704,7 @@ export function Journal() {
               addEntry('weight', Number(weight), null)
               setWeight('')
             }}
-            className="rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white"
+            className="rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white"
           >
             Log
           </button>
@@ -594,7 +719,7 @@ export function Journal() {
             type="number"
             step="1"
             placeholder="Hours"
-            className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+            className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
           />
           <input
             value={sleepMinutesPart}
@@ -602,7 +727,7 @@ export function Journal() {
             type="number"
             step="1"
             placeholder="Minutes"
-            className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+            className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
           />
           <button
             onClick={() => {
@@ -612,115 +737,80 @@ export function Journal() {
               setSleepHoursPart('')
               setSleepMinutesPart('')
             }}
-            className="shrink-0 rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white"
+            className="shrink-0 rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white"
           >
             Log
           </button>
         </div>
       )}
 
-      {tab === 'steps' && <p className="text-sm text-gray-400">Synced automatically from Garmin — nothing to log here.</p>}
+      {tab === 'steps' && <p className="text-sm text-ink-disabled">Synced automatically from Garmin — nothing to log here.</p>}
 
-      {tab === 'cardio' && <p className="text-sm text-gray-400">Synced automatically from Strava — nothing to log here.</p>}
+      {tab === 'cardio' && <p className="text-sm text-ink-disabled">Synced automatically from Strava — nothing to log here.</p>}
 
       {tab === 'strength' && (
         <>
           <GymPrograms strengthWorkouts={strengthWorkouts} />
-          <p className="text-sm text-gray-400">Total strength time below is synced automatically from Strava.</p>
+          <p className="text-sm text-ink-disabled">Total strength time below is synced automatically from Strava.</p>
         </>
       )}
 
-      {tab === 'weight' && firstWeightEntry && latestWeightEntry && (
-        <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-          <div className="flex items-center justify-between text-xs text-gray-400">
-            <span>Start · {firstWeightEntry.date}</span>
-            <span>Now · {latestWeightEntry.date}</span>
-          </div>
-          <div className="mt-1 flex items-center justify-between">
-            <span className="text-lg font-bold text-gray-900">{(firstWeightEntry.value_numeric as number).toFixed(1)} kg</span>
-            <span className="text-gray-300">→</span>
-            <span className="text-lg font-bold text-gray-900">{(latestWeightEntry.value_numeric as number).toFixed(1)} kg</span>
-          </div>
-          {totalWeightChange !== null && (
-            <p
-              className={`mt-1 text-sm font-semibold ${
-                totalWeightChange > 0 ? 'text-red-500' : totalWeightChange < 0 ? 'text-emerald-500' : 'text-gray-400'
-              }`}
-            >
-              {totalWeightChange > 0 ? '+' : ''}
-              {totalWeightChange.toFixed(1)} kg overall
-            </p>
-          )}
-          {goalWeight != null && distanceToGoal !== null && (
-            <div className="mt-2 border-t border-gray-100 pt-2 text-sm text-gray-500">
-              {Math.abs(distanceToGoal) <= 0.05 ? (
-                <span className="font-semibold text-emerald-500">Goal reached 🎉</span>
-              ) : (
-                <>
-                  <span className="font-medium text-gray-900">{Math.abs(distanceToGoal).toFixed(1)} kg</span> to{' '}
-                  {distanceToGoal > 0 ? 'lose' : 'gain'} to reach {goalWeight} kg
-                  <span className="block text-xs text-gray-400">
-                    {weeksToGoal !== null
-                      ? `~${Math.ceil(weeksToGoal)} week${Math.ceil(weeksToGoal) === 1 ? '' : 's'} at current trend`
-                      : "Current trend isn't moving toward your goal"}
-                  </span>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
+      {/* Two identically styled cards rather than a filled-vs-white pair — see the
+          handoff's "smoother transition" note. */}
       {tab === 'weight' && weekWeightChange !== null && currentWeightWeek && (
-        <div className="grid grid-cols-2 gap-2">
-          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs text-gray-400">This week</p>
-            <p className="text-lg font-bold text-gray-900">{currentWeightWeek.avg.toFixed(1)} kg</p>
+        <div className="grid grid-cols-2 gap-2.5">
+          <div className="rounded-[22px] border border-line bg-surface px-4 py-3.5 shadow-card">
+            <p className="text-xs font-medium text-ink-muted">This week</p>
+            <p className="mt-0.5 text-[22px] font-semibold text-ink">{currentWeightWeek.avg.toFixed(1)} kg</p>
             <p
-              className={`text-sm font-semibold ${
-                weekWeightChange > 0 ? 'text-red-500' : weekWeightChange < 0 ? 'text-emerald-500' : 'text-gray-400'
+              className={`mt-1 text-xs font-semibold ${
+                weekWeightChange > 0 ? 'text-cat-rose-ink' : weekWeightChange < 0 ? 'text-cat-emerald-ink' : 'text-ink-disabled'
               }`}
             >
               {weekWeightChange > 0 ? '+' : ''}
-              {weekWeightChange.toFixed(1)} kg vs last week
+              {weekWeightChange.toFixed(1)} kg
             </p>
           </div>
-          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs text-gray-400">Trend</p>
+          <div className="rounded-[22px] border border-line bg-surface px-4 py-3.5 shadow-card">
+            <p className="text-xs font-medium text-ink-muted">Trend</p>
             <p
-              className={`text-lg font-bold ${
+              className={`mt-0.5 text-[22px] font-semibold ${
                 weightTrendPerWeek == null || weightTrendPerWeek === 0
-                  ? 'text-gray-900'
+                  ? 'text-ink'
                   : weightTrendPerWeek > 0
-                    ? 'text-red-500'
-                    : 'text-emerald-500'
+                    ? 'text-cat-rose-ink'
+                    : 'text-cat-emerald-ink'
               }`}
             >
               {weightTrendPerWeek == null ? '—' : (
                 <>
-                  {weightTrendPerWeek > 0 ? '↗' : weightTrendPerWeek < 0 ? '↘' : '→'} {Math.abs(weightTrendPerWeek).toFixed(2)} kg/wk
+                  {weightTrendPerWeek > 0 ? '↗' : weightTrendPerWeek < 0 ? '↘' : '→'} {Math.abs(weightTrendPerWeek).toFixed(2)}
                 </>
               )}
             </p>
+            <p className="mt-1 text-xs font-medium text-ink-3">kg / week</p>
           </div>
         </div>
       )}
 
+      {/* The hero already carries the current weight and the distance to goal, so all
+          that's left of the old start→now card is the projection. */}
+      {tab === 'weight' && goalWeight != null && distanceToGoal !== null && Math.abs(distanceToGoal) > 0.05 && (
+        <p className="text-xs font-medium text-ink-3">
+          {Math.abs(distanceToGoal).toFixed(1)} kg to {distanceToGoal > 0 ? 'lose' : 'gain'} to reach {goalWeight} kg ·{' '}
+          {weeksToGoal !== null
+            ? `~${Math.ceil(weeksToGoal)} week${Math.ceil(weeksToGoal) === 1 ? '' : 's'} at current trend`
+            : "current trend isn't moving toward it"}
+        </p>
+      )}
+
       {tab === 'weight' && showCalorieEstimate && (
-        <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-          <p className="text-xs text-gray-400">Estimated maintenance · last {recentDailyKcal.length} logged days</p>
-          <p className="text-lg font-bold text-gray-900">{Math.round(estimatedMaintenanceKcal!).toLocaleString()} kcal/day</p>
-          <p className="mt-1 text-sm text-gray-500">
-            Averaging <span className="font-medium text-gray-900">{Math.round(avgDailyKcal!).toLocaleString()} kcal/day</span>, which
-            is a{' '}
-            <span className={`font-medium ${dailyDeficitOrSurplus! < 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-              {Math.round(Math.abs(dailyDeficitOrSurplus!)).toLocaleString()} kcal/day {dailyDeficitOrSurplus! < 0 ? 'deficit' : 'surplus'}
-            </span>{' '}
-            matching your {Math.abs(weightTrendPerWeek!).toFixed(2)} kg/wk trend.
-          </p>
-          <p className="mt-1 text-xs text-gray-400">
-            Eat around this many calories to hold steady, less to keep losing, more to slow down or reverse — based only on your own
-            logged intake and weight trend (no workout-calorie guessing).
+        <div className="rounded-[22px] border border-line bg-surface px-4 py-3.5 shadow-card">
+          <p className="text-xs font-medium text-ink-muted">Maintenance estimate · last {recentDailyKcal.length} logged days</p>
+          <p className="mt-0.5 text-[22px] font-semibold text-ink">{Math.round(estimatedMaintenanceKcal!).toLocaleString()} kcal/day</p>
+          <p className={`mt-1 text-xs font-semibold ${dailyDeficitOrSurplus! < 0 ? 'text-cat-emerald-ink' : 'text-cat-rose-ink'}`}>
+            {Math.round(Math.abs(dailyDeficitOrSurplus!)).toLocaleString()} kcal/day{' '}
+            {dailyDeficitOrSurplus! < 0 ? 'deficit' : 'surplus'}
           </p>
         </div>
       )}
@@ -728,17 +818,17 @@ export function Journal() {
       {tab === 'weight' && weightSeries.length > 1 && (
         <button
           onClick={() => setWeightExpanded(true)}
-          className="block w-full rounded-3xl border border-gray-100 bg-white p-2 text-left shadow-sm"
+          className="block w-full rounded-3xl border border-line bg-surface p-2 text-left shadow-card"
         >
           <WeightChart data={weightSeries} goalWeight={goalWeight} height={192} />
         </button>
       )}
 
       {weightExpanded && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+        <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
           <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-gray-900">Weight</h2>
-            <button onClick={() => setWeightExpanded(false)} className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600">
+            <h2 className="text-lg font-bold text-ink">Weight</h2>
+            <button onClick={() => setWeightExpanded(false)} className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2">
               Close ✕
             </button>
           </div>
@@ -750,27 +840,27 @@ export function Journal() {
 
       {tab === 'sleep_hours' && weekSleepChange !== null && currentSleepWeek && (
         <div className="grid grid-cols-2 gap-2">
-          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs text-gray-400">This week</p>
-            <p className="text-lg font-bold text-gray-900">{formatSleepDuration(currentSleepWeek.avg)}</p>
+          <div className="rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
+            <p className="text-xs text-ink-disabled">This week</p>
+            <p className="text-lg font-bold text-ink">{formatSleepDuration(currentSleepWeek.avg)}</p>
             <p
               className={`text-sm font-semibold ${
-                weekSleepChange > 0 ? 'text-emerald-500' : weekSleepChange < 0 ? 'text-red-500' : 'text-gray-400'
+                weekSleepChange > 0 ? 'text-cat-emerald-ink' : weekSleepChange < 0 ? 'text-cat-rose-ink' : 'text-ink-disabled'
               }`}
             >
               {weekSleepChange > 0 ? '+' : ''}
               {formatSleepDuration(Math.abs(weekSleepChange))} {weekSleepChange >= 0 ? 'more' : 'less'} vs last week
             </p>
           </div>
-          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs text-gray-400">Trend</p>
+          <div className="rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
+            <p className="text-xs text-ink-disabled">Trend</p>
             <p
               className={`text-lg font-bold ${
                 sleepTrendPerWeek == null || sleepTrendPerWeek === 0
-                  ? 'text-gray-900'
+                  ? 'text-ink'
                   : sleepTrendPerWeek > 0
-                    ? 'text-emerald-500'
-                    : 'text-red-500'
+                    ? 'text-cat-emerald-ink'
+                    : 'text-cat-rose-ink'
               }`}
             >
               {sleepTrendPerWeek == null ? (
@@ -786,25 +876,22 @@ export function Journal() {
       )}
 
       {tab === 'sleep_hours' && sleepSeries.length > 0 && (
-        <div className="h-48 rounded-3xl border border-gray-100 bg-white p-2 shadow-sm">
+        <div className="h-48 rounded-3xl border border-line bg-surface p-2 shadow-card">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={sleepSeries} margin={{ top: 16, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
-              <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
-              <YAxis stroke="#9ca3af" fontSize={11} domain={[0, sleepYMax]} tickCount={sleepYMax + 1} allowDecimals={false} />
-              <Tooltip
-                contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }}
-                formatter={(value) => [formatSleepDuration(Number(value)), 'Slept']}
-              />
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
+              <XAxis dataKey="date" {...AXIS} />
+              <YAxis {...AXIS} domain={[0, sleepYMax]} tickCount={sleepYMax + 1} allowDecimals={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(value) => [formatSleepDuration(Number(value)), 'Slept']} />
               <ReferenceLine
                 y={RECOMMENDED_SLEEP_HOURS}
-                stroke="#059669"
+                stroke={THEME.pine}
                 strokeWidth={2}
-                strokeDasharray="6 4"
+                strokeDasharray="6 5"
                 ifOverflow="extendDomain"
-                label={{ value: `${RECOMMENDED_SLEEP_HOURS}h recommended`, fontSize: 12, fontWeight: 600, fill: '#059669', position: 'insideTopLeft' }}
+                label={{ value: `${RECOMMENDED_SLEEP_HOURS}h recommended`, fontSize: 10, fontWeight: 600, fill: '#1f6b5c', position: 'insideTopLeft' }}
               />
-              <Bar dataKey="value" fill="#6366f1" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="value" fill={METRIC_HUE.sleep_hours.accent} radius={[4, 4, 0, 0]} isAnimationActive={false} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -812,23 +899,27 @@ export function Journal() {
 
       {tab === 'sleep_hours' && weeklySleep.length > 0 && (
         <div>
-          <h2 className="mb-2 text-sm font-semibold text-gray-500">Weekly average</h2>
+          <h2 className="mb-2 text-sm font-semibold text-ink-3">Weekly average</h2>
           <ul className="flex flex-col gap-2">
             {weeklySleep.map((week) => {
               const metGoal = week.avg >= RECOMMENDED_SLEEP_HOURS
               return (
-                <li key={week.weekStart} className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                <li
+                  key={week.weekStart}
+                  className="rounded-[20px] border border-line border-l-[5px] bg-surface px-4 py-3 shadow-card"
+                  style={{ borderLeftColor: METRIC_HUE[tab].accent }}
+                >
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-500">Week of {week.weekStart}</span>
+                    <span className="text-sm text-ink-3">Week of {week.weekStart}</span>
                     <span
                       className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                        metGoal ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
+                        metGoal ? 'bg-cat-emerald-tint text-cat-emerald-ink' : 'bg-cat-amber-tint text-cat-amber-ink'
                       }`}
                     >
                       {formatSleepDuration(week.avg)} avg
                     </span>
                   </div>
-                  <p className="mt-1 text-sm text-gray-400">
+                  <p className="mt-1 text-sm text-ink-disabled">
                     {formatSleepDuration(week.min)} – {formatSleepDuration(week.max)} · {week.nights} night{week.nights === 1 ? '' : 's'}{' '}
                     logged
                   </p>
@@ -841,25 +932,29 @@ export function Journal() {
 
       {tab === 'weight' && weeklyWeight.length > 0 && (
         <div>
-          <h2 className="mb-2 text-sm font-semibold text-gray-500">Weekly average</h2>
+          <h2 className="mb-2 text-sm font-semibold text-ink-3">Weekly average</h2>
           <ul className="flex flex-col gap-2">
             {weeklyWeight.map((week, i) => {
               const prev = weeklyWeight[i + 1]
               const change = prev ? week.avg - prev.avg : null
               return (
-                <li key={week.weekStart} className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                <li
+                  key={week.weekStart}
+                  className="rounded-[20px] border border-line border-l-[5px] bg-surface px-4 py-3 shadow-card"
+                  style={{ borderLeftColor: METRIC_HUE[tab].accent }}
+                >
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-500">Week of {week.weekStart}</span>
+                    <span className="text-sm text-ink-3">Week of {week.weekStart}</span>
                     <span className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-gray-900">{week.avg.toFixed(1)} kg avg</span>
+                      <span className="text-sm font-semibold text-ink">{week.avg.toFixed(1)} kg avg</span>
                       {change !== null && (
                         <span
                           className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                             change > 0
-                              ? 'bg-red-100 text-red-600'
+                              ? 'bg-cat-rose-tint text-cat-rose-ink'
                               : change < 0
-                                ? 'bg-emerald-100 text-emerald-600'
-                                : 'bg-gray-100 text-gray-500'
+                                ? 'bg-cat-emerald-tint text-cat-emerald-ink'
+                                : 'bg-track text-ink-3'
                           }`}
                         >
                           {change > 0 ? '+' : ''}
@@ -868,7 +963,7 @@ export function Journal() {
                       )}
                     </span>
                   </div>
-                  <p className="mt-1 text-sm text-gray-400">
+                  <p className="mt-1 text-sm text-ink-disabled">
                     {week.min.toFixed(1)} – {week.max.toFixed(1)} kg · {week.entries} log{week.entries === 1 ? '' : 's'}
                   </p>
                 </li>
@@ -880,27 +975,27 @@ export function Journal() {
 
       {tab === 'steps' && weekStepsChange !== null && currentStepsWeek && (
         <div className="grid grid-cols-2 gap-2">
-          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs text-gray-400">This week</p>
-            <p className="text-lg font-bold text-gray-900">{Math.round(currentStepsWeek.avg).toLocaleString()}</p>
+          <div className="rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
+            <p className="text-xs text-ink-disabled">This week</p>
+            <p className="text-lg font-bold text-ink">{Math.round(currentStepsWeek.avg).toLocaleString()}</p>
             <p
               className={`text-sm font-semibold ${
-                weekStepsChange > 0 ? 'text-emerald-500' : weekStepsChange < 0 ? 'text-red-500' : 'text-gray-400'
+                weekStepsChange > 0 ? 'text-cat-emerald-ink' : weekStepsChange < 0 ? 'text-cat-rose-ink' : 'text-ink-disabled'
               }`}
             >
               {weekStepsChange > 0 ? '+' : ''}
               {Math.round(weekStepsChange).toLocaleString()} vs last week
             </p>
           </div>
-          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs text-gray-400">Trend</p>
+          <div className="rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
+            <p className="text-xs text-ink-disabled">Trend</p>
             <p
               className={`text-lg font-bold ${
                 stepsTrendPerWeek == null || Math.round(stepsTrendPerWeek) === 0
-                  ? 'text-gray-900'
+                  ? 'text-ink'
                   : stepsTrendPerWeek > 0
-                    ? 'text-emerald-500'
-                    : 'text-red-500'
+                    ? 'text-cat-emerald-ink'
+                    : 'text-cat-rose-ink'
               }`}
             >
               {stepsTrendPerWeek == null ? (
@@ -919,17 +1014,17 @@ export function Journal() {
       {tab === 'steps' && stepsSeries.length > 1 && (
         <button
           onClick={() => setStepsExpanded(true)}
-          className="block w-full rounded-3xl border border-gray-100 bg-white p-2 text-left shadow-sm"
+          className="block w-full rounded-3xl border border-line bg-surface p-2 text-left shadow-card"
         >
           <StepsChart data={stepsSeries} stepGoal={stepGoal} height={192} />
         </button>
       )}
 
       {stepsExpanded && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+        <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
           <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-gray-900">Steps</h2>
-            <button onClick={() => setStepsExpanded(false)} className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600">
+            <h2 className="text-lg font-bold text-ink">Steps</h2>
+            <button onClick={() => setStepsExpanded(false)} className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2">
               Close ✕
             </button>
           </div>
@@ -941,24 +1036,28 @@ export function Journal() {
 
       {tab === 'steps' && weeklySteps.length > 0 && (
         <div>
-          <h2 className="mb-2 text-sm font-semibold text-gray-500">Weekly average</h2>
+          <h2 className="mb-2 text-sm font-semibold text-ink-3">Weekly average</h2>
           <ul className="flex flex-col gap-2">
             {weeklySteps.map((week, i) => {
               const prev = weeklySteps[i + 1]
               const change = prev ? week.avg - prev.avg : null
               const metGoal = stepGoal != null && week.avg >= stepGoal
               return (
-                <li key={week.weekStart} className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                <li
+                  key={week.weekStart}
+                  className="rounded-[20px] border border-line border-l-[5px] bg-surface px-4 py-3 shadow-card"
+                  style={{ borderLeftColor: METRIC_HUE[tab].accent }}
+                >
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-500">Week of {week.weekStart}</span>
+                    <span className="text-sm text-ink-3">Week of {week.weekStart}</span>
                     <span className="flex items-center gap-2">
                       <span
                         className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                           stepGoal != null
                             ? metGoal
-                              ? 'bg-emerald-100 text-emerald-600'
-                              : 'bg-amber-100 text-amber-600'
-                            : 'bg-gray-100 text-gray-600'
+                              ? 'bg-cat-emerald-tint text-cat-emerald-ink'
+                              : 'bg-cat-amber-tint text-cat-amber-ink'
+                            : 'bg-track text-ink-2'
                         }`}
                       >
                         {Math.round(week.avg).toLocaleString()} avg
@@ -966,7 +1065,7 @@ export function Journal() {
                       {change !== null && (
                         <span
                           className={`text-xs font-medium ${
-                            change > 0 ? 'text-emerald-500' : change < 0 ? 'text-red-500' : 'text-gray-400'
+                            change > 0 ? 'text-cat-emerald-ink' : change < 0 ? 'text-cat-rose-ink' : 'text-ink-disabled'
                           }`}
                         >
                           {change > 0 ? '+' : ''}
@@ -975,7 +1074,7 @@ export function Journal() {
                       )}
                     </span>
                   </div>
-                  <p className="mt-1 text-sm text-gray-400">
+                  <p className="mt-1 text-sm text-ink-disabled">
                     {week.min.toLocaleString()} – {week.max.toLocaleString()} · {week.days} day{week.days === 1 ? '' : 's'} logged
                   </p>
                 </li>
@@ -987,27 +1086,27 @@ export function Journal() {
 
       {tab === 'cardio' && weekCardioChange !== null && currentCardioWeek && (
         <div className="grid grid-cols-2 gap-2">
-          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs text-gray-400">This week</p>
-            <p className="text-lg font-bold text-gray-900">{currentCardioWeek.total.toFixed(1)} km</p>
+          <div className="rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
+            <p className="text-xs text-ink-disabled">This week</p>
+            <p className="text-lg font-bold text-ink">{currentCardioWeek.total.toFixed(1)} km</p>
             <p
               className={`text-sm font-semibold ${
-                weekCardioChange > 0 ? 'text-emerald-500' : weekCardioChange < 0 ? 'text-red-500' : 'text-gray-400'
+                weekCardioChange > 0 ? 'text-cat-emerald-ink' : weekCardioChange < 0 ? 'text-cat-rose-ink' : 'text-ink-disabled'
               }`}
             >
               {weekCardioChange > 0 ? '+' : ''}
               {weekCardioChange.toFixed(1)} km vs last week
             </p>
           </div>
-          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs text-gray-400">Trend</p>
+          <div className="rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
+            <p className="text-xs text-ink-disabled">Trend</p>
             <p
               className={`text-lg font-bold ${
                 cardioTrendPerWeek == null || Math.abs(cardioTrendPerWeek) < 0.05
-                  ? 'text-gray-900'
+                  ? 'text-ink'
                   : cardioTrendPerWeek > 0
-                    ? 'text-emerald-500'
-                    : 'text-red-500'
+                    ? 'text-cat-emerald-ink'
+                    : 'text-cat-rose-ink'
               }`}
             >
               {cardioTrendPerWeek == null ? (
@@ -1023,7 +1122,7 @@ export function Journal() {
       )}
 
       {tab === 'cardio' && weeklyCardioDistance.chartData.length > 1 && (
-        <div className="rounded-3xl border border-gray-100 bg-white p-2 shadow-sm">
+        <div className="rounded-3xl border border-line bg-surface p-2 shadow-card">
           <button onClick={() => setCardioExpanded(true)} className="block w-full text-left">
             <CardioChart data={weeklyCardioDistance.chartData} sportTypes={weeklyCardioDistance.sportTypes} height={192} />
           </button>
@@ -1031,7 +1130,7 @@ export function Journal() {
             {weeklyCardioDistance.sportTypes.map((sportType) => {
               const style = getSportStyle(sportType)
               return (
-                <span key={sportType} className="flex items-center gap-1 rounded-full bg-gray-50 px-2 py-1 text-xs text-gray-600">
+                <span key={sportType} className="flex items-center gap-1 rounded-full bg-track px-2 py-1 text-xs text-ink-2">
                   <span aria-hidden>{style.icon}</span>
                   {style.label}
                 </span>
@@ -1042,10 +1141,10 @@ export function Journal() {
       )}
 
       {cardioExpanded && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+        <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
           <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-gray-900">Cardio</h2>
-            <button onClick={() => setCardioExpanded(false)} className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600">
+            <h2 className="text-lg font-bold text-ink">Cardio</h2>
+            <button onClick={() => setCardioExpanded(false)} className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2">
               Close ✕
             </button>
           </div>
@@ -1055,7 +1154,7 @@ export function Journal() {
               {weeklyCardioDistance.sportTypes.map((sportType) => {
                 const style = getSportStyle(sportType)
                 return (
-                  <span key={sportType} className="flex items-center gap-1 rounded-full bg-gray-50 px-2 py-1 text-xs text-gray-600">
+                  <span key={sportType} className="flex items-center gap-1 rounded-full bg-track px-2 py-1 text-xs text-ink-2">
                     <span aria-hidden>{style.icon}</span>
                     {style.label}
                   </span>
@@ -1068,21 +1167,25 @@ export function Journal() {
 
       {tab === 'cardio' && cardioWeeksDesc.length > 0 && (
         <div>
-          <h2 className="mb-2 text-sm font-semibold text-gray-500">Weekly total</h2>
+          <h2 className="mb-2 text-sm font-semibold text-ink-3">Weekly total</h2>
           <ul className="flex flex-col gap-2">
             {cardioWeeksDesc.map((week, i) => {
               const prev = cardioWeeksDesc[i + 1]
               const change = prev ? week.total - prev.total : null
               return (
-                <li key={week.weekStart} className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                <li
+                  key={week.weekStart}
+                  className="rounded-[20px] border border-line border-l-[5px] bg-surface px-4 py-3 shadow-card"
+                  style={{ borderLeftColor: METRIC_HUE[tab].accent }}
+                >
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-500">Week of {week.weekStart}</span>
+                    <span className="text-sm text-ink-3">Week of {week.weekStart}</span>
                     <span className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-gray-900">{week.total.toFixed(1)} km</span>
+                      <span className="text-sm font-semibold text-ink">{week.total.toFixed(1)} km</span>
                       {change !== null && (
                         <span
                           className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                            change > 0 ? 'bg-emerald-100 text-emerald-600' : change < 0 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-500'
+                            change > 0 ? 'bg-cat-emerald-tint text-cat-emerald-ink' : change < 0 ? 'bg-cat-rose-tint text-cat-rose-ink' : 'bg-track text-ink-3'
                           }`}
                         >
                           {change > 0 ? '+' : ''}
@@ -1091,7 +1194,7 @@ export function Journal() {
                       )}
                     </span>
                   </div>
-                  <p className="mt-1 flex flex-wrap gap-x-3 text-sm text-gray-400">
+                  <p className="mt-1 flex flex-wrap gap-x-3 text-sm text-ink-disabled">
                     {Object.entries(week.bySport).map(([sportType, km]) => (
                       <span key={sportType}>
                         {getSportStyle(sportType).icon} {km.toFixed(1)} km
@@ -1108,36 +1211,36 @@ export function Journal() {
       {tab === 'strength' && (weekStrengthChange !== null || weeklyStrengthMinutes.length > 1 || strengthWeeksDesc.length > 0) && (
         <button
           onClick={() => setTrainingTimeOpen((o) => !o)}
-          className="flex items-center justify-between text-sm font-semibold text-gray-500"
+          className="flex items-center justify-between text-sm font-semibold text-ink-3"
         >
           <span>Training time</span>
-          <span className="text-gray-400">{trainingTimeOpen ? 'Hide ▲' : 'Show ▼'}</span>
+          <span className="text-ink-disabled">{trainingTimeOpen ? 'Hide ▲' : 'Show ▼'}</span>
         </button>
       )}
 
       {tab === 'strength' && trainingTimeOpen && weekStrengthChange !== null && currentStrengthWeek && (
         <div className="grid grid-cols-2 gap-2">
-          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs text-gray-400">This week</p>
-            <p className="text-lg font-bold text-gray-900">{formatWorkoutDuration(currentStrengthWeek.value * 60)}</p>
+          <div className="rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
+            <p className="text-xs text-ink-disabled">This week</p>
+            <p className="text-lg font-bold text-ink">{formatWorkoutDuration(currentStrengthWeek.value * 60)}</p>
             <p
               className={`text-sm font-semibold ${
-                weekStrengthChange > 0 ? 'text-emerald-500' : weekStrengthChange < 0 ? 'text-red-500' : 'text-gray-400'
+                weekStrengthChange > 0 ? 'text-cat-emerald-ink' : weekStrengthChange < 0 ? 'text-cat-rose-ink' : 'text-ink-disabled'
               }`}
             >
               {weekStrengthChange > 0 ? '+' : ''}
               {Math.round(weekStrengthChange)} min vs last week
             </p>
           </div>
-          <div className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs text-gray-400">Trend</p>
+          <div className="rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
+            <p className="text-xs text-ink-disabled">Trend</p>
             <p
               className={`text-lg font-bold ${
                 strengthTrendPerWeek == null || Math.round(strengthTrendPerWeek) === 0
-                  ? 'text-gray-900'
+                  ? 'text-ink'
                   : strengthTrendPerWeek > 0
-                    ? 'text-emerald-500'
-                    : 'text-red-500'
+                    ? 'text-cat-emerald-ink'
+                    : 'text-cat-rose-ink'
               }`}
             >
               {strengthTrendPerWeek == null ? (
@@ -1155,46 +1258,50 @@ export function Journal() {
       {tab === 'strength' && trainingTimeOpen && weeklyStrengthMinutes.length > 1 && (
         <button
           onClick={() => setStrengthExpanded(true)}
-          className="block w-full rounded-3xl border border-gray-100 bg-white p-2 text-left shadow-sm"
+          className="block w-full rounded-3xl border border-line bg-surface p-2 text-left shadow-card"
         >
-          <WorkoutsChart data={weeklyStrengthMinutes} color="#e11d48" height={192} unit="min" />
+          <WorkoutsChart data={weeklyStrengthMinutes} color={METRIC_HUE.strength.accent} height={192} unit="min" />
         </button>
       )}
 
       {strengthExpanded && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-white safe-top safe-bottom">
+        <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
           <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-gray-900">Strength</h2>
+            <h2 className="text-lg font-bold text-ink">Strength</h2>
             <button
               onClick={() => setStrengthExpanded(false)}
-              className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-600"
+              className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2"
             >
               Close ✕
             </button>
           </div>
           <div className="flex-1 px-2 pb-4">
-            <WorkoutsChart data={weeklyStrengthMinutes} color="#e11d48" height={window.innerHeight - 120} unit="min" />
+            <WorkoutsChart data={weeklyStrengthMinutes} color={METRIC_HUE.strength.accent} height={window.innerHeight - 120} unit="min" />
           </div>
         </div>
       )}
 
       {tab === 'strength' && trainingTimeOpen && strengthWeeksDesc.length > 0 && (
         <div>
-          <h2 className="mb-2 text-sm font-semibold text-gray-500">Weekly total</h2>
+          <h2 className="mb-2 text-sm font-semibold text-ink-3">Weekly total</h2>
           <ul className="flex flex-col gap-2">
             {strengthWeeksDesc.map((week, i) => {
               const prev = strengthWeeksDesc[i + 1]
               const change = prev ? week.value - prev.value : null
               return (
-                <li key={week.weekStart} className="rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                <li
+                  key={week.weekStart}
+                  className="rounded-[20px] border border-line border-l-[5px] bg-surface px-4 py-3 shadow-card"
+                  style={{ borderLeftColor: METRIC_HUE[tab].accent }}
+                >
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-500">Week of {week.weekStart}</span>
+                    <span className="text-sm text-ink-3">Week of {week.weekStart}</span>
                     <span className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-gray-900">{formatWorkoutDuration(week.value * 60)}</span>
+                      <span className="text-sm font-semibold text-ink">{formatWorkoutDuration(week.value * 60)}</span>
                       {change !== null && (
                         <span
                           className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                            change > 0 ? 'bg-emerald-100 text-emerald-600' : change < 0 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-500'
+                            change > 0 ? 'bg-cat-emerald-tint text-cat-emerald-ink' : change < 0 ? 'bg-cat-rose-tint text-cat-rose-ink' : 'bg-track text-ink-3'
                           }`}
                         >
                           {change > 0 ? '+' : ''}
@@ -1213,10 +1320,10 @@ export function Journal() {
       {loading ? null : (
         <button
           onClick={() => setShowHistory((v) => !v)}
-          className="flex items-center justify-between text-sm font-semibold text-gray-500"
+          className="flex items-center justify-between text-sm font-semibold text-ink-3"
         >
           <span>Recent {TAB_LABELS[tab]}</span>
-          <span className="text-gray-400">{showHistory ? 'Hide ▲' : 'Show ▼'}</span>
+          <span className="text-ink-disabled">{showHistory ? 'Hide ▲' : 'Show ▼'}</span>
         </button>
       )}
 
@@ -1224,29 +1331,29 @@ export function Journal() {
         <>
           {(() => {
             const list = tab === 'cardio' ? recentCardioWorkouts : recentStrengthWorkouts
-            const badgeStyle = tab === 'cardio' ? 'bg-orange-100 text-orange-600' : 'bg-rose-100 text-rose-600'
+            const badgeStyle = tab === 'cardio' ? 'bg-cat-pink-tint text-cat-pink-ink' : 'bg-cat-amber-tint text-cat-amber-ink'
             return (
               <>
-                {list.length === 0 && <p className="text-sm text-gray-400">Nothing synced yet.</p>}
+                {list.length === 0 && <p className="text-sm text-ink-disabled">Nothing synced yet.</p>}
                 <ul className="flex flex-col gap-2 pb-4">
                   {list.map((workout) => {
                     const distance = formatWorkoutDistance(workout.distance_meters)
                     return (
                       <li
                         key={workout.id}
-                        className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 text-sm shadow-sm"
+                        className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 text-sm shadow-card"
                       >
-                        <span className="text-gray-400">{workout.date}</span>
+                        <span className="text-ink-disabled">{workout.date}</span>
                         <span className="flex-1 px-3">
-                          <span className="font-medium text-gray-900">{workout.name}</span>
+                          <span className="font-medium text-ink">{workout.name}</span>
                           <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-medium ${badgeStyle}`}>{workout.sport_type}</span>
-                          <span className="block text-[11px] text-gray-400">
+                          <span className="block text-[11px] text-ink-disabled">
                             {formatWorkoutDuration(workout.duration_seconds)}
                             {distance && ` · ${distance}`}
                             {workout.calories != null && ` · ${workout.calories} cal`}
                           </span>
                         </span>
-                        <button onClick={() => setConfirmDeleteWorkout(workout)} className="text-gray-300">
+                        <button onClick={() => setConfirmDeleteWorkout(workout)} className="text-ink-faint">
                           ✕
                         </button>
                       </li>
@@ -1259,20 +1366,20 @@ export function Journal() {
         </>
       ) : (
         <>
-          {recent.length === 0 && <p className="text-sm text-gray-400">Nothing logged yet.</p>}
+          {recent.length === 0 && <p className="text-sm text-ink-disabled">Nothing logged yet.</p>}
           <ul className="flex flex-col gap-2 pb-4">
             {recent.map((entry) => (
               <li
                 key={entry.id}
-                className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 text-sm shadow-sm"
+                className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 text-sm shadow-card"
               >
-                <span className="text-gray-400">{entry.date}</span>
-                <span className="flex-1 px-3 font-medium text-gray-900">
+                <span className="text-ink-disabled">{entry.date}</span>
+                <span className="flex-1 px-3 font-medium text-ink">
                   {entry.type === 'weight' && `${entry.value_numeric} kg`}
                   {entry.type === 'sleep_hours' && entry.value_numeric != null && `${formatSleepDuration(entry.value_numeric)} slept`}
                   {entry.type === 'steps' && entry.value_numeric != null && `${entry.value_numeric.toLocaleString()} steps`}
                 </span>
-                <button onClick={() => setConfirmDeleteEntry(entry)} className="text-gray-300">
+                <button onClick={() => setConfirmDeleteEntry(entry)} className="text-ink-faint">
                   ✕
                 </button>
               </li>
@@ -1303,6 +1410,6 @@ export function Journal() {
         }}
         onCancel={() => setConfirmDeleteWorkout(null)}
       />
-    </div>
+    </Screen>
   )
 }

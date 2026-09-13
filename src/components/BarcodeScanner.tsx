@@ -82,8 +82,8 @@ export function BarcodeScanner({ onDetected, onClose }: { onDetected: (code: str
         </button>
       </div>
       <div className="relative flex flex-1 items-center justify-center overflow-hidden p-4">
-        <video ref={videoRef} className="max-h-full max-w-full rounded-2xl" muted playsInline />
-        <div className="pointer-events-none absolute inset-x-8 top-1/2 h-24 -translate-y-1/2 rounded-2xl border-2 border-teal-400" />
+        <video ref={videoRef} className="max-h-full max-w-full rounded-[20px]" muted playsInline />
+        <div className="pointer-events-none absolute inset-x-8 top-1/2 h-24 -translate-y-1/2 rounded-[20px] border-2 border-pine" />
       </div>
       <p className="px-6 pb-6 text-center text-sm text-white/70">
         {error

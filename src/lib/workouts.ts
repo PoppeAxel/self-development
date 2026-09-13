@@ -29,22 +29,22 @@ export interface SportStyle {
 // (a new sport Strava starts sending) fall back to a generic style below rather than
 // erroring — extend this map when a new one shows up worth distinguishing.
 const SPORT_STYLES: Record<string, SportStyle> = {
-  Run: { label: 'Run', icon: '👟', color: '#f97316' },
-  TrailRun: { label: 'Trail run', icon: '👟', color: '#ea580c' },
-  Ride: { label: 'Ride', icon: '🚴', color: '#0ea5e9' },
-  VirtualRide: { label: 'Ride', icon: '🚴', color: '#0ea5e9' },
-  MountainBikeRide: { label: 'MTB ride', icon: '🚵', color: '#0284c7' },
-  GravelRide: { label: 'Gravel ride', icon: '🚴', color: '#0369a1' },
-  Swim: { label: 'Swim', icon: '🏊', color: '#06b6d4' },
-  Walk: { label: 'Walk', icon: '🚶', color: '#a3a3a3' },
-  Hike: { label: 'Hike', icon: '🥾', color: '#84cc16' },
-  Soccer: { label: 'Football', icon: '⚽', color: '#22c55e' },
-  AlpineSki: { label: 'Ski', icon: '⛷️', color: '#818cf8' },
-  Snowboard: { label: 'Snowboard', icon: '🏂', color: '#818cf8' },
-  Rowing: { label: 'Rowing', icon: '🚣', color: '#a855f7' },
+  Run: { label: 'Run', icon: '👟', color: '#a8563f' },
+  TrailRun: { label: 'Trail run', icon: '👟', color: '#8a4630' },
+  Ride: { label: 'Ride', icon: '🚴', color: '#46608f' },
+  VirtualRide: { label: 'Ride', icon: '🚴', color: '#46608f' },
+  MountainBikeRide: { label: 'MTB ride', icon: '🚵', color: '#35528f' },
+  GravelRide: { label: 'Gravel ride', icon: '🚴', color: '#2c4372' },
+  Swim: { label: 'Swim', icon: '🏊', color: '#3f7f8a' },
+  Walk: { label: 'Walk', icon: '🚶', color: '#8b8577' },
+  Hike: { label: 'Hike', icon: '🥾', color: '#6f8a3f' },
+  Soccer: { label: 'Football', icon: '⚽', color: '#2f6b5a' },
+  AlpineSki: { label: 'Ski', icon: '⛷️', color: '#6a4f7a' },
+  Snowboard: { label: 'Snowboard', icon: '🏂', color: '#5d4470' },
+  Rowing: { label: 'Rowing', icon: '🚣', color: '#7a5a8a' },
 }
 
-const DEFAULT_SPORT_STYLE: SportStyle = { label: '', icon: '🏅', color: '#94a3b8' }
+const DEFAULT_SPORT_STYLE: SportStyle = { label: '', icon: '🏅', color: '#a09a8c' }
 
 export function getSportStyle(sportType: string): SportStyle {
   return SPORT_STYLES[sportType] ?? { ...DEFAULT_SPORT_STYLE, label: sportType }

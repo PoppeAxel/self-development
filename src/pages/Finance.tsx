@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { todayISO } from '../lib/dates'
-import { RefreshButton } from '../components/RefreshButton'
+import { Screen } from '../components/Screen'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import {
   addPortfolio,
@@ -117,51 +117,47 @@ export function Finance() {
   }
 
   return (
-    <div className="flex flex-col gap-4 px-4 pt-6 pb-2">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Finance</h1>
-        <RefreshButton onRefresh={load} />
-      </div>
+    <Screen title="Finance" onRefresh={load}>
 
       {loading ? (
-        <p className="text-sm text-gray-400">Loading…</p>
+        <p className="text-sm text-ink-disabled">Loading…</p>
       ) : portfolios.length === 0 ? (
-        <div className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
-          <p className="text-sm text-gray-500">No portfolios yet — add your first one below.</p>
+        <div className="rounded-3xl border border-line bg-surface p-4 shadow-card">
+          <p className="text-sm text-ink-3">No portfolios yet — add your first one below.</p>
         </div>
       ) : (
         <>
           {/* Summary */}
-          <div className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
-            <p className="text-xs font-medium text-gray-400">Total value</p>
-            <p className="text-3xl font-bold text-gray-900">{formatKr(currentTotal)}</p>
+          <div className="rounded-3xl border border-line bg-surface p-4 shadow-card">
+            <p className="text-xs font-medium text-ink-disabled">Total value</p>
+            <p className="text-3xl font-bold text-ink">{formatKr(currentTotal)}</p>
             <div className="mt-3 grid grid-cols-2 gap-3">
               <div>
-                <p className="text-xs text-gray-400">This week</p>
-                <p className={`font-semibold ${change && change.change > 0 ? 'text-emerald-600' : change && change.change < 0 ? 'text-rose-600' : 'text-gray-500'}`}>
+                <p className="text-xs text-ink-disabled">This week</p>
+                <p className={`font-semibold ${change && change.change > 0 ? 'text-cat-emerald-ink' : change && change.change < 0 ? 'text-cat-rose-ink' : 'text-ink-3'}`}>
                   {change ? `${formatSigned(change.change)} (${formatPct(change.changePct)})` : '—'}
                 </p>
               </div>
               <div>
-                <p className="text-xs text-gray-400">Total growth</p>
-                <p className={`font-semibold ${growth > 0 ? 'text-emerald-600' : growth < 0 ? 'text-rose-600' : 'text-gray-500'}`}>
+                <p className="text-xs text-ink-disabled">Total growth</p>
+                <p className={`font-semibold ${growth > 0 ? 'text-cat-emerald-ink' : growth < 0 ? 'text-cat-rose-ink' : 'text-ink-3'}`}>
                   {formatSigned(growth)} ({formatPct(growthPct)})
                 </p>
               </div>
             </div>
-            <p className="mt-2 text-xs text-gray-400">Deposited: {formatKr(contributedTotal)}</p>
+            <p className="mt-2 text-xs text-ink-disabled">Deposited: {formatKr(contributedTotal)}</p>
           </div>
 
           {/* Per-portfolio cards */}
           <div className="grid grid-cols-1 gap-2">
             {latests.map(({ portfolio, latest, change, changePct }) => (
-              <div key={portfolio.id} className="flex items-center justify-between rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+              <div key={portfolio.id} className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
                 <div>
-                  <p className="font-medium text-gray-900">{portfolio.name}</p>
-                  <p className="text-xs text-gray-400">{latest ? formatKr(latest.total_value) : 'No data yet'}</p>
+                  <p className="font-medium text-ink">{portfolio.name}</p>
+                  <p className="text-xs text-ink-disabled">{latest ? formatKr(latest.total_value) : 'No data yet'}</p>
                 </div>
                 {change != null && (
-                  <span className={`text-sm font-semibold ${change > 0 ? 'text-emerald-600' : change < 0 ? 'text-rose-600' : 'text-gray-400'}`}>
+                  <span className={`text-sm font-semibold ${change > 0 ? 'text-cat-emerald-ink' : change < 0 ? 'text-cat-rose-ink' : 'text-ink-disabled'}`}>
                     {formatSigned(change)} ({formatPct(changePct)})
                   </span>
                 )}
@@ -171,19 +167,19 @@ export function Finance() {
 
           {/* Trend chart */}
           {chart.length >= 2 && (
-            <div className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
-              <p className="mb-2 text-sm font-semibold text-gray-900">Trend</p>
+            <div className="rounded-3xl border border-line bg-surface p-4 shadow-card">
+              <p className="mb-2 text-sm font-semibold text-ink">Trend</p>
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={chart} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f0f7" />
-                  <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
-                  <YAxis stroke="#9ca3af" fontSize={11} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eae3d5" />
+                  <XAxis dataKey="date" stroke="#8b8577" fontSize={10} />
+                  <YAxis stroke="#8b8577" fontSize={10} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
                   <Tooltip
-                    contentStyle={{ background: '#fff', border: '1px solid #f1f0f7', fontSize: 12, borderRadius: 12 }}
+                    contentStyle={{ background: '#fdfbf6', border: '1px solid #e9e2d4', fontSize: 12, borderRadius: 12, color: '#23241f' }}
                     formatter={(v) => formatKr(Number(v))}
                   />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Line type="monotone" dataKey="total" name="Total" stroke="#111827" strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive={false} />
+                  <Line type="monotone" dataKey="total" name="Total" stroke="#2f6b5a" strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive={false} />
                   {portfolios.map((p, i) => (
                     <Line
                       key={p.id}
@@ -201,25 +197,25 @@ export function Finance() {
           )}
 
           {/* Log this week */}
-          <form onSubmit={submitWeek} className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
-            <p className="mb-2 text-sm font-semibold text-gray-900">Log a week</p>
+          <form onSubmit={submitWeek} className="rounded-3xl border border-line bg-surface p-4 shadow-card">
+            <p className="mb-2 text-sm font-semibold text-ink">Log a week</p>
             <input
               type="date"
               value={logDate}
               onChange={(e) => setLogDate(e.target.value)}
-              className="mb-3 w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 outline-none focus:border-sky-400"
+              className="mb-3 w-full rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink outline-none focus:border-pine"
             />
             <div className="flex flex-col gap-3">
               {portfolios.map((p) => (
                 <div key={p.id} className="flex items-center gap-2">
-                  <span className="w-24 shrink-0 truncate text-sm text-gray-600">{p.name}</span>
+                  <span className="w-24 shrink-0 truncate text-sm text-ink-2">{p.name}</span>
                   <input
                     type="number"
                     step="any"
                     placeholder="Value"
                     value={values[p.id] ?? ''}
                     onChange={(e) => setValues((v) => ({ ...v, [p.id]: e.target.value }))}
-                    className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-sky-400"
+                    className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-3 py-2 text-sm text-ink placeholder-ink-disabled outline-none focus:border-pine"
                   />
                   <input
                     type="number"
@@ -227,32 +223,32 @@ export function Finance() {
                     placeholder="±Deposit"
                     value={contributions[p.id] ?? ''}
                     onChange={(e) => setContributions((c) => ({ ...c, [p.id]: e.target.value }))}
-                    className="w-24 shrink-0 rounded-2xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-sky-400"
+                    className="w-24 shrink-0 rounded-[20px] border border-line-strong bg-surface px-3 py-2 text-sm text-ink placeholder-ink-disabled outline-none focus:border-pine"
                   />
                 </div>
               ))}
             </div>
-            <button type="submit" className="mt-3 w-full rounded-2xl bg-sky-600 px-4 py-2.5 font-semibold text-white">
+            <button type="submit" className="mt-3 w-full rounded-[20px] bg-cat-sky px-4 py-2.5 font-semibold text-white">
               Save
             </button>
           </form>
 
           {/* History */}
           {history.length > 0 && (
-            <div className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
-              <p className="mb-2 text-sm font-semibold text-gray-900">History</p>
-              <ul className="flex flex-col divide-y divide-gray-50">
+            <div className="rounded-3xl border border-line bg-surface p-4 shadow-card">
+              <p className="mb-2 text-sm font-semibold text-ink">History</p>
+              <ul className="flex flex-col divide-y divide-line">
                 {history.map((row) => (
                   <li key={row.date} className="flex items-center justify-between py-2">
                     <div>
-                      <p className="text-sm font-medium text-gray-900">{row.date}</p>
+                      <p className="text-sm font-medium text-ink">{row.date}</p>
                       {row.contribution !== 0 && (
-                        <p className="text-xs text-gray-400">Deposit/withdrawal: {formatSigned(row.contribution)}</p>
+                        <p className="text-xs text-ink-disabled">Deposit/withdrawal: {formatSigned(row.contribution)}</p>
                       )}
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="text-sm font-semibold text-gray-900">{formatKr(row.total)}</span>
-                      <button onClick={() => setConfirmDeleteDate(row.date)} className="text-gray-300">
+                      <span className="text-sm font-semibold text-ink">{formatKr(row.total)}</span>
+                      <button onClick={() => setConfirmDeleteDate(row.date)} className="text-ink-faint">
                         ✕
                       </button>
                     </div>
@@ -265,13 +261,13 @@ export function Finance() {
       )}
 
       {/* Manage portfolios */}
-      <div className="rounded-3xl border border-gray-100 bg-white p-4 shadow-sm">
+      <div className="rounded-3xl border border-line bg-surface p-4 shadow-card">
         <button
           onClick={() => setManagingPortfolios((v) => !v)}
-          className="flex w-full items-center justify-between text-sm font-semibold text-gray-900"
+          className="flex w-full items-center justify-between text-sm font-semibold text-ink"
         >
           Portfolios
-          <span className="text-gray-400">{managingPortfolios ? '−' : '+'}</span>
+          <span className="text-ink-disabled">{managingPortfolios ? '−' : '+'}</span>
         </button>
         {managingPortfolios && (
           <div className="mt-3 flex flex-col gap-2">
@@ -280,9 +276,9 @@ export function Finance() {
                 <input
                   defaultValue={p.name}
                   onBlur={(e) => e.target.value.trim() && e.target.value !== p.name && renamePortfolio(p.id, e.target.value).then(load)}
-                  className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-sky-400"
+                  className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-pine"
                 />
-                <button onClick={() => setConfirmDeletePortfolio(p)} className="text-gray-300">
+                <button onClick={() => setConfirmDeletePortfolio(p)} className="text-ink-faint">
                   ✕
                 </button>
               </div>
@@ -292,9 +288,9 @@ export function Finance() {
                 value={newPortfolioName}
                 onChange={(e) => setNewPortfolioName(e.target.value)}
                 placeholder="New portfolio name"
-                className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-sky-400"
+                className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-3 py-2 text-sm text-ink placeholder-ink-disabled outline-none focus:border-pine"
               />
-              <button type="submit" className="rounded-2xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white">
+              <button type="submit" className="rounded-[20px] bg-cat-sky px-4 py-2 text-sm font-semibold text-white">
                 Add
               </button>
             </form>
@@ -324,6 +320,6 @@ export function Finance() {
           await load()
         }}
       />
-    </div>
+    </Screen>
   )
 }

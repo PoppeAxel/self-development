@@ -1,14 +1,91 @@
 import { supabase } from './supabase'
 import type { CategoryColor } from './types'
 
-// Full literal class names so Tailwind's scanner picks them up (dynamic `bg-${color}-100` won't).
-export const CATEGORY_STYLES: Record<CategoryColor, { bg: string; text: string; dot: string }> = {
-  pink: { bg: 'bg-pink-100', text: 'text-pink-600', dot: 'bg-pink-500' },
-  amber: { bg: 'bg-amber-100', text: 'text-amber-600', dot: 'bg-amber-500' },
-  violet: { bg: 'bg-violet-100', text: 'text-violet-600', dot: 'bg-violet-500' },
-  emerald: { bg: 'bg-emerald-100', text: 'text-emerald-600', dot: 'bg-emerald-500' },
-  sky: { bg: 'bg-sky-100', text: 'text-sky-600', dot: 'bg-sky-500' },
-  rose: { bg: 'bg-rose-100', text: 'text-rose-600', dot: 'bg-rose-500' },
+// One muted hue per category (calm warm-neutral restyle). Each owns a tile tint, a chip
+// ink, and an accent used for the 5px card edge, progress bars and ring arcs.
+//
+// `bg`/`text`/`dot` stay full literal class names so Tailwind's scanner picks them up
+// (dynamic `bg-cat-${color}` won't); `accent`/`tint`/`ink` are the same values as hexes,
+// for SVG strokes, conic gradients and recharts props that need a value, not a class.
+// `check` is the filled done-state circle — amber steps one shade darker there so a white
+// ✓ stays legible on it.
+interface CategoryStyle {
+  bg: string
+  text: string
+  dot: string
+  accent: string
+  tint: string
+  ink: string
+  check: string
+}
+
+export const CATEGORY_STYLES: Record<CategoryColor, CategoryStyle> = {
+  pink: {
+    bg: 'bg-cat-pink-tint',
+    text: 'text-cat-pink-ink',
+    dot: 'bg-cat-pink',
+    accent: '#a8563f',
+    tint: '#f6ebe4',
+    ink: '#8a4630',
+    check: '#a8563f',
+  },
+  amber: {
+    bg: 'bg-cat-amber-tint',
+    text: 'text-cat-amber-ink',
+    dot: 'bg-cat-amber',
+    accent: '#a8842f',
+    tint: '#f7efdf',
+    ink: '#8a6321',
+    check: '#8a6321',
+  },
+  violet: {
+    bg: 'bg-cat-violet-tint',
+    text: 'text-cat-violet-ink',
+    dot: 'bg-cat-violet',
+    accent: '#6a4f7a',
+    tint: '#f1ecf2',
+    ink: '#5d4470',
+    check: '#6a4f7a',
+  },
+  emerald: {
+    bg: 'bg-cat-emerald-tint',
+    text: 'text-cat-emerald-ink',
+    dot: 'bg-cat-emerald',
+    accent: '#2f6b5a',
+    tint: '#e8efe8',
+    ink: '#1f6b5c',
+    check: '#2f6b5a',
+  },
+  sky: {
+    bg: 'bg-cat-sky-tint',
+    text: 'text-cat-sky-ink',
+    dot: 'bg-cat-sky',
+    accent: '#46608f',
+    tint: '#e8edf4',
+    ink: '#35528f',
+    check: '#46608f',
+  },
+  rose: {
+    bg: 'bg-cat-rose-tint',
+    text: 'text-cat-rose-ink',
+    dot: 'bg-cat-rose',
+    accent: '#a33327',
+    tint: '#f8eae4',
+    ink: '#a33327',
+    check: '#a33327',
+  },
+}
+
+// The stored `color` values are the original Tailwind hue names, which no longer describe
+// what they actually look like after the calm restyle (pink is terracotta now, violet is
+// plum). The picker shows these instead; the stored value is untouched.
+export const CATEGORY_COLOR_LABELS: Record<CategoryColor, string> = {
+  pink: 'Terracotta',
+  emerald: 'Pine',
+  sky: 'Slate blue',
+  violet: 'Plum',
+  amber: 'Ochre',
+  rose: 'Clay red',
 }
 
 const DEFAULT_CATEGORIES: { name: string; color: CategoryColor }[] = [

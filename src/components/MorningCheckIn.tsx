@@ -86,13 +86,13 @@ export function MorningCheckIn({ onSaved }: { onSaved: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6" onClick={dismiss}>
-      <div className="w-full max-w-xs rounded-3xl bg-white p-5 shadow-lg" onClick={(e) => e.stopPropagation()}>
-        <p className="text-lg font-bold text-gray-900">Good morning ☀️</p>
-        <p className="mt-1 text-sm text-gray-500">Quick check-in before the day gets going.</p>
+      <div className="w-full max-w-xs rounded-3xl border border-line bg-surface p-5 shadow-card" onClick={(e) => e.stopPropagation()}>
+        <p className="text-lg font-bold text-ink">Good morning ☀️</p>
+        <p className="mt-1 text-sm text-ink-3">Quick check-in before the day gets going.</p>
         <div className="mt-4 flex flex-col gap-3">
           {needsWeight && (
             <div>
-              <label className="mb-1 block text-xs font-medium text-gray-500">Weight (kg)</label>
+              <label className="mb-1 block text-xs font-medium text-ink-3">Weight (kg)</label>
               <input
                 autoFocus
                 value={weightInput}
@@ -100,37 +100,37 @@ export function MorningCheckIn({ onSaved }: { onSaved: () => void }) {
                 type="number"
                 step="0.1"
                 placeholder="e.g. 82.4"
-                className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+                className="w-full rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
               />
             </div>
           )}
           {needsSleep && (
             <div>
-              <label className="mb-1 block text-xs font-medium text-gray-500">Sleep last night</label>
+              <label className="mb-1 block text-xs font-medium text-ink-3">Sleep last night</label>
               <div className="flex gap-2">
                 <input
                   value={sleepHoursPart}
                   onChange={(e) => setSleepHoursPart(e.target.value)}
                   type="number"
                   placeholder="Hours"
-                  className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+                  className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
                 />
                 <input
                   value={sleepMinutesPart}
                   onChange={(e) => setSleepMinutesPart(e.target.value)}
                   type="number"
                   placeholder="Minutes"
-                  className="min-w-0 flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-gray-900 placeholder-gray-400 outline-none focus:border-violet-400"
+                  className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
                 />
               </div>
             </div>
           )}
         </div>
         <div className="mt-4 flex gap-2">
-          <button onClick={dismiss} className="flex-1 rounded-2xl bg-gray-100 px-4 py-2.5 font-medium text-gray-600">
+          <button onClick={dismiss} className="flex-1 rounded-[20px] bg-track px-4 py-2.5 font-medium text-ink-2">
             Skip today
           </button>
-          <button onClick={save} className="flex-1 rounded-2xl bg-violet-600 px-4 py-2.5 font-semibold text-white">
+          <button onClick={save} className="flex-1 rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white">
             Save
           </button>
         </div>

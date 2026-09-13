@@ -1,5 +1,60 @@
 @import "tailwindcss";
 
+/* Calm warm-neutral theme (design_handoff_calm_redesign). Every token below is a Tailwind
+   v4 `@theme` entry, so the design values are reachable as ordinary utility classes
+   (`bg-surface`, `text-ink`, `border-line`, `shadow-card`, `bg-cat-pink-tint`, …) and the
+   class scanner keeps seeing literal names. Raw hexes are re-exported from
+   `src/lib/theme.ts` for the few places that need a value rather than a class (SVG
+   strokes, recharts props, conic gradients). */
+@theme {
+  --font-sans: "Poppins", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Surfaces & ink — warm neutral, no pure white anywhere */
+  --color-page: #f3efe6;
+  --color-surface: #fdfbf6;
+  --color-surface-pressed: #f8f4ec;
+  --color-line: #e9e2d4;
+  --color-line-strong: #ded5c3;
+  --color-track: #efe9dc;
+  --color-ring-track: #ece5d7;
+  --color-ink: #23241f;
+  --color-ink-2: #58534a;
+  --color-ink-3: #6e685c;
+  --color-ink-muted: #8b8577;
+  --color-ink-disabled: #a09a8c;
+  --color-ink-faint: #c8c1b1;
+
+  /* Brand (pine, replaces violet) */
+  --color-pine: #2f6b5a;
+  --color-pine-dark: #26584a;
+  --color-pine-deep: #27514a;
+  --color-pine-disc: #26584f;
+  --color-pine-arc: #a8cfc0;
+
+  /* Category hues, keyed by `categories.color` — see src/lib/categories.ts */
+  --color-cat-pink: #a8563f;
+  --color-cat-pink-tint: #f6ebe4;
+  --color-cat-pink-ink: #8a4630;
+  --color-cat-emerald: #2f6b5a;
+  --color-cat-emerald-tint: #e8efe8;
+  --color-cat-emerald-ink: #1f6b5c;
+  --color-cat-sky: #46608f;
+  --color-cat-sky-tint: #e8edf4;
+  --color-cat-sky-ink: #35528f;
+  --color-cat-violet: #6a4f7a;
+  --color-cat-violet-tint: #f1ecf2;
+  --color-cat-violet-ink: #5d4470;
+  --color-cat-amber: #a8842f;
+  --color-cat-amber-tint: #f7efdf;
+  --color-cat-amber-ink: #8a6321;
+  --color-cat-rose: #a33327;
+  --color-cat-rose-tint: #f8eae4;
+  --color-cat-rose-ink: #a33327;
+
+  --shadow-card: 0 4px 14px rgba(63, 58, 48, 0.07);
+  --shadow-tabbar: 0 8px 20px rgba(39, 81, 74, 0.22);
+}
+
 :root {
   color-scheme: light;
 }
@@ -12,9 +67,9 @@ body,
 }
 
 body {
-  background: #f7f7fb;
-  color: #14142b;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--color-page);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   overscroll-behavior-y: none;
 }
@@ -25,4 +80,18 @@ body {
 
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Per-screen pine hero block. The design calls for 56px of top padding; on a device the
+   block runs edge-to-edge under a translucent status bar, so the inset wins there. */
+.hero {
+  background: linear-gradient(168deg, #27514a 0%, #2f6b5a 60%, #3b806b 100%);
+  border-radius: 0 0 32px 32px;
+  padding: max(56px, calc(env(safe-area-inset-top) + 10px)) 20px 22px;
+  color: #fff;
+}
+
+/* Floating tab bar gutter — 10px above the home indicator, not on top of it. */
+.tabbar-pad {
+  padding: 0 20px calc(10px + env(safe-area-inset-bottom));
 }
