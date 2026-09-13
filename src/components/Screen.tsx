@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { useNav } from '../contexts/NavContext'
 import { TopIcons } from './TopIcons'
 
@@ -45,14 +46,24 @@ export function HeroSegments<T extends string>({
   value: T
   onChange: (id: T) => void
 }) {
+  const activeRef = useRef<HTMLButtonElement>(null)
+
+  // Once the labels stop fitting the track scrolls (see below), so the selected pill has
+  // to bring itself into view — otherwise picking one off-screen leaves you looking at
+  // someone else's pill.
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [value])
+
   return (
     // `min-w-fit` on top of `flex-1 basis-0`: pills share the track evenly when there's
-    // room, but never shrink below their own label. Six of them ("Week … Strength") would
-    // otherwise each get ~49px and truncate at iPhone width.
-    <div className="mt-[18px] flex gap-1 overflow-hidden rounded-[18px] bg-white/14 p-[5px]">
+    // room, but never shrink below their own label — six would otherwise each get ~49px
+    // and truncate "Strength". Past that the row scrolls sideways rather than squeezing.
+    <div className="no-scrollbar mt-[18px] flex gap-1 overflow-x-auto rounded-[18px] bg-white/14 p-[5px]">
       {options.map((option) => (
         <button
           key={option.id}
+          ref={value === option.id ? activeRef : undefined}
           onClick={() => onChange(option.id)}
           className={`min-w-fit flex-1 basis-0 whitespace-nowrap rounded-[14px] px-1.5 py-2 text-xs transition ${
             value === option.id ? 'bg-surface font-semibold text-pine-dark' : 'font-medium text-white'

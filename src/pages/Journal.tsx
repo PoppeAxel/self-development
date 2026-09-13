@@ -1,5 +1,18 @@
 import { useEffect, useState } from 'react'
-import { AreaChart, Area, BarChart, Bar, ReferenceLine, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+import {
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  ComposedChart,
+  Line,
+  ReferenceLine,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+} from 'recharts'
 import { parseISO } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { periodEndISO, todayISO, weekStartISO } from '../lib/dates'
@@ -16,6 +29,15 @@ import {
   type WeekBucket,
 } from '../lib/weekly'
 import { consistencyByCategory, reviewFigure, weekSentence, type ReviewFigure, type ReviewMetric } from '../lib/review'
+import {
+  agreement,
+  alignWeeks,
+  thresholdFinding,
+  INSIGHT_METRICS,
+  INSIGHT_SPEC,
+  SUGGESTED_PAIRINGS,
+  type InsightMetric,
+} from '../lib/insights'
 import { isGoalMetric, resolveGoalProgress } from '../lib/goals'
 import { ProgressRing } from '../components/ProgressRing'
 import { CATEGORY_STYLES } from '../lib/categories'
@@ -53,9 +75,11 @@ type JournalTab =
   | 'cardio'
   | 'strength'
   | 'review'
-const TABS: JournalTab[] = ['review', 'weight', 'sleep_hours', 'steps', 'cardio', 'strength']
+  | 'insights'
+const TABS: JournalTab[] = ['review', 'insights', 'weight', 'sleep_hours', 'steps', 'cardio', 'strength']
 const TAB_LABELS: Record<JournalTab, string> = {
   review: 'Week',
+  insights: 'Insights',
   weight: 'Weight',
   sleep_hours: 'Sleep',
   steps: 'Steps',
@@ -73,6 +97,7 @@ const ENTRY_TYPE_LABELS: Partial<Record<JournalEntryType, string>> = {
 // matching the design; the rest take the category hue that fits what they measure.
 const METRIC_HUE: Record<JournalTab, (typeof CATEGORY_STYLES)[keyof typeof CATEGORY_STYLES]> = {
   review: CATEGORY_STYLES.emerald,
+  insights: CATEGORY_STYLES.sky,
   weight: CATEGORY_STYLES.violet,
   sleep_hours: CATEGORY_STYLES.sky,
   steps: CATEGORY_STYLES.emerald,
@@ -332,6 +357,10 @@ export function Journal() {
   const [reviewGoalProgress, setReviewGoalProgress] = useState<Map<string, { progress: number; isRollup: boolean }>>(new Map())
   const [reviewParent, setReviewParent] = useState<{ child: Goal; parent: Goal; childPct: number; parentPct: number } | null>(null)
   const [reviewConsistency, setReviewConsistency] = useState<{ category: Category; days: number }[]>([])
+
+  // Insights compares two metrics on one weekly axis; these are the two it's showing.
+  const [insightA, setInsightA] = useState<InsightMetric>('sleep')
+  const [insightB, setInsightB] = useState<InsightMetric>('steps')
 
   useEffect(() => {
     setShowHistory(false)
@@ -627,6 +656,20 @@ export function Journal() {
     reviewWeek,
   )
 
+  // --- Insights ---
+  const insightBuckets: Record<InsightMetric, WeekBucket[]> = {
+    weight: weeklyWeightAsc,
+    sleep: weeklySleepAsc,
+    steps: weeklyStepsAsc,
+    cardio: cardioWeeksAsc,
+    strength: weeklyStrengthMinutes,
+    intake: intakeWeeks,
+  }
+  const insightPairs = alignWeeks(insightBuckets[insightA], insightBuckets[insightB], insightA, insightB)
+  const insightChart = insightPairs.map((p) => ({ date: p.weekStart.slice(5), a: p.a, b: p.b }))
+  const insightAgreement = agreement(insightPairs)
+  const insightFinding = thresholdFinding(insightPairs, insightA, insightB)
+
   const reviewGoalsDone = reviewGoals.filter((g) => {
     const p = reviewGoalProgress.get(g.id)
     const isAuto = isGoalMetric(g.auto_metric) || p?.isRollup
@@ -739,6 +782,46 @@ export function Journal() {
           </p>
         </>
       )}
+      {tab === 'insights' && (
+        <>
+          <div className="mt-[18px] flex items-center gap-2">
+            <select
+              value={insightA}
+              onChange={(e) => setInsightA(e.target.value as InsightMetric)}
+              aria-label="First metric"
+              className="min-w-0 flex-1 rounded-2xl bg-surface px-3.5 py-2.5 text-[13px] font-semibold text-pine-dark outline-none"
+            >
+              {INSIGHT_METRICS.map((m) => (
+                <option key={m} value={m}>
+                  {INSIGHT_SPEC[m].label}
+                </option>
+              ))}
+            </select>
+            <span className="shrink-0 text-xs font-medium text-white">vs</span>
+            <select
+              value={insightB}
+              onChange={(e) => setInsightB(e.target.value as InsightMetric)}
+              aria-label="Second metric"
+              className="min-w-0 flex-1 rounded-2xl bg-surface px-3.5 py-2.5 text-[13px] font-semibold text-pine-dark outline-none"
+            >
+              {INSIGHT_METRICS.map((m) => (
+                <option key={m} value={m}>
+                  {INSIGHT_SPEC[m].label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="mt-4 text-[15px] font-medium leading-relaxed text-white">
+            {insightA === insightB ? (
+              'Pick two different metrics to compare.'
+            ) : insightFinding ? (
+              <SentenceText text={insightFinding} />
+            ) : (
+              'Not enough weeks logged for both of these yet.'
+            )}
+          </p>
+        </>
+      )}
       {heroStat && (
         <div className="mt-5 flex items-end justify-between gap-3">
           <p className="text-[40px] font-semibold leading-none">
@@ -836,6 +919,106 @@ export function Journal() {
               })}
             </div>
           )}
+        </>
+      )}
+
+      {tab === 'insights' && (
+        <>
+          {insightA === insightB || insightChart.length < 3 ? (
+            <p className="text-sm text-ink-disabled">
+              {insightA === insightB
+                ? 'Choose a different second metric.'
+                : 'Needs at least three weeks where both metrics were logged.'}
+            </p>
+          ) : (
+            <>
+              <div className="rounded-3xl border border-line bg-surface p-4 shadow-card">
+                <div className="mb-2 flex gap-3.5">
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-ink-2">
+                    <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: CATEGORY_STYLES.sky.accent }} />
+                    {INSIGHT_SPEC[insightA].label} ({INSIGHT_SPEC[insightA].unit})
+                  </span>
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-ink-2">
+                    <span className="h-[3px] w-4 rounded-sm" style={{ background: THEME.pine }} />
+                    {INSIGHT_SPEC[insightB].label} ({INSIGHT_SPEC[insightB].unit})
+                  </span>
+                </div>
+                <ResponsiveContainer width="100%" height={180}>
+                  <ComposedChart data={insightChart} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
+                    <XAxis dataKey="date" {...AXIS} />
+                    <YAxis yAxisId="a" {...AXIS} width={34} />
+                    <YAxis yAxisId="b" orientation="right" {...AXIS} width={38} />
+                    <Tooltip
+                      contentStyle={TOOLTIP_STYLE}
+                      formatter={(value, name) =>
+                        name === 'a'
+                          ? [INSIGHT_SPEC[insightA].format(Number(value)), INSIGHT_SPEC[insightA].label]
+                          : [INSIGHT_SPEC[insightB].format(Number(value)), INSIGHT_SPEC[insightB].label]
+                      }
+                    />
+                    <Bar
+                      yAxisId="a"
+                      dataKey="a"
+                      fill={CATEGORY_STYLES.sky.accent}
+                      fillOpacity={0.85}
+                      radius={[4, 4, 0, 0]}
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      yAxisId="b"
+                      type="monotone"
+                      dataKey="b"
+                      stroke={THEME.pine}
+                      strokeWidth={2.5}
+                      dot={{ r: 3.5, fill: THEME.surface, stroke: THEME.pine, strokeWidth: 2 }}
+                      isAnimationActive={false}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+
+              {insightAgreement && (
+                <div className="rounded-[22px] border border-line bg-surface px-4 py-3.5 shadow-card">
+                  <p className="text-xs font-medium text-ink-muted">Relationship</p>
+                  <p className="mt-0.5 text-xl font-semibold text-ink">{insightAgreement.label}</p>
+                  {/* Weeks and moves are different counts — six weeks give five moves,
+                      and a flat week is skipped — so the line names both rather than
+                      implying one number covers it. */}
+                  <p className="mt-1 text-xs text-ink-3">
+                    {insightChart.length} weeks · {insightAgreement.agree} of {insightAgreement.compared} weekly moves agree
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+
+          <p className="mt-1 text-[13px] font-semibold text-ink-3">Other pairings</p>
+          <div className="flex flex-wrap gap-2">
+            {SUGGESTED_PAIRINGS.map(({ a, b }) => {
+              const style = METRIC_HUE[a === 'intake' ? 'strength' : a === 'sleep' ? 'sleep_hours' : a]
+              return (
+                <button
+                  key={`${a}-${b}`}
+                  onClick={() => {
+                    setInsightA(a)
+                    setInsightB(b)
+                  }}
+                  className="rounded-full px-3.5 py-2 text-xs font-semibold"
+                  style={{ background: style.tint, color: style.ink }}
+                >
+                  {INSIGHT_SPEC[a].label} vs {INSIGHT_SPEC[b].label}
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="flex items-start gap-2.5 rounded-[20px] bg-cat-amber-tint px-3.5 py-3">
+            <span className="text-[15px]">💡</span>
+            <p className="text-xs leading-relaxed text-ink-2">
+              Built from your own logs only — no workout-calorie guessing, same principle as the maintenance estimate.
+            </p>
+          </div>
         </>
       )}
 
@@ -1468,7 +1651,7 @@ export function Journal() {
         </div>
       )}
 
-      {loading || tab === 'review' ? null : (
+      {loading || tab === 'review' || tab === 'insights' ? null : (
         <button
           onClick={() => setShowHistory((v) => !v)}
           className="flex items-center justify-between text-sm font-semibold text-ink-3"
@@ -1478,7 +1661,7 @@ export function Journal() {
         </button>
       )}
 
-      {!loading && showHistory && tab !== 'review' && (tab === 'cardio' || tab === 'strength' ? (
+      {!loading && showHistory && tab !== 'review' && tab !== 'insights' && (tab === 'cardio' || tab === 'strength' ? (
         <>
           {(() => {
             const list = tab === 'cardio' ? recentCardioWorkouts : recentStrengthWorkouts

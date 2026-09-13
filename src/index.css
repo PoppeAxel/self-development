@@ -95,3 +95,12 @@ body {
 .tabbar-pad {
   padding: 0 20px calc(10px + env(safe-area-inset-bottom));
 }
+
+/* A sideways-scrolling row that shouldn't show a scrollbar over the hero gradient. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
