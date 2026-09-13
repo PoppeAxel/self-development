@@ -362,3 +362,86 @@ export function quickLogSuggestions(
 
   return suggestions
 }
+
+// --- Recipe & Library browsing ---
+// Both lists want the same two facts about every recipe/ingredient: how often it's been
+// logged, and when it was last used. Counted once from the already-loaded entries rather
+// than a query per row.
+
+export interface LogCounts {
+  byRecipe: Map<string, number>
+  byIngredient: Map<string, number>
+  /** Most recent date each was logged, for "recently used" sorting and the recents shelf. */
+  lastRecipe: Map<string, string>
+  lastIngredient: Map<string, string>
+}
+
+export function logCounts(entries: FoodLogEntry[]): LogCounts {
+  const counts: LogCounts = {
+    byRecipe: new Map(),
+    byIngredient: new Map(),
+    lastRecipe: new Map(),
+    lastIngredient: new Map(),
+  }
+  for (const entry of entries) {
+    if (entry.recipe_id) {
+      counts.byRecipe.set(entry.recipe_id, (counts.byRecipe.get(entry.recipe_id) ?? 0) + 1)
+      const seen = counts.lastRecipe.get(entry.recipe_id)
+      if (!seen || entry.date > seen) counts.lastRecipe.set(entry.recipe_id, entry.date)
+    } else if (entry.ingredient_id) {
+      counts.byIngredient.set(entry.ingredient_id, (counts.byIngredient.get(entry.ingredient_id) ?? 0) + 1)
+      const seen = counts.lastIngredient.get(entry.ingredient_id)
+      if (!seen || entry.date > seen) counts.lastIngredient.set(entry.ingredient_id, entry.date)
+    }
+  }
+  return counts
+}
+
+export const UNCATEGORIZED = 'Uncategorized'
+
+/**
+ * How each ingredient category presents itself: a glyph, the tile tint behind it, and the
+ * accent its rows carry. Keys match INGREDIENT_CATEGORIES; anything else (the category
+ * field is free text) falls back to the neutral entry.
+ */
+export const CATEGORY_LOOK: Record<string, { glyph: string; tint: string; accent: string }> = {
+  Protein: { glyph: '🥩', tint: '#f6ebe4', accent: '#a8563f' },
+  Vegetable: { glyph: '🥦', tint: '#e8efe8', accent: '#2f6b5a' },
+  Fruit: { glyph: '🍎', tint: '#f7efdf', accent: '#a8842f' },
+  Dairy: { glyph: '🥛', tint: '#e8edf4', accent: '#46608f' },
+  'Grains & Carbs': { glyph: '🍞', tint: '#f1ecf2', accent: '#6a4f7a' },
+  'Fats & Oils': { glyph: '🫗', tint: '#efe9dc', accent: '#8b8577' },
+  'Sauces & Condiments': { glyph: '🫙', tint: '#efe9dc', accent: '#8b8577' },
+  'Spices & Seasoning': { glyph: '🧂', tint: '#efe9dc', accent: '#8b8577' },
+  'Sweets & Snacks': { glyph: '🍫', tint: '#efe9dc', accent: '#8b8577' },
+  Beverages: { glyph: '🥤', tint: '#efe9dc', accent: '#8b8577' },
+  [UNCATEGORIZED]: { glyph: '🧂', tint: '#efe9dc', accent: '#8b8577' },
+}
+
+const CUSTOM_CATEGORY_LOOK = { glyph: '🏷', tint: '#efe9dc', accent: '#8b8577' }
+
+export function categoryLook(category: string) {
+  return CATEGORY_LOOK[category] ?? CUSTOM_CATEGORY_LOOK
+}
+
+/**
+ * Category keys in display order: the known list first, then custom ones A–Z, then
+ * Uncategorized last — never hidden, since `category` is free text and drifts.
+ */
+export function orderedCategoryKeys(present: Iterable<string>): string[] {
+  const keys = new Set(present)
+  const known = INGREDIENT_CATEGORIES as readonly string[]
+  const custom = [...keys].filter((k) => k !== UNCATEGORIZED && !known.includes(k)).sort((a, b) => a.localeCompare(b))
+  return [...known, ...custom, UNCATEGORIZED].filter((k) => keys.has(k))
+}
+
+export function groupByCategory(ingredients: Ingredient[]): Map<string, Ingredient[]> {
+  const groups = new Map<string, Ingredient[]>()
+  for (const ingredient of ingredients) {
+    const key = ingredient.category ?? UNCATEGORIZED
+    const arr = groups.get(key) ?? []
+    arr.push(ingredient)
+    groups.set(key, arr)
+  }
+  return groups
+}

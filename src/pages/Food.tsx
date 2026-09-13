@@ -3,7 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import { supabase } from '../lib/supabase'
 import { format, subDays } from 'date-fns'
 import { todayISO } from '../lib/dates'
-import { Screen, HeroSegments } from '../components/Screen'
+import { Screen, HeroSegments, HeroSearch, ChipRail } from '../components/Screen'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { BarcodeScanner } from '../components/BarcodeScanner'
 import {
@@ -19,6 +19,11 @@ import {
   defaultMealTypeForNow,
   matchesSearch,
   quickLogSuggestions,
+  logCounts,
+  categoryLook,
+  groupByCategory,
+  orderedCategoryKeys,
+  UNCATEGORIZED,
   type QuickLogSuggestion,
   MEAL_TYPES,
   MEAL_TYPE_INFO,
@@ -97,6 +102,50 @@ type FoodSubTab = 'log' | 'recipes' | 'library'
 const SUB_TABS: FoodSubTab[] = ['log', 'recipes', 'library']
 const SUB_TAB_LABELS: Record<FoodSubTab, string> = { log: 'Log', recipes: 'Recipes', library: 'Library' }
 
+type RecipeSort = 'logged' | 'recent' | 'az' | 'kcal'
+const RECIPE_SORT_LABELS: Record<RecipeSort, string> = {
+  logged: 'Most logged',
+  recent: 'Recently used',
+  az: 'A–Z',
+  kcal: 'kcal / serving',
+}
+
+type CategorySort = 'az' | 'used' | 'protein'
+const CATEGORY_SORT_LABELS: Record<CategorySort, string> = {
+  az: 'A–Z',
+  used: 'Most used',
+  protein: 'Highest protein',
+}
+// Mid-sentence forms for the header's "28 ingredients · sorted …" line. A–Z keeps its
+// capitals; lowercasing the label wholesale turned it into "a–z".
+const CATEGORY_SORT_SUBTITLE: Record<CategorySort, string> = {
+  az: 'A–Z',
+  used: 'most used',
+  protein: 'highest protein',
+}
+
+// Accent edge per meal, matching the design: breakfast ochre, lunch pine, dinner slate
+// blue, snack plum, untagged neutral.
+const RECIPE_MEAL_ACCENT: Record<MealType, string> = {
+  breakfast: '#a8842f',
+  lunch: '#2f6b5a',
+  dinner: '#46608f',
+  snack: '#6a4f7a',
+}
+
+// Protein / carbs / fat, in that order — the same three colours the Log tab's split bar
+// uses, so a recipe's balance and a day's balance read the same way.
+function MacroSplitBar({ macros, height }: { macros: Macros; height: number }) {
+  if (macros.protein + macros.carbs + macros.fat <= 0) return null
+  return (
+    <div className="flex gap-1" style={{ marginTop: 10 }}>
+      <span className="rounded-full" style={{ height, flex: macros.protein, background: '#a8cfc0' }} />
+      <span className="rounded-full" style={{ height, flex: macros.carbs, background: '#e0cf9a' }} />
+      <span className="rounded-full" style={{ height, flex: macros.fat, background: '#e6b39f' }} />
+    </div>
+  )
+}
+
 export function Food() {
   const [subTab, setSubTab] = useState<FoodSubTab>('log')
   const [recipeSearchQuery, setRecipeSearchQuery] = useState('')
@@ -152,6 +201,14 @@ export function Food() {
   // rather than the time-of-day guess.
   const [pendingMealType, setPendingMealType] = useState<MealType | null>(null)
 
+  // Recipes browsing: a meal filter ANDed with the text search, plus a sort.
+  const [mealTypeFilter, setMealTypeFilter] = useState<MealType | 'all'>('all')
+  const [recipeSort, setRecipeSort] = useState<RecipeSort>('logged')
+  // Library browsing: categories are collapsed until one is opened as a pushed view.
+  const [openCategory, setOpenCategory] = useState<string | null>(null)
+  const [categorySort, setCategorySort] = useState<CategorySort>('az')
+  const [categorySearch, setCategorySearch] = useState('')
+
   async function load() {
     setLoading(true)
     const [{ data: ingredientRows }, { data: recipeRowsData }, { data: recipeLineRows }, { data: entryRows }, { data: budgetRow }] =
@@ -197,12 +254,15 @@ export function Food() {
     setAddLogOpen(true)
   }
 
-  function beginQuantify(kind: 'recipe' | 'ingredient', id: string, name: string) {
+  function beginQuantify(kind: 'recipe' | 'ingredient', id: string, name: string, quantity?: number) {
     setQuantifying({ kind, id, name })
-    // Default to "1 portion" worth of grams when the ingredient has a standard portion
-    // set (e.g. banana → 120g) — a much more useful starting point than a flat 100g.
+    // A caller-supplied quantity (the last one actually used) beats any default. Failing
+    // that, "1 portion" worth of grams when the ingredient has a standard portion set
+    // (e.g. banana → 120g) — a much more useful starting point than a flat 100g.
     const portionGrams = kind === 'ingredient' ? ingredientsById.get(id)?.portion_grams : null
-    setQuantifyValue(kind === 'recipe' ? '1' : portionGrams != null ? String(portionGrams) : '100')
+    setQuantifyValue(
+      quantity != null ? String(quantity) : kind === 'recipe' ? '1' : portionGrams != null ? String(portionGrams) : '100',
+    )
     // A recipe's own meal tag (if it has one) is a better default than a time-of-day
     // guess — e.g. a recipe tagged "Dinner" logged the next day as lunch leftovers is
     // the exception, not the rule.
@@ -368,6 +428,130 @@ export function Food() {
   // The next meal with nothing logged yet, in the usual order — shown as the dashed
   // "nothing yet · Add" row.
   const nextEmptyMeal = MEAL_TYPES.find((meal) => !dayEntriesByMeal.has(meal)) ?? null
+
+  // --- Recipes & Library browsing ---
+  // Counted once from the entries already loaded, rather than a query per row.
+  const counts = logCounts(entries)
+
+  const recipeMacros = (recipe: Recipe) =>
+    recipePerServingMacros(recipe, recipeLines.get(recipe.id) ?? [], ingredientsById)
+
+  const recipeMealCounts = new Map<MealType, number>()
+  for (const recipe of recipes) {
+    if (recipe.meal_type) recipeMealCounts.set(recipe.meal_type, (recipeMealCounts.get(recipe.meal_type) ?? 0) + 1)
+  }
+
+  // A recipe with no meal tag belongs to "All" only — it isn't forced into a bucket it
+  // was never tagged for, same rule the Log tab's meal sections follow.
+  const visibleRecipes = recipes
+    .filter((r) => matchesSearch(r.name, recipeSearchQuery))
+    .filter((r) => mealTypeFilter === 'all' || r.meal_type === mealTypeFilter)
+  const sortedRecipes = [...visibleRecipes].sort((a, b) => {
+    switch (recipeSort) {
+      case 'logged':
+        return (counts.byRecipe.get(b.id) ?? 0) - (counts.byRecipe.get(a.id) ?? 0)
+      case 'recent':
+        return (counts.lastRecipe.get(b.id) ?? '').localeCompare(counts.lastRecipe.get(a.id) ?? '')
+      case 'kcal':
+        return recipeMacros(b).kcal - recipeMacros(a).kcal
+      case 'az':
+        return a.name.localeCompare(b.name)
+    }
+  })
+
+  const ingredientGroups = groupByCategory(ingredients)
+  const categoryKeys = orderedCategoryKeys(ingredientGroups.keys())
+  const weekAgo = format(subDays(new Date(), 7), 'yyyy-MM-dd')
+  const usedThisWeek = new Set(entries.filter((e) => e.ingredient_id && e.date >= weekAgo).map((e) => e.ingredient_id as string))
+
+  // The last few distinct ingredients logged — what most sessions actually reach for.
+  const recentIngredients = [...counts.lastIngredient.entries()]
+    .sort((a, b) => b[1].localeCompare(a[1]))
+    .map(([id]) => ingredientsById.get(id))
+    .filter((i): i is Ingredient => i != null)
+    .slice(0, 8)
+
+  const openCategoryIngredients = openCategory
+    ? [...(ingredientGroups.get(openCategory) ?? [])]
+        .filter((i) => matchesSearch(i.name, categorySearch))
+        .sort((a, b) => {
+          switch (categorySort) {
+            case 'used':
+              return (counts.byIngredient.get(b.id) ?? 0) - (counts.byIngredient.get(a.id) ?? 0)
+            case 'protein':
+              return b.protein_per_100g - a.protein_per_100g
+            case 'az':
+              return a.name.localeCompare(b.name)
+          }
+        })
+    : []
+
+  // Opens the quantify dialog straight from a list. The dialog renders above whichever
+  // sub-tab you're on, so logging never means leaving the one you were browsing —
+  // prefilled with the quantity you last used rather than a default portion.
+  function logFromList(kind: 'recipe' | 'ingredient', id: string, name: string) {
+    // `entries` comes back date-descending, so the first match is the most recent.
+    const previous = entries.find((e) => (kind === 'recipe' ? e.recipe_id === id : e.ingredient_id === id))
+    const lastQuantity = previous ? (kind === 'recipe' ? previous.servings : previous.grams) : null
+    beginQuantify(kind, id, name, lastQuantity ?? undefined)
+  }
+
+  // One ingredient row, used by both the open category and the flat search results.
+  // `withCategory` swaps the portion/source caption for which category it's filed under,
+  // which is the useful thing to know when results span all of them.
+  function renderIngredientRow(ingredient: Ingredient, withCategory: boolean) {
+    const key = ingredient.category ?? UNCATEGORIZED
+    const look = categoryLook(key)
+    const used = counts.byIngredient.get(ingredient.id) ?? 0
+    return (
+      <div className="flex items-center gap-3 overflow-hidden rounded-[18px] border border-line bg-surface shadow-card">
+        <span className="w-[5px] shrink-0 self-stretch" style={{ background: look.accent }} />
+        <button
+          onClick={() => openEditIngredient(ingredient)}
+          className="min-w-0 flex-1 py-2.5 text-left"
+          aria-label={`Edit ${ingredient.name}`}
+        >
+          <span className="flex items-center gap-1.5">
+            <span className="min-w-0 truncate text-sm font-medium text-ink">{ingredient.name}</span>
+            {used >= 5 && (
+              <span className="shrink-0 rounded-full bg-cat-emerald-tint px-1.5 py-0.5 text-[10px] font-semibold text-cat-emerald-ink">
+                used {used}×
+              </span>
+            )}
+          </span>
+          <span className="mt-0.5 block truncate text-[11px] text-ink-muted">
+            {withCategory
+              ? key === UNCATEGORIZED
+                ? 'Uncategorised'
+                : key
+              : `${ingredient.kcal_per_100g} kcal/100g · P ${round(ingredient.protein_per_100g)}g C ${round(
+                  ingredient.carbs_per_100g,
+                )}g F ${round(ingredient.fat_per_100g)}g`}
+            {!withCategory && ingredient.portion_label && ingredient.portion_grams
+              ? ` · 1 ${ingredient.portion_label} = ${ingredient.portion_grams}g`
+              : ''}
+            {!withCategory && ingredient.source === 'livsmedelsverket' ? ' · Livsmedelsverket' : ''}
+          </span>
+        </button>
+        <span className="mr-3.5 flex shrink-0 gap-1.5">
+          <button
+            onClick={() => logFromList('ingredient', ingredient.id, ingredient.name)}
+            aria-label={`Log ${ingredient.name}`}
+            className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-cat-emerald-tint text-[15px] text-cat-emerald-ink"
+          >
+            +
+          </button>
+          <button
+            onClick={() => openEditIngredient(ingredient)}
+            aria-label={`Edit ${ingredient.name}`}
+            className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-track text-xs text-ink-3"
+          >
+            ✎
+          </button>
+        </span>
+      </div>
+    )
+  }
 
   const matchingRecipes = recipes.filter((r) => matchesSearch(r.name, addLogQuery))
   const matchingIngredients = ingredients.filter((i) => matchesSearch(i.name, addLogQuery))
@@ -618,16 +802,56 @@ export function Food() {
 
   return (
     <Screen
-      title="Food"
+      title={openCategory ? (openCategory === UNCATEGORIZED ? 'Uncategorised' : openCategory) : 'Food'}
+      subtitle={
+        openCategory
+          ? `${(ingredientGroups.get(openCategory) ?? []).length} ingredients · sorted ${CATEGORY_SORT_SUBTITLE[categorySort]}`
+          : undefined
+      }
+      onBack={openCategory ? () => setOpenCategory(null) : undefined}
       onRefresh={load}
       hero={
-        <>
-          <HeroSegments
-            options={SUB_TABS.map((t) => ({ id: t, label: SUB_TAB_LABELS[t] }))}
-            value={subTab}
-            onChange={setSubTab}
-          />
-          {subTab === 'log' && (
+        openCategory ? (
+          <>
+            <HeroSearch
+              value={categorySearch}
+              onChange={setCategorySearch}
+              placeholder={`Search in ${openCategory === UNCATEGORIZED ? 'Uncategorised' : openCategory}`}
+            />
+            <div className="mt-3">
+              <ChipRail
+                tone="hero"
+                options={(Object.keys(CATEGORY_SORT_LABELS) as CategorySort[]).map((s) => ({
+                  id: s,
+                  label: CATEGORY_SORT_LABELS[s],
+                }))}
+                value={categorySort}
+                onChange={setCategorySort}
+              />
+            </div>
+          </>
+        ) : (
+          <>
+            <HeroSegments
+              options={SUB_TABS.map((t) => ({ id: t, label: SUB_TAB_LABELS[t] }))}
+              value={subTab}
+              onChange={setSubTab}
+            />
+            {subTab === 'recipes' && (
+              <HeroSearch
+                value={recipeSearchQuery}
+                onChange={setRecipeSearchQuery}
+                placeholder={`Search ${recipes.length} recipe${recipes.length === 1 ? '' : 's'}`}
+              />
+            )}
+            {subTab === 'library' && (
+              <HeroSearch
+                value={librarySearchQuery}
+                onChange={setLibrarySearchQuery}
+                placeholder={`Search ${ingredients.length} ingredient${ingredients.length === 1 ? '' : 's'}`}
+              />
+            )}
+            {subTab === 'log' && (
             <>
               <div className="mt-5 flex items-end justify-between gap-3">
                 <p className="text-[40px] font-semibold leading-none">
@@ -663,7 +887,8 @@ export function Food() {
               )}
             </>
           )}
-        </>
+          </>
+        )
       }
     >
       {subTab === 'log' && (
@@ -826,142 +1051,235 @@ export function Food() {
 
       {subTab === 'recipes' && (
         <>
-          <button
-            onClick={openNewRecipe}
-            className="rounded-[20px] border border-line-strong bg-surface py-3 text-sm font-semibold text-pine"
-          >
-            + New recipe
-          </button>
-          {recipes.length > 0 && (
-            <input
-              value={recipeSearchQuery}
-              onChange={(e) => setRecipeSearchQuery(e.target.value)}
-              placeholder="Search recipes"
-              className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
-            />
-          )}
-          {(() => {
-            const filteredRecipes = recipes.filter((r) => matchesSearch(r.name, recipeSearchQuery))
-            if (loading) return <p className="text-sm text-ink-disabled">Loading…</p>
-            if (recipes.length === 0) return <p className="text-sm text-ink-disabled">No recipes yet — add one above.</p>
-            if (filteredRecipes.length === 0) return <p className="text-sm text-ink-disabled">No recipes match "{recipeSearchQuery}".</p>
-            return (
-            <div className="flex flex-col gap-2">
-              {filteredRecipes.map((recipe) => {
+          <ChipRail
+            options={[
+              { id: 'all' as const, label: `All ${recipes.length}` },
+              ...MEAL_TYPES.map((m) => ({ id: m, label: `${MEAL_TYPE_INFO[m].icon} ${recipeMealCounts.get(m) ?? 0}` })),
+            ]}
+            value={mealTypeFilter}
+            onChange={setMealTypeFilter}
+          />
+
+          <div className="flex items-center justify-between gap-2">
+            <span className="shrink-0 text-xs font-semibold text-ink-3">Sorted by</span>
+            <select
+              value={recipeSort}
+              onChange={(e) => setRecipeSort(e.target.value as RecipeSort)}
+              aria-label="Sort recipes"
+              className="min-w-0 rounded-[14px] border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink-2 outline-none"
+            >
+              {(Object.keys(RECIPE_SORT_LABELS) as RecipeSort[]).map((s) => (
+                <option key={s} value={s}>
+                  {RECIPE_SORT_LABELS[s]}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {loading ? (
+            <p className="text-sm text-ink-disabled">Loading…</p>
+          ) : recipes.length === 0 ? (
+            <p className="text-sm text-ink-disabled">No recipes yet — add one below.</p>
+          ) : sortedRecipes.length === 0 ? (
+            <p className="text-sm text-ink-disabled">
+              {recipeSearchQuery ? `No recipes match "${recipeSearchQuery}".` : 'No recipes tagged for that meal.'}
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2.5">
+              {sortedRecipes.map((recipe) => {
                 const lines = recipeLines.get(recipe.id) ?? []
-                const perServing = recipePerServingMacros(recipe, lines, ingredientsById)
+                const perServing = recipeMacros(recipe)
+                const logged = counts.byRecipe.get(recipe.id) ?? 0
+                const accent = recipe.meal_type ? RECIPE_MEAL_ACCENT[recipe.meal_type] : '#8b8577'
                 return (
                   <div
                     key={recipe.id}
-                    className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card"
+                    className="flex overflow-hidden rounded-[22px] border border-line bg-surface shadow-card"
                   >
-                    <button onClick={() => setViewingRecipe(recipe)} className="flex-1 text-left">
-                      <p className="font-medium text-ink">
-                        {recipe.name}
-                        {recipe.meal_type && (
-                          <span className="ml-2 rounded-full bg-cat-emerald-tint px-2 py-0.5 text-[10px] font-medium text-cat-emerald-ink">
-                            {MEAL_TYPE_INFO[recipe.meal_type].icon} {MEAL_TYPE_INFO[recipe.meal_type].label}
+                    <span className="w-[5px] shrink-0 self-stretch" style={{ background: accent }} />
+                    <div className="min-w-0 flex-1 px-4 py-3.5">
+                      <button onClick={() => setViewingRecipe(recipe)} className="w-full text-left">
+                        <div className="flex items-start justify-between gap-2.5">
+                          <div className="min-w-0">
+                            <p className="truncate text-[15px] font-semibold text-ink">{recipe.name}</p>
+                            <p className="mt-0.5 truncate text-[11px] font-medium text-ink-muted">
+                              {recipe.meal_type ? `${MEAL_TYPE_INFO[recipe.meal_type].icon} ${MEAL_TYPE_INFO[recipe.meal_type].label} · ` : ''}
+                              {recipe.servings} serving{recipe.servings === 1 ? '' : 's'} · {lines.length} ingredient
+                              {lines.length === 1 ? '' : 's'}
+                            </p>
+                          </div>
+                          <span className="shrink-0 text-right">
+                            <span className="block text-[17px] font-semibold text-ink">{round(perServing.kcal)}</span>
+                            <span className="text-[10px] font-medium text-ink-muted">kcal/serving</span>
                           </span>
-                        )}
-                      </p>
-                      <p className="text-[11px] text-ink-disabled">
-                        {round(perServing.kcal)} kcal/serving · {recipe.servings} serving{recipe.servings === 1 ? '' : 's'} ·{' '}
-                        {lines.length} ingredient{lines.length === 1 ? '' : 's'} — tap to see breakdown
-                      </p>
-                    </button>
-                    <button onClick={() => openEditRecipe(recipe)} className="pl-3 text-ink-faint" aria-label="Edit recipe">
-                      ✎
-                    </button>
-                    <button onClick={() => setConfirmDeleteRecipe(recipe)} className="pl-3 text-ink-faint" aria-label="Remove recipe">
-                      ✕
-                    </button>
+                        </div>
+                        <MacroSplitBar macros={perServing} height={6} />
+                      </button>
+                      <div className="mt-2.5 flex items-center justify-between gap-2">
+                        <span className="min-w-0 truncate text-[11px] font-medium text-ink-2">
+                          P {round(perServing.protein)}g · C {round(perServing.carbs)}g · F {round(perServing.fat)}g
+                          {logged > 0 && ` · logged ${logged}×`}
+                        </span>
+                        <span className="flex shrink-0 gap-1.5">
+                          <button
+                            onClick={() => logFromList('recipe', recipe.id, recipe.name)}
+                            className="rounded-[14px] bg-cat-emerald-tint px-3 py-1.5 text-xs font-semibold text-cat-emerald-ink"
+                          >
+                            + Log
+                          </button>
+                          <button
+                            onClick={() => openEditRecipe(recipe)}
+                            aria-label={`Edit ${recipe.name}`}
+                            className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-track text-xs text-ink-3"
+                          >
+                            ✎
+                          </button>
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 )
               })}
             </div>
-            )
-          })()}
+          )}
+
+          <button
+            onClick={openNewRecipe}
+            className="rounded-[20px] border border-line-strong bg-surface py-3.5 text-sm font-semibold text-pine"
+          >
+            + New recipe
+          </button>
         </>
       )}
 
-      {subTab === 'library' && (
+      {/* Library, collapsed: one row per category. A text search bypasses the accordion
+          entirely and shows flat results, which is what a search is for. */}
+      {subTab === 'library' && !openCategory && (
         <>
-          <button
-            onClick={() => openNewIngredient()}
-            className="rounded-[20px] border border-line-strong bg-surface py-3 text-sm font-semibold text-pine"
-          >
-            + New ingredient
-          </button>
-          <p className="text-[11px] text-ink-disabled">Nutrition data via Livsmedelsverket's Livsmedelsdatabasen (CC BY 4.0).</p>
-          {ingredients.length > 0 && (
-            <input
-              value={librarySearchQuery}
-              onChange={(e) => setLibrarySearchQuery(e.target.value)}
-              placeholder="Search ingredients"
-              className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
-            />
-          )}
-          {(() => {
-            const filteredIngredients = ingredients.filter((i) => matchesSearch(i.name, librarySearchQuery))
-            if (loading) return <p className="text-sm text-ink-disabled">Loading…</p>
-            if (ingredients.length === 0) return <p className="text-sm text-ink-disabled">No ingredients yet — add one above.</p>
-            if (filteredIngredients.length === 0)
-              return <p className="text-sm text-ink-disabled">No ingredients match "{librarySearchQuery}".</p>
-            // Grouped by category — known categories in their defined order, then any
-            // custom ones alphabetically, then uncategorized last (not hidden/merged).
-            const groups = new Map<string, Ingredient[]>()
-            for (const ingredient of filteredIngredients) {
-              const key = ingredient.category ?? 'Uncategorized'
-              const arr = groups.get(key) ?? []
-              arr.push(ingredient)
-              groups.set(key, arr)
-            }
-            const knownOrder = INGREDIENT_CATEGORIES as readonly string[]
-            const customCategories = [...groups.keys()]
-              .filter((k) => k !== 'Uncategorized' && !knownOrder.includes(k))
-              .sort((a, b) => a.localeCompare(b))
-            const orderedKeys = [...knownOrder, ...customCategories, 'Uncategorized'].filter((k) => groups.has(k))
-            return (
-            <div className="flex flex-col gap-4">
-              {orderedKeys.map((key) => (
-                <div key={key}>
-                  <h3 className="mb-2 text-xs font-semibold uppercase text-ink-disabled">
-                    {key} ({groups.get(key)!.length})
-                  </h3>
-                  <div className="flex flex-col gap-2">
-                    {groups.get(key)!.map((ingredient) => (
-                      <div
+          <div className="flex gap-2.5">
+            <button
+              onClick={() => {
+                setScanLookupError(null)
+                openNewIngredient('library')
+                setScannerOpen(true)
+              }}
+              className="flex flex-1 items-center justify-center gap-2 rounded-[20px] bg-pine py-3.5 text-sm font-semibold text-white"
+            >
+              📷 Scan
+            </button>
+            <button
+              onClick={() => openNewIngredient('library')}
+              className="flex-1 rounded-[20px] border border-line-strong bg-surface py-3.5 text-sm font-semibold text-pine"
+            >
+              + New
+            </button>
+          </div>
+
+          {loading ? (
+            <p className="text-sm text-ink-disabled">Loading…</p>
+          ) : ingredients.length === 0 ? (
+            <p className="text-sm text-ink-disabled">No ingredients yet — add one above.</p>
+          ) : librarySearchQuery ? (
+            (() => {
+              const matches = ingredients.filter((i) => matchesSearch(i.name, librarySearchQuery))
+              if (matches.length === 0)
+                return <p className="text-sm text-ink-disabled">No ingredients match "{librarySearchQuery}".</p>
+              return (
+                <div className="flex flex-col gap-2">
+                  {matches.map((ingredient) => renderIngredientRow(ingredient, true))}
+                </div>
+              )
+            })()
+          ) : (
+            <>
+              {recentIngredients.length > 0 && (
+                <>
+                  <p className="text-xs font-semibold text-ink-3">Recently used</p>
+                  <div className="no-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5">
+                    {recentIngredients.map((ingredient) => (
+                      <button
                         key={ingredient.id}
-                        className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card"
+                        onClick={() => logFromList('ingredient', ingredient.id, ingredient.name)}
+                        className="shrink-0 whitespace-nowrap rounded-2xl border border-line bg-surface px-3.5 py-2.5 text-xs font-medium text-ink"
                       >
-                        <div className="flex-1">
-                          <p className="font-medium text-ink">{ingredient.name}</p>
-                          <p className="text-[11px] text-ink-disabled">
-                            {ingredient.kcal_per_100g} kcal/100g
-                            {ingredient.portion_label && ingredient.portion_grams
-                              ? ` · 1 ${ingredient.portion_label} = ${ingredient.portion_grams}g`
-                              : ''}
-                            {ingredient.source === 'livsmedelsverket' ? ' · Livsmedelsverket' : ''}
-                          </p>
-                        </div>
-                        <button onClick={() => openEditIngredient(ingredient)} className="pl-3 text-ink-faint" aria-label="Edit ingredient">
-                          ✎
-                        </button>
-                        <button
-                          onClick={() => setConfirmDeleteIngredient(ingredient)}
-                          className="pl-3 text-ink-faint"
-                          aria-label="Remove ingredient"
-                        >
-                          ✕
-                        </button>
-                      </div>
+                        {ingredient.name}
+                      </button>
                     ))}
                   </div>
-                </div>
-              ))}
+                </>
+              )}
+
+              <div className="flex flex-col gap-2">
+                {categoryKeys.map((key) => {
+                  const group = ingredientGroups.get(key)!
+                  const look = categoryLook(key)
+                  const usedCount = group.filter((i) => usedThisWeek.has(i.id)).length
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => {
+                        setOpenCategory(key)
+                        setCategorySearch('')
+                        setCategorySort('az')
+                      }}
+                      className="flex items-center gap-3 rounded-[20px] border border-line bg-surface px-4 py-3.5 text-left shadow-card"
+                    >
+                      <span
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[15px]"
+                        style={{ background: look.tint }}
+                      >
+                        {look.glyph}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold text-ink">
+                          {key === UNCATEGORIZED ? 'Uncategorised' : key}
+                        </span>
+                        <span className="block truncate text-[11px] text-ink-muted">
+                          {group.length} item{group.length === 1 ? '' : 's'}
+                          {key === UNCATEGORIZED
+                            ? ' · tap to sort them'
+                            : usedCount > 0
+                              ? ` · ${usedCount} used this week`
+                              : ''}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-sm text-ink-muted">⌄</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          )}
+
+          <p className="text-[11px] text-ink-disabled">Nutrition data via Livsmedelsverket's Livsmedelsdatabasen (CC BY 4.0).</p>
+        </>
+      )}
+
+      {/* Library, one category open — a pushed view with its own header (see Screen's
+          onBack) and its own sort rail. */}
+      {subTab === 'library' && openCategory && (
+        <>
+          {openCategoryIngredients.length === 0 ? (
+            <p className="text-sm text-ink-disabled">
+              {categorySearch ? `Nothing in here matches "${categorySearch}".` : 'Nothing in this category yet.'}
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {openCategoryIngredients.map((ingredient, i) => {
+                // Letter headings only make sense while the list is alphabetical.
+                const letter = ingredient.name.charAt(0).toUpperCase()
+                const previousLetter = i > 0 ? openCategoryIngredients[i - 1].name.charAt(0).toUpperCase() : null
+                return (
+                  <div key={ingredient.id}>
+                    {categorySort === 'az' && letter !== previousLetter && (
+                      <p className={`text-xs font-semibold text-ink-muted ${i > 0 ? 'mt-2.5' : ''} mb-2`}>{letter}</p>
+                    )}
+                    {renderIngredientRow(ingredient, false)}
+                  </div>
+                )
+              })}
             </div>
-            )
-          })()}
+          )}
         </>
       )}
 
