@@ -505,12 +505,14 @@ export function Today() {
             const effectiveStartDate = task.scheduled_date ?? task.created_at.slice(0, 10)
             const isLate = !task.recurring && !done && effectiveStartDate < viewDate
             const metricValue = metric ? metricValues.get(metric) ?? 0 : null
-            // A metric with a target trades the long caption for a bar + percentage; without
-            // one there's nothing to fill, so it keeps a plain value readout.
+            // A metric with a target trades the long caption for a bar and what's left to
+            // do; without one there's nothing to fill, so it keeps a plain value readout.
             const metricPct =
               metric && metricValue != null && task.auto_metric_target
                 ? Math.min(100, (metricValue / task.auto_metric_target) * 100)
                 : null
+            const metricRemaining =
+              metric && metricValue != null && task.auto_metric_target ? task.auto_metric_target - metricValue : null
             // One metadata line, in category ink — category, linked goal, and the one-time
             // or late state, rather than a row of separate badges.
             const metaParts: React.ReactNode[] = []
@@ -551,8 +553,8 @@ export function Today() {
                             style={{ width: `${metricPct}%`, background: style.accent }}
                           />
                         </span>
-                        <span className="text-[11px] font-semibold" style={{ color: style.ink }}>
-                          {Math.round(metricPct)}%
+                        <span className="shrink-0 text-[11px] font-semibold" style={{ color: style.ink }}>
+                          {metricRemaining! > 0 ? `${metricRemaining!.toLocaleString()} to go` : 'goal met'}
                         </span>
                       </span>
                     ) : (

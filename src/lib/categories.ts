@@ -7,8 +7,9 @@ import type { CategoryColor } from './types'
 // `bg`/`text`/`dot` stay full literal class names so Tailwind's scanner picks them up
 // (dynamic `bg-cat-${color}` won't); `accent`/`tint`/`ink` are the same values as hexes,
 // for SVG strokes, conic gradients and recharts props that need a value, not a class.
-// `check` is the filled done-state circle — amber steps one shade darker there so a white
-// ✓ stays legible on it.
+// `check` is the value for ANY white-on-colour fill — done-state circles, filled buttons.
+// The handoff's contrast rule: white only goes on the pine hero or on inks at/below
+// `#8a6321` luminance, never on a mid-tone accent, so amber steps one shade darker here.
 interface CategoryStyle {
   bg: string
   text: string

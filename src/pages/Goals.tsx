@@ -204,7 +204,7 @@ export function Goals() {
                             <button
                               onClick={() => bump(goal, 1)}
                               className="h-[34px] w-[34px] rounded-full font-semibold text-white"
-                              style={{ background: style.accent }}
+                              style={{ background: style.check }}
                             >
                               +
                             </button>

@@ -186,7 +186,7 @@ export function Settings() {
           {stravaOn ? 'Connected — workouts sync automatically every few hours.' : 'Connect to sync your workouts into the Journal.'}
         </p>
         {!stravaOn && (
-          <button onClick={connectStrava} className="mt-3 rounded-[20px] bg-cat-amber px-4 py-2 font-semibold text-white">
+          <button onClick={connectStrava} className="mt-3 rounded-[20px] bg-cat-amber-ink px-4 py-2 font-semibold text-white">
             Connect Strava
           </button>
         )}
