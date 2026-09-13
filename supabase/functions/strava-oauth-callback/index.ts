@@ -14,7 +14,25 @@ const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const STRAVA_CLIENT_ID = Deno.env.get('STRAVA_CLIENT_ID')!
 const STRAVA_CLIENT_SECRET = Deno.env.get('STRAVA_CLIENT_SECRET')!
 
+// Edge functions get no CORS headers for free, and a browser POST carrying Authorization
+// and a JSON content type is preflighted — so without these the call never leaves the
+// browser. Every response goes through json()/OPTIONS so no branch can forget them.
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+  })
+}
+
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS })
+
   const authHeader = req.headers.get('Authorization') ?? ''
   const jwt = authHeader.replace(/^Bearer /, '')
   const authedClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { global: { headers: { Authorization: authHeader } } })
@@ -23,19 +41,19 @@ Deno.serve(async (req) => {
     error: authError,
   } = await authedClient.auth.getUser(jwt)
   if (authError || !user) {
-    return new Response('Unauthorized', { status: 401 })
+    return json({ error: 'Unauthorized' }, 401)
   }
 
   let body: { code?: string }
   try {
     body = await req.json()
   } catch {
-    return new Response('Invalid JSON body', { status: 400 })
+    return json({ error: 'Invalid JSON body' }, 400)
   }
 
   const code = body.code
   if (!code) {
-    return new Response('Body must be { code: string }', { status: 400 })
+    return json({ error: 'Body must be { code: string }' }, 400)
   }
 
   const tokenRes = await fetch('https://www.strava.com/oauth/token', {
@@ -49,7 +67,7 @@ Deno.serve(async (req) => {
     }),
   })
   if (!tokenRes.ok) {
-    return new Response(JSON.stringify({ error: await tokenRes.text() }), { status: 502 })
+    return json({ error: await tokenRes.text() }, 502)
   }
   const tokenData = await tokenRes.json()
 
@@ -63,8 +81,8 @@ Deno.serve(async (req) => {
   })
 
   if (error) {
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 })
+    return json({ error: error.message }, 500)
   }
 
-  return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } })
+  return json({ ok: true })
 })
