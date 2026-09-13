@@ -2,8 +2,22 @@ import { useEffect, useState } from 'react'
 import { AreaChart, Area, BarChart, Bar, ReferenceLine, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { parseISO } from 'date-fns'
 import { supabase } from '../lib/supabase'
-import { todayISO, weekStartISO } from '../lib/dates'
-import { byTotal, cardioDistanceWeeks, journalWeeks, strengthMinutesWeeks, trendPerWeek, weekOverWeek } from '../lib/weekly'
+import { periodEndISO, todayISO, weekStartISO } from '../lib/dates'
+import {
+  byTotal,
+  cardioDistanceWeeks,
+  intakeKcalWeeks,
+  journalWeeks,
+  shiftWeek,
+  strengthMinutesWeeks,
+  trendPerWeek,
+  weekOverWeek,
+  weekRangeLabel,
+  type WeekBucket,
+} from '../lib/weekly'
+import { consistencyByCategory, reviewFigure, weekSentence, type ReviewFigure, type ReviewMetric } from '../lib/review'
+import { isGoalMetric, resolveGoalProgress } from '../lib/goals'
+import { ProgressRing } from '../components/ProgressRing'
 import { CATEGORY_STYLES } from '../lib/categories'
 import { THEME } from '../lib/theme'
 import { Screen, HeroSegments, HeroChip } from '../components/Screen'
@@ -13,6 +27,8 @@ import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
 import { formatWorkoutDuration, formatWorkoutDistance, isStrengthWorkout, getSportStyle } from '../lib/workouts'
 import { logEntryMacros } from '../lib/food'
 import type {
+  Category,
+  Goal,
   FoodLogEntry,
   Ingredient,
   JournalEntry,
@@ -29,9 +45,17 @@ import type {
 // purely for auto_metric matching, see src/lib/metrics.ts) are excluded here since Cardio/
 // Strength already cover that data with richer detail. Mood/Notes are dropped for now —
 // not deleted, just off the tab bar.
-type JournalTab = Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes' | 'mood' | 'note'> | 'cardio' | 'strength'
-const TABS: JournalTab[] = ['weight', 'sleep_hours', 'steps', 'cardio', 'strength']
+// 'review' is the cross-metric weekly view rather than one metric's tab — it's first in
+// the list because it's the one that answers "how did the week go" without picking a
+// metric first, which the per-metric tabs can't do.
+type JournalTab =
+  | Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes' | 'mood' | 'note'>
+  | 'cardio'
+  | 'strength'
+  | 'review'
+const TABS: JournalTab[] = ['review', 'weight', 'sleep_hours', 'steps', 'cardio', 'strength']
 const TAB_LABELS: Record<JournalTab, string> = {
+  review: 'Week',
   weight: 'Weight',
   sleep_hours: 'Sleep',
   steps: 'Steps',
@@ -48,11 +72,40 @@ const ENTRY_TYPE_LABELS: Partial<Record<JournalEntryType, string>> = {
 // so the Weight weeks and the Steps weeks don't read as the same list. Weight is plum,
 // matching the design; the rest take the category hue that fits what they measure.
 const METRIC_HUE: Record<JournalTab, (typeof CATEGORY_STYLES)[keyof typeof CATEGORY_STYLES]> = {
+  review: CATEGORY_STYLES.emerald,
   weight: CATEGORY_STYLES.violet,
   sleep_hours: CATEGORY_STYLES.sky,
   steps: CATEGORY_STYLES.emerald,
   cardio: CATEGORY_STYLES.pink,
   strength: CATEGORY_STYLES.amber,
+}
+
+// The Weekly review's six cards, in the order they're drawn. Each carries the same hue its
+// own Journal tab uses, so a card and its tab read as the same metric.
+const REVIEW_CARDS: { metric: ReviewMetric; label: string; hue: (typeof CATEGORY_STYLES)[keyof typeof CATEGORY_STYLES] }[] = [
+  { metric: 'weight', label: 'Weight', hue: CATEGORY_STYLES.violet },
+  { metric: 'sleep', label: 'Sleep', hue: CATEGORY_STYLES.sky },
+  { metric: 'steps', label: 'Steps', hue: CATEGORY_STYLES.emerald },
+  { metric: 'cardio', label: 'Cardio', hue: CATEGORY_STYLES.pink },
+  { metric: 'strength', label: 'Strength', hue: CATEGORY_STYLES.amber },
+  { metric: 'intake', label: 'Intake', hue: CATEGORY_STYLES.amber },
+]
+
+// Renders the `**bold**` spans weekSentence() emits.
+function SentenceText({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+        part.startsWith('**') && part.endsWith('**') ? (
+          <strong key={i} className="font-semibold">
+            {part.slice(2, -2)}
+          </strong>
+        ) : (
+          <span key={i}>{part}</span>
+        ),
+      )}
+    </>
+  )
 }
 
 // A hero chip that reads good or bad — pine tint for the direction you want, rose for the
@@ -272,6 +325,14 @@ export function Journal() {
   const [recipeLines, setRecipeLines] = useState<Map<string, RecipeIngredient[]>>(new Map())
   const [ingredients, setIngredients] = useState<Ingredient[]>([])
 
+  // Weekly review. Its goal/completion data isn't needed by any other tab, so it loads
+  // separately when that tab is open rather than slowing every Journal visit.
+  const [reviewWeek, setReviewWeek] = useState(() => weekStartISO())
+  const [reviewGoals, setReviewGoals] = useState<Goal[]>([])
+  const [reviewGoalProgress, setReviewGoalProgress] = useState<Map<string, { progress: number; isRollup: boolean }>>(new Map())
+  const [reviewParent, setReviewParent] = useState<{ child: Goal; parent: Goal; childPct: number; parentPct: number } | null>(null)
+  const [reviewConsistency, setReviewConsistency] = useState<{ category: Category; days: number }[]>([])
+
   useEffect(() => {
     setShowHistory(false)
   }, [tab])
@@ -317,6 +378,75 @@ export function Journal() {
   useEffect(() => {
     load()
   }, [])
+
+  // Goals, task completions and categories for the selected review week. Only the Weekly
+  // review needs these, so they're fetched on demand instead of in the main load().
+  useEffect(() => {
+    if (tab !== 'review') return
+    let cancelled = false
+
+    async function loadReview() {
+      const weekEnd = periodEndISO('week', reviewWeek)
+      const [{ data: goalRows }, { data: completionRows }, { data: taskRows }, { data: categoryRows }] = await Promise.all([
+        supabase.from('goals').select('*').eq('period_type', 'week').eq('period_start', reviewWeek).order('created_at'),
+        supabase.from('task_completions').select('task_id, date').gte('date', reviewWeek).lte('date', weekEnd),
+        supabase.from('daily_tasks').select('id, category_id'),
+        supabase.from('categories').select('*').order('name'),
+      ])
+      if (cancelled) return
+
+      const goals = (goalRows ?? []) as Goal[]
+      setReviewGoals(goals)
+      const progressEntries = await Promise.all(goals.map(async (g) => [g.id, await resolveGoalProgress(g)] as const))
+      if (cancelled) return
+      setReviewGoalProgress(new Map(progressEntries))
+
+      // The design's "Run 25 km · 68% → feeds Q4: Run 300 km (62%)" line — the first
+      // weekly goal that rolls into a parent, plus how far that parent has come.
+      const linked = goals.find((g) => g.parent_series_id)
+      if (linked?.parent_series_id) {
+        const { data: parentRows } = await supabase
+          .from('goals')
+          .select('*')
+          .eq('series_id', linked.parent_series_id)
+          .order('period_start', { ascending: false })
+          .limit(1)
+        const parent = (parentRows ?? [])[0] as Goal | undefined
+        if (parent && !cancelled) {
+          const parentProgress = await resolveGoalProgress(parent)
+          const childProgress = progressEntries.find(([id]) => id === linked.id)?.[1]
+          if (!cancelled) {
+            setReviewParent({
+              child: linked,
+              parent,
+              childPct: linked.target_value ? Math.min(100, ((childProgress?.progress ?? 0) / linked.target_value) * 100) : 0,
+              parentPct: parent.target_value ? Math.min(100, (parentProgress.progress / parent.target_value) * 100) : 0,
+            })
+          }
+        }
+      } else if (!cancelled) {
+        setReviewParent(null)
+      }
+
+      const taskCategory = new Map(
+        (taskRows ?? []).filter((t) => t.category_id).map((t) => [t.id as string, t.category_id as string]),
+      )
+      const daysByCategory = consistencyByCategory(completionRows ?? [], taskCategory)
+      const categoriesById = new Map(((categoryRows ?? []) as Category[]).map((c) => [c.id, c]))
+      if (cancelled) return
+      setReviewConsistency(
+        [...daysByCategory.entries()]
+          .map(([categoryId, days]) => ({ category: categoriesById.get(categoryId), days }))
+          .filter((row): row is { category: Category; days: number } => row.category != null)
+          .sort((a, b) => b.days - a.days),
+      )
+    }
+
+    loadReview()
+    return () => {
+      cancelled = true
+    }
+  }, [tab, reviewWeek])
 
   async function addEntry(type: JournalEntryType, valueNumeric: number | null, valueText: string | null) {
     const {
@@ -468,6 +598,41 @@ export function Journal() {
   const strengthWeeksDesc = [...strengthWeeks12].reverse()
   const strengthChartData = strengthWeeks12.map((w) => ({ date: w.weekStart.slice(5), value: Math.round(w.total) }))
 
+  // --- Weekly review ---
+  // Goal weight tells us which way is "good" for weight; without one, treat losing as the
+  // intent (that's what every other part of this app assumes) but say so nowhere.
+  const intakeWeeks = intakeKcalWeeks(foodEntries, recipes, recipeLines, ingredients)
+  const reviewBuckets: Record<ReviewMetric, WeekBucket[]> = {
+    weight: weeklyWeightAsc,
+    sleep: weeklySleepAsc,
+    steps: weeklyStepsAsc,
+    cardio: cardioWeeksAsc,
+    strength: weeklyStrengthMinutes,
+    intake: intakeWeeks,
+  }
+  const reviewFigures = REVIEW_CARDS.map((card) => ({
+    card,
+    figure: reviewFigure(card.metric, card.label, reviewBuckets[card.metric], reviewWeek),
+  })).filter((row): row is { card: (typeof REVIEW_CARDS)[number]; figure: ReviewFigure } => row.figure != null)
+
+  const reviewSentence = weekSentence(
+    weeklyWeightAsc,
+    [
+      { metric: 'sleep', buckets: weeklySleepAsc },
+      { metric: 'steps', buckets: weeklyStepsAsc },
+      { metric: 'cardio', buckets: cardioWeeksAsc },
+      { metric: 'strength', buckets: weeklyStrengthMinutes },
+      { metric: 'intake', buckets: intakeWeeks },
+    ],
+    reviewWeek,
+  )
+
+  const reviewGoalsDone = reviewGoals.filter((g) => {
+    const p = reviewGoalProgress.get(g.id)
+    const isAuto = isGoalMetric(g.auto_metric) || p?.isRollup
+    return isAuto ? g.target_value != null && (p?.progress ?? 0) >= g.target_value : g.status === 'done'
+  }).length
+
   // The screen's headline number, shown big on the hero: the latest weight, or the
   // current week's figure for the synced metrics. Chips beside it carry the change.
   const heroStat: { value: string; unit?: string; chips: React.ReactNode } | null =
@@ -545,6 +710,35 @@ export function Journal() {
   const hero = (
     <>
       <HeroSegments options={TABS.map((t) => ({ id: t, label: TAB_LABELS[t] }))} value={tab} onChange={setTab} />
+      {tab === 'review' && (
+        <>
+          <div className="mt-[18px] flex items-center justify-between gap-2 rounded-[18px] bg-white/14 px-2.5 py-[7px]">
+            <button
+              onClick={() => setReviewWeek((w) => shiftWeek(w, -1))}
+              aria-label="Previous week"
+              className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-white/18 text-white"
+            >
+              ‹
+            </button>
+            <span className="truncate text-sm font-medium text-white">{weekRangeLabel(reviewWeek)}</span>
+            <button
+              onClick={() => setReviewWeek((w) => shiftWeek(w, 1))}
+              disabled={reviewWeek >= weekStartISO()}
+              aria-label="Next week"
+              className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-white/18 text-white disabled:opacity-40"
+            >
+              ›
+            </button>
+          </div>
+          <p className="mt-[18px] text-[15px] font-medium leading-relaxed text-white">
+            {reviewSentence ? (
+              <SentenceText text={reviewSentence.text} />
+            ) : (
+              'Not enough logged this week to compare it to the one before.'
+            )}
+          </p>
+        </>
+      )}
       {heroStat && (
         <div className="mt-5 flex items-end justify-between gap-3">
           <p className="text-[40px] font-semibold leading-none">
@@ -558,7 +752,93 @@ export function Journal() {
   )
 
   return (
-    <Screen title="Journal" onRefresh={load} hero={hero}>
+    <Screen title={tab === 'review' ? 'Your week' : 'Journal'} onRefresh={load} hero={hero}>
+      {tab === 'review' && (
+        <>
+          {reviewFigures.length === 0 ? (
+            <p className="text-sm text-ink-disabled">Nothing logged this week yet.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2.5">
+              {reviewFigures.map(({ card, figure }) => (
+                <div
+                  key={card.metric}
+                  className="flex overflow-hidden rounded-[20px] border border-line bg-surface shadow-card"
+                >
+                  <span className="w-[5px] shrink-0 self-stretch" style={{ background: card.hue.accent }} />
+                  <div className="min-w-0 px-3.5 py-3">
+                    <p className="text-xs font-medium text-ink-muted">{figure.label}</p>
+                    <p className="mt-0.5 truncate text-xl font-semibold text-ink">{figure.value}</p>
+                    <p
+                      className={`mt-0.5 text-xs font-semibold ${
+                        figure.good === true ? 'text-cat-emerald-ink' : figure.good === false ? 'text-cat-rose-ink' : 'text-ink-muted'
+                      }`}
+                    >
+                      {figure.delta ?? figure.caption ?? '—'}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {reviewGoals.length > 0 && (
+            <div className="rounded-[22px] border border-line bg-surface p-4 shadow-card">
+              <div className="flex items-center gap-3.5">
+                <ProgressRing
+                  percent={(reviewGoalsDone / reviewGoals.length) * 100}
+                  size={52}
+                  strokeWidth={5}
+                  disc={THEME.surface}
+                >
+                  <span className="text-[13px] font-semibold text-ink">
+                    {reviewGoalsDone}/{reviewGoals.length}
+                  </span>
+                </ProgressRing>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-ink">Goals this week</p>
+                  {reviewParent ? (
+                    <p className="mt-0.5 text-xs text-ink-3">
+                      {reviewParent.child.title} · {Math.round(reviewParent.childPct)}% → feeds{' '}
+                      <strong className="font-semibold text-ink">{reviewParent.parent.title}</strong> (
+                      {Math.round(reviewParent.parentPct)}%)
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-xs text-ink-3">
+                      {reviewGoalsDone} of {reviewGoals.length} done
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {reviewConsistency.length > 0 && (
+            <div className="grid grid-cols-2 gap-2.5">
+              {reviewConsistency.map(({ category, days }) => {
+                const style = CATEGORY_STYLES[category.color]
+                return (
+                  <div
+                    key={category.id}
+                    className="flex items-center gap-2.5 rounded-[20px] border border-line bg-surface px-3.5 py-3 shadow-card"
+                  >
+                    <span
+                      className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-xl text-sm font-semibold"
+                      style={{ background: style.tint, color: style.ink }}
+                    >
+                      {category.name.charAt(0).toUpperCase()}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-[13px] font-semibold text-ink">{days} of 7</span>
+                      <span className="block truncate text-[11px] text-ink-muted">{category.name} days</span>
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </>
+      )}
+
       {tab === 'weight' && (
         <div className="flex gap-2">
           <input
@@ -1188,7 +1468,7 @@ export function Journal() {
         </div>
       )}
 
-      {loading ? null : (
+      {loading || tab === 'review' ? null : (
         <button
           onClick={() => setShowHistory((v) => !v)}
           className="flex items-center justify-between text-sm font-semibold text-ink-3"
@@ -1198,7 +1478,7 @@ export function Journal() {
         </button>
       )}
 
-      {!loading && showHistory && (tab === 'cardio' || tab === 'strength' ? (
+      {!loading && showHistory && tab !== 'review' && (tab === 'cardio' || tab === 'strength' ? (
         <>
           {(() => {
             const list = tab === 'cardio' ? recentCardioWorkouts : recentStrengthWorkouts

@@ -46,12 +46,15 @@ export function HeroSegments<T extends string>({
   onChange: (id: T) => void
 }) {
   return (
-    <div className="mt-[18px] flex gap-1.5 rounded-[18px] bg-white/14 p-[5px]">
+    // `min-w-fit` on top of `flex-1 basis-0`: pills share the track evenly when there's
+    // room, but never shrink below their own label. Six of them ("Week … Strength") would
+    // otherwise each get ~49px and truncate at iPhone width.
+    <div className="mt-[18px] flex gap-1 overflow-hidden rounded-[18px] bg-white/14 p-[5px]">
       {options.map((option) => (
         <button
           key={option.id}
           onClick={() => onChange(option.id)}
-          className={`min-w-0 flex-1 truncate rounded-[14px] py-2 text-xs transition ${
+          className={`min-w-fit flex-1 basis-0 whitespace-nowrap rounded-[14px] px-1.5 py-2 text-xs transition ${
             value === option.id ? 'bg-surface font-semibold text-pine-dark' : 'font-medium text-white'
           }`}
         >
