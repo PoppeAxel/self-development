@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { PARENT_PERIOD, PERIOD_LABELS, PERIOD_TYPES, periodStartISO } from '../lib/dates'
+import { format } from 'date-fns'
+import { PARENT_PERIOD, PERIOD_LABELS, PERIOD_TYPES, periodEndISO, periodStartISO, weekStartISO } from '../lib/dates'
 import { goalMetricInfo, isGoalMetric, resolveGoalProgress, rolloverRecurringGoals, SESSION_METRIC_INFO, SESSION_METRICS } from '../lib/goals'
 import { AUTO_METRICS, METRIC_INFO } from '../lib/metrics'
 import { CATEGORY_STYLES } from '../lib/categories'
@@ -20,6 +21,40 @@ function goalHue(goal: Goal, done: boolean, isRollup: boolean) {
   return CATEGORY_STYLES.violet
 }
 
+// Nested bars step toward the card surface rather than using hand-picked tints per
+// category — mixing the accent with the card colour gives the design's mid/light pair
+// (Training #c07a60 / #d19c88) for every hue, including ones the design never drew.
+function depthTint(accent: string, depth: number): string {
+  if (depth === 0) return accent
+  const weight = depth === 1 ? 75 : 55
+  return `color-mix(in srgb, ${accent} ${weight}%, ${THEME.surface})`
+}
+
+const DEPTH_BAR_HEIGHT = ['h-2', 'h-1.5', 'h-[5px]']
+
+// A child node's short prefix: "Q3", "Sep", "This week". The parent card already says
+// which goal this rolls into, so the node only has to say when it is.
+function periodNodeLabel(goal: Goal): string {
+  const start = new Date(goal.period_start + 'T00:00:00')
+  switch (goal.period_type) {
+    case 'year':
+      return format(start, 'yyyy')
+    case 'quarter':
+      return `Q${Math.floor(start.getMonth() / 3) + 1}`
+    case 'month':
+      return format(start, 'MMM')
+    case 'week':
+      return goal.period_start === weekStartISO() ? 'This week' : `Week of ${format(start, 'MMM d')}`
+  }
+}
+
+interface TreeNode {
+  goal: Goal
+  progress: number
+  isRollup: boolean
+  children: TreeNode[]
+}
+
 export function Goals() {
   const [periodType, setPeriodType] = useState<PeriodType>('week')
   const [goals, setGoals] = useState<Goal[]>([])
@@ -31,6 +66,11 @@ export function Goals() {
   const [autoMetric, setAutoMetric] = useState('')
   const [parentSeriesId, setParentSeriesId] = useState('')
   const [loading, setLoading] = useState(true)
+  // A view switch, not a period — Tree shows the selected period's goals with whatever
+  // rolls into them nested underneath; List is the flat view this page has always had.
+  const [view, setView] = useState<'tree' | 'list'>('list')
+  const [tree, setTree] = useState<TreeNode[]>([])
+  const [unlinkedCount, setUnlinkedCount] = useState(0)
   const periodStart = periodStartISO(periodType)
   const parentPeriod = PARENT_PERIOD[periodType]
 
@@ -66,6 +106,49 @@ export function Goals() {
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [periodType])
+
+  // Tree view needs every goal, not just this period's, to follow a chain down through
+  // quarters and months to weeks. Only fetched when that view is actually open.
+  useEffect(() => {
+    if (view !== 'tree') return
+    let cancelled = false
+
+    async function loadTree() {
+      const { data } = await supabase.from('goals').select('*').order('created_at')
+      if (cancelled) return
+      const all = (data ?? []) as Goal[]
+      const roots = all.filter((g) => g.period_type === periodType && g.period_start === periodStart)
+
+      // A child belongs to this node when it points at the series AND its period falls
+      // inside the parent's — the same containment rule resolveGoalProgress uses.
+      function childrenOf(goal: Goal): Goal[] {
+        const end = periodEndISO(goal.period_type, goal.period_start)
+        return all.filter(
+          (g) => g.parent_series_id === goal.series_id && g.period_start >= goal.period_start && g.period_start <= end,
+        )
+      }
+
+      async function build(goal: Goal): Promise<TreeNode> {
+        const [resolved, children] = await Promise.all([
+          resolveGoalProgress(goal),
+          Promise.all(childrenOf(goal).map(build)),
+        ])
+        return { goal, progress: resolved.progress, isRollup: resolved.isRollup, children }
+      }
+
+      const built = await Promise.all(roots.map(build))
+      if (cancelled) return
+      setTree(built)
+      // "Unlinked" = a goal in this period that neither feeds anything nor is fed by
+      // anything, so the rollup view has nothing to show for it.
+      setUnlinkedCount(roots.filter((g) => !g.parent_series_id && childrenOf(g).length === 0).length)
+    }
+
+    loadTree()
+    return () => {
+      cancelled = true
+    }
+  }, [view, periodType, periodStart, goals])
 
   async function addGoal(e: React.FormEvent) {
     e.preventDefault()
@@ -111,6 +194,35 @@ export function Goals() {
     return isAuto ? g.target_value != null && (p?.progress ?? 0) >= g.target_value : g.status === 'done'
   }).length
 
+  // One node of the rollup chain: the bar thins and the fill lightens with each level, so
+  // depth reads without needing a label for it.
+  function renderNode(node: TreeNode, depth: number, accent: string) {
+    const { goal, progress, children } = node
+    const pct = goal.target_value ? Math.min(100, (progress / goal.target_value) * 100) : 0
+    return (
+      <div key={goal.id}>
+        <div className="flex items-center justify-between gap-2">
+          <span className={`min-w-0 truncate ${depth === 1 ? 'text-sm font-medium text-ink' : 'text-[13px] font-medium text-ink-2'}`}>
+            {periodNodeLabel(goal)} · {goal.title}
+          </span>
+          {goal.target_value != null && (
+            <span className="shrink-0 text-xs font-semibold text-ink-2">
+              {Math.round(progress).toLocaleString()} / {goal.target_value.toLocaleString()}
+            </span>
+          )}
+        </div>
+        <span className={`mt-1.5 block overflow-hidden rounded-full bg-ring-track ${DEPTH_BAR_HEIGHT[Math.min(depth, 2)]}`}>
+          <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: depthTint(accent, depth) }} />
+        </span>
+        {children.length > 0 && (
+          <div className="mt-2.5 flex flex-col gap-2.5 border-l-2 border-ring-track pl-3.5">
+            {children.map((child) => renderNode(child, depth + 1, accent))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const hero = (
     <>
       <HeroSegments
@@ -118,7 +230,26 @@ export function Goals() {
         value={periodType}
         onChange={setPeriodType}
       />
-      {!loading && goals.length > 0 && (
+      <div className="mt-2 flex items-center gap-2">
+        {(['tree', 'list'] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setView(v)}
+            className={`rounded-[14px] px-3.5 py-2 text-xs capitalize transition ${
+              view === v ? 'bg-surface font-semibold text-pine-dark' : 'bg-white/14 font-medium text-white'
+            }`}
+          >
+            {v}
+          </button>
+        ))}
+        <span className="text-[11px] font-medium text-white">view</span>
+      </div>
+      {view === 'tree' && (
+        <p className="mt-[18px] text-[15px] font-medium leading-relaxed text-white">
+          Every {PERIOD_LABELS[periodType].toLowerCase()} goal, and what rolls into it.
+        </p>
+      )}
+      {view === 'list' && !loading && goals.length > 0 && (
         <div className="mt-[18px] flex items-center gap-3.5">
           <ProgressRing
             percent={(completedCount / goals.length) * 100}
@@ -142,12 +273,76 @@ export function Goals() {
 
   return (
     <Screen title="Goals" onRefresh={load} hero={hero}>
-      {loading ? (
-        <p className="text-sm text-ink-disabled">Loading…</p>
-      ) : goals.length === 0 ? (
-        <p className="text-sm text-ink-disabled">No {PERIOD_LABELS[periodType].toLowerCase()} goals yet.</p>
-      ) : (
-        <ul className="flex flex-col gap-3">
+      {view === 'tree' && (
+        <>
+          {tree.length === 0 ? (
+            <p className="text-sm text-ink-disabled">No {PERIOD_LABELS[periodType].toLowerCase()} goals yet.</p>
+          ) : (
+            <ul className="flex flex-col gap-3.5">
+              {tree.map((node) => {
+                const { goal, progress, isRollup, children } = node
+                const done = goal.target_value != null && progress >= goal.target_value
+                const style = goalHue(goal, done, isRollup)
+                const pct = goal.target_value ? Math.min(100, (progress / goal.target_value) * 100) : 0
+                const metricInfo = isGoalMetric(goal.auto_metric) ? goalMetricInfo(goal.auto_metric) : null
+                const chip = [
+                  metricInfo ? `${metricInfo.icon} auto` : isRollup ? '🔗 rollup' : 'manual',
+                  PERIOD_LABELS[goal.period_type].toLowerCase(),
+                ].join(' · ')
+                return (
+                  <li key={goal.id} className="flex overflow-hidden rounded-3xl border border-line bg-surface shadow-card">
+                    <span className="w-[5px] shrink-0 self-stretch" style={{ background: style.accent }} />
+                    <div className="min-w-0 flex-1 px-[18px] py-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <span
+                            className="inline-block rounded-full px-2.5 py-[3px] text-[11px] font-semibold"
+                            style={{ background: style.tint, color: style.ink }}
+                          >
+                            {chip}
+                          </span>
+                          <p className="mt-2 text-[17px] font-semibold text-ink">{goal.title}</p>
+                        </div>
+                        {goal.target_value != null && (
+                          <span className="shrink-0 text-xl font-semibold" style={{ color: style.ink }}>
+                            {Math.round(pct)}%
+                          </span>
+                        )}
+                      </div>
+                      <span className="mt-2.5 block h-2 overflow-hidden rounded-full bg-ring-track">
+                        <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: style.accent }} />
+                      </span>
+                      {children.length > 0 && (
+                        <div className="mt-3.5 flex flex-col gap-2.5 border-l-2 border-ring-track pl-3.5">
+                          {children.map((child) => renderNode(child, 1, style.accent))}
+                        </div>
+                      )}
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          <div className="flex items-center justify-between gap-3 rounded-[20px] border border-line-strong bg-surface px-4 py-3.5">
+            <button onClick={() => setView('list')} className="text-sm font-semibold text-pine">
+              + New goal
+            </button>
+            {unlinkedCount > 0 && (
+              <span className="shrink-0 text-xs font-medium text-ink-muted">
+                {unlinkedCount} unlinked
+              </span>
+            )}
+          </div>
+        </>
+      )}
+
+      {view === 'list' &&
+        (loading ? (
+          <p className="text-sm text-ink-disabled">Loading…</p>
+        ) : goals.length === 0 ? (
+          <p className="text-sm text-ink-disabled">No {PERIOD_LABELS[periodType].toLowerCase()} goals yet.</p>
+        ) : (
+          <ul className="flex flex-col gap-3">
           {goals.map((goal) => {
             const goalProgress = progress.get(goal.id)
             const isRollup = goalProgress?.isRollup ?? false
@@ -231,8 +426,9 @@ export function Goals() {
               </li>
             )
           })}
-        </ul>
-      )}
+          </ul>
+        ))}
+
       <form onSubmit={addGoal} className="flex flex-col gap-2.5">
         <div className="flex gap-2.5">
           <input
