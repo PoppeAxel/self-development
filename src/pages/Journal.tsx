@@ -3,6 +3,7 @@ import { AreaChart, Area, BarChart, Bar, ReferenceLine, XAxis, YAxis, Tooltip, R
 import { parseISO } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { todayISO, weekStartISO } from '../lib/dates'
+import { byTotal, cardioDistanceWeeks, journalWeeks, strengthMinutesWeeks, trendPerWeek, weekOverWeek } from '../lib/weekly'
 import { CATEGORY_STYLES } from '../lib/categories'
 import { THEME } from '../lib/theme'
 import { Screen, HeroSegments, HeroChip } from '../components/Screen'
@@ -66,30 +67,6 @@ function DeltaChip({ good, children }: { good: boolean; children: React.ReactNod
       {children}
     </span>
   )
-}
-
-interface WeeklySleep {
-  weekStart: string
-  avg: number
-  min: number
-  max: number
-  nights: number
-}
-
-interface WeeklyWeight {
-  weekStart: string
-  avg: number
-  min: number
-  max: number
-  entries: number
-}
-
-interface WeeklySteps {
-  weekStart: string
-  avg: number
-  min: number
-  max: number
-  days: number
 }
 
 // Shared recharts styling for the calm palette — warm grid lines, off-white tooltip,
@@ -202,24 +179,6 @@ function WorkoutsChart({
       </BarChart>
     </ResponsiveContainer>
   )
-}
-
-interface WeeklyMinutes {
-  weekStart: string
-  date: string
-  value: number
-}
-
-function weeklyMinutes(workouts: Workout[]): WeeklyMinutes[] {
-  const byWeek = new Map<string, number>()
-  for (const w of workouts) {
-    const wk = weekStartISO(parseISO(w.date))
-    byWeek.set(wk, (byWeek.get(wk) ?? 0) + Math.round(w.duration_seconds / 60))
-  }
-  return [...byWeek.entries()]
-    .map(([weekStart, value]) => ({ weekStart, date: weekStart.slice(5), value }))
-    .sort((a, b) => a.weekStart.localeCompare(b.weekStart))
-    .slice(-12)
 }
 
 interface WeeklyCardioWeek {
@@ -424,70 +383,17 @@ export function Journal() {
   // fractional-hour values otherwise, which reads as misleading for a duration.
   const sleepYMax = Math.ceil(Math.max(RECOMMENDED_SLEEP_HOURS, ...sleepSeries.map((s) => s.value))) + 1
 
-  // Sleep grouped into Mon–Sun weeks.
-  const sleepByWeek = new Map<string, number[]>()
-  for (const e of entries) {
-    if (e.type !== 'sleep_hours' || e.value_numeric == null) continue
-    const wk = weekStartISO(parseISO(e.date))
-    const arr = sleepByWeek.get(wk) ?? []
-    arr.push(e.value_numeric)
-    sleepByWeek.set(wk, arr)
-  }
-  const weeklySleepAsc: WeeklySleep[] = [...sleepByWeek.entries()]
-    .map(([weekStart, values]) => ({
-      weekStart,
-      avg: values.reduce((a, b) => a + b, 0) / values.length,
-      min: Math.min(...values),
-      max: Math.max(...values),
-      nights: values.length,
-    }))
-    .sort((a, b) => a.weekStart.localeCompare(b.weekStart))
+  // Weekly aggregation lives in src/lib/weekly.ts — Journal, the Weekly review and
+  // Insights all read the same buckets rather than each re-implementing this.
+  const weeklySleepAsc = journalWeeks(entries, 'sleep_hours')
   const weeklySleep = [...weeklySleepAsc].reverse().slice(0, 12)
+  const { current: currentSleepWeek, change: weekSleepChange } = weekOverWeek(weeklySleepAsc)
+  const sleepTrendPerWeek = trendPerWeek(weeklySleepAsc)
 
-  const currentSleepWeek = weeklySleepAsc[weeklySleepAsc.length - 1] ?? null
-  const previousSleepWeek = weeklySleepAsc[weeklySleepAsc.length - 2] ?? null
-  const weekSleepChange = currentSleepWeek && previousSleepWeek ? currentSleepWeek.avg - previousSleepWeek.avg : null
-
-  // Trend: average week-over-week change across the last few completed weeks.
-  const recentSleepWeeks = weeklySleepAsc.slice(-5)
-  const sleepDiffs: number[] = []
-  for (let i = 1; i < recentSleepWeeks.length; i++) {
-    sleepDiffs.push(recentSleepWeeks[i].avg - recentSleepWeeks[i - 1].avg)
-  }
-  const sleepTrendPerWeek = sleepDiffs.length > 0 ? sleepDiffs.reduce((a, b) => a + b, 0) / sleepDiffs.length : null
-
-  // Weight grouped into Mon–Sun weeks, ascending for trend math.
-  const weightByWeek = new Map<string, number[]>()
-  for (const e of entries) {
-    if (e.type !== 'weight' || e.value_numeric == null) continue
-    const wk = weekStartISO(parseISO(e.date))
-    const arr = weightByWeek.get(wk) ?? []
-    arr.push(e.value_numeric)
-    weightByWeek.set(wk, arr)
-  }
-  const weeklyWeightAsc: WeeklyWeight[] = [...weightByWeek.entries()]
-    .map(([weekStart, values]) => ({
-      weekStart,
-      avg: values.reduce((a, b) => a + b, 0) / values.length,
-      min: Math.min(...values),
-      max: Math.max(...values),
-      entries: values.length,
-    }))
-    .sort((a, b) => a.weekStart.localeCompare(b.weekStart))
+  const weeklyWeightAsc = journalWeeks(entries, 'weight')
   const weeklyWeight = [...weeklyWeightAsc].reverse().slice(0, 12)
-
-  const currentWeightWeek = weeklyWeightAsc[weeklyWeightAsc.length - 1] ?? null
-  const previousWeightWeek = weeklyWeightAsc[weeklyWeightAsc.length - 2] ?? null
-  const weekWeightChange =
-    currentWeightWeek && previousWeightWeek ? currentWeightWeek.avg - previousWeightWeek.avg : null
-
-  // Trend: average week-over-week change across the last few completed weeks.
-  const recentWeightWeeks = weeklyWeightAsc.slice(-5)
-  const weightDiffs: number[] = []
-  for (let i = 1; i < recentWeightWeeks.length; i++) {
-    weightDiffs.push(recentWeightWeeks[i].avg - recentWeightWeeks[i - 1].avg)
-  }
-  const weightTrendPerWeek = weightDiffs.length > 0 ? weightDiffs.reduce((a, b) => a + b, 0) / weightDiffs.length : null
+  const { current: currentWeightWeek, change: weekWeightChange } = weekOverWeek(weeklyWeightAsc)
+  const weightTrendPerWeek = trendPerWeek(weeklyWeightAsc)
 
   const weightEntries = entries.filter((e) => e.type === 'weight' && e.value_numeric !== null)
   const firstWeightEntry = weightEntries[0] ?? null
@@ -536,66 +442,31 @@ export function Journal() {
   const estimatedMaintenanceKcal = showCalorieEstimate ? avgDailyKcal! - (weightTrendPerWeek! * 7700) / 7 : null
   const dailyDeficitOrSurplus = showCalorieEstimate ? avgDailyKcal! - estimatedMaintenanceKcal! : null
 
-  // Steps grouped into Mon–Sun weeks, ascending for trend math.
-  const stepsByWeek = new Map<string, number[]>()
-  for (const e of entries) {
-    if (e.type !== 'steps' || e.value_numeric == null) continue
-    const wk = weekStartISO(parseISO(e.date))
-    const arr = stepsByWeek.get(wk) ?? []
-    arr.push(e.value_numeric)
-    stepsByWeek.set(wk, arr)
-  }
-  const weeklyStepsAsc: WeeklySteps[] = [...stepsByWeek.entries()]
-    .map(([weekStart, values]) => ({
-      weekStart,
-      avg: values.reduce((a, b) => a + b, 0) / values.length,
-      min: Math.min(...values),
-      max: Math.max(...values),
-      days: values.length,
-    }))
-    .sort((a, b) => a.weekStart.localeCompare(b.weekStart))
+  const weeklyStepsAsc = journalWeeks(entries, 'steps')
   const weeklySteps = [...weeklyStepsAsc].reverse().slice(0, 12)
-
-  const currentStepsWeek = weeklyStepsAsc[weeklyStepsAsc.length - 1] ?? null
-  const previousStepsWeek = weeklyStepsAsc[weeklyStepsAsc.length - 2] ?? null
-  const weekStepsChange = currentStepsWeek && previousStepsWeek ? currentStepsWeek.avg - previousStepsWeek.avg : null
-
-  // Trend: average week-over-week change across the last few completed weeks.
-  const recentStepsWeeks = weeklyStepsAsc.slice(-5)
-  const stepsDiffs: number[] = []
-  for (let i = 1; i < recentStepsWeeks.length; i++) {
-    stepsDiffs.push(recentStepsWeeks[i].avg - recentStepsWeeks[i - 1].avg)
-  }
-  const stepsTrendPerWeek = stepsDiffs.length > 0 ? stepsDiffs.reduce((a, b) => a + b, 0) / stepsDiffs.length : null
+  const { current: currentStepsWeek, change: weekStepsChange } = weekOverWeek(weeklyStepsAsc)
+  const stepsTrendPerWeek = trendPerWeek(weeklyStepsAsc)
 
   const cardioWorkouts = workouts.filter((w) => !isStrengthWorkout(w.sport_type))
   const strengthWorkouts = workouts.filter((w) => isStrengthWorkout(w.sport_type))
+  // The per-sport breakdown is its own shape (a stacked chart needs one key per sport),
+  // so it keeps its own pass; the totals and trends come off the shared buckets.
   const weeklyCardioDistance = weeklyDistanceBySport(cardioWorkouts)
-  const weeklyStrengthMinutes = weeklyMinutes(strengthWorkouts)
+  const cardioWeeksAsc = cardioDistanceWeeks(workouts)
+  const weeklyStrengthMinutes = strengthMinutesWeeks(workouts)
   const recentCardioWorkouts = [...cardioWorkouts].reverse().slice(0, 20)
   const recentStrengthWorkouts = [...strengthWorkouts].reverse().slice(0, 20)
 
-  const currentCardioWeek = weeklyCardioDistance.weeks[weeklyCardioDistance.weeks.length - 1] ?? null
-  const previousCardioWeek = weeklyCardioDistance.weeks[weeklyCardioDistance.weeks.length - 2] ?? null
-  const weekCardioChange = currentCardioWeek && previousCardioWeek ? currentCardioWeek.total - previousCardioWeek.total : null
-  const recentCardioWeeksForTrend = weeklyCardioDistance.weeks.slice(-5)
-  const cardioDiffs: number[] = []
-  for (let i = 1; i < recentCardioWeeksForTrend.length; i++) {
-    cardioDiffs.push(recentCardioWeeksForTrend[i].total - recentCardioWeeksForTrend[i - 1].total)
-  }
-  const cardioTrendPerWeek = cardioDiffs.length > 0 ? cardioDiffs.reduce((a, b) => a + b, 0) / cardioDiffs.length : null
+  const { current: currentCardioWeek, change: weekCardioChange } = weekOverWeek(cardioWeeksAsc, byTotal)
+  const cardioTrendPerWeek = trendPerWeek(cardioWeeksAsc, byTotal)
   const cardioWeeksDesc = [...weeklyCardioDistance.weeks].reverse()
 
-  const currentStrengthWeek = weeklyStrengthMinutes[weeklyStrengthMinutes.length - 1] ?? null
-  const previousStrengthWeek = weeklyStrengthMinutes[weeklyStrengthMinutes.length - 2] ?? null
-  const weekStrengthChange = currentStrengthWeek && previousStrengthWeek ? currentStrengthWeek.value - previousStrengthWeek.value : null
-  const recentStrengthWeeksForTrend = weeklyStrengthMinutes.slice(-5)
-  const strengthDiffs: number[] = []
-  for (let i = 1; i < recentStrengthWeeksForTrend.length; i++) {
-    strengthDiffs.push(recentStrengthWeeksForTrend[i].value - recentStrengthWeeksForTrend[i - 1].value)
-  }
-  const strengthTrendPerWeek = strengthDiffs.length > 0 ? strengthDiffs.reduce((a, b) => a + b, 0) / strengthDiffs.length : null
-  const strengthWeeksDesc = [...weeklyStrengthMinutes].reverse()
+  const { current: currentStrengthWeek, change: weekStrengthChange } = weekOverWeek(weeklyStrengthMinutes, byTotal)
+  const strengthTrendPerWeek = trendPerWeek(weeklyStrengthMinutes, byTotal)
+  // Same 12-week window the list and chart always showed.
+  const strengthWeeks12 = weeklyStrengthMinutes.slice(-12)
+  const strengthWeeksDesc = [...strengthWeeks12].reverse()
+  const strengthChartData = strengthWeeks12.map((w) => ({ date: w.weekStart.slice(5), value: Math.round(w.total) }))
 
   // The screen's headline number, shown big on the hero: the latest weight, or the
   // current week's figure for the synced metrics. Chips beside it carry the change.
@@ -660,7 +531,7 @@ export function Journal() {
               }
             : tab === 'strength' && currentStrengthWeek
               ? {
-                  value: formatWorkoutDuration(currentStrengthWeek.value * 60),
+                  value: formatWorkoutDuration(currentStrengthWeek.total * 60),
                   unit: 'this week',
                   chips: weekStrengthChange !== null && (
                     <DeltaChip good={weekStrengthChange >= 0}>
@@ -920,7 +791,7 @@ export function Journal() {
                     </span>
                   </div>
                   <p className="mt-1 text-sm text-ink-disabled">
-                    {formatSleepDuration(week.min)} – {formatSleepDuration(week.max)} · {week.nights} night{week.nights === 1 ? '' : 's'}{' '}
+                    {formatSleepDuration(week.min)} – {formatSleepDuration(week.max)} · {week.count} night{week.count === 1 ? '' : 's'}{' '}
                     logged
                   </p>
                 </li>
@@ -964,7 +835,7 @@ export function Journal() {
                     </span>
                   </div>
                   <p className="mt-1 text-sm text-ink-disabled">
-                    {week.min.toFixed(1)} – {week.max.toFixed(1)} kg · {week.entries} log{week.entries === 1 ? '' : 's'}
+                    {week.min.toFixed(1)} – {week.max.toFixed(1)} kg · {week.count} log{week.count === 1 ? '' : 's'}
                   </p>
                 </li>
               )
@@ -1075,7 +946,7 @@ export function Journal() {
                     </span>
                   </div>
                   <p className="mt-1 text-sm text-ink-disabled">
-                    {week.min.toLocaleString()} – {week.max.toLocaleString()} · {week.days} day{week.days === 1 ? '' : 's'} logged
+                    {week.min.toLocaleString()} – {week.max.toLocaleString()} · {week.count} day{week.count === 1 ? '' : 's'} logged
                   </p>
                 </li>
               )
@@ -1222,7 +1093,7 @@ export function Journal() {
         <div className="grid grid-cols-2 gap-2">
           <div className="rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
             <p className="text-xs text-ink-disabled">This week</p>
-            <p className="text-lg font-bold text-ink">{formatWorkoutDuration(currentStrengthWeek.value * 60)}</p>
+            <p className="text-lg font-bold text-ink">{formatWorkoutDuration(currentStrengthWeek.total * 60)}</p>
             <p
               className={`text-sm font-semibold ${
                 weekStrengthChange > 0 ? 'text-cat-emerald-ink' : weekStrengthChange < 0 ? 'text-cat-rose-ink' : 'text-ink-disabled'
@@ -1260,7 +1131,7 @@ export function Journal() {
           onClick={() => setStrengthExpanded(true)}
           className="block w-full rounded-3xl border border-line bg-surface p-2 text-left shadow-card"
         >
-          <WorkoutsChart data={weeklyStrengthMinutes} color={METRIC_HUE.strength.accent} height={192} unit="min" />
+          <WorkoutsChart data={strengthChartData} color={METRIC_HUE.strength.accent} height={192} unit="min" />
         </button>
       )}
 
@@ -1276,7 +1147,7 @@ export function Journal() {
             </button>
           </div>
           <div className="flex-1 px-2 pb-4">
-            <WorkoutsChart data={weeklyStrengthMinutes} color={METRIC_HUE.strength.accent} height={window.innerHeight - 120} unit="min" />
+            <WorkoutsChart data={strengthChartData} color={METRIC_HUE.strength.accent} height={window.innerHeight - 120} unit="min" />
           </div>
         </div>
       )}
@@ -1287,7 +1158,7 @@ export function Journal() {
           <ul className="flex flex-col gap-2">
             {strengthWeeksDesc.map((week, i) => {
               const prev = strengthWeeksDesc[i + 1]
-              const change = prev ? week.value - prev.value : null
+              const change = prev ? week.total - prev.total : null
               return (
                 <li
                   key={week.weekStart}
@@ -1297,7 +1168,7 @@ export function Journal() {
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-ink-3">Week of {week.weekStart}</span>
                     <span className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-ink">{formatWorkoutDuration(week.value * 60)}</span>
+                      <span className="text-sm font-semibold text-ink">{formatWorkoutDuration(week.total * 60)}</span>
                       {change !== null && (
                         <span
                           className={`rounded-full px-2 py-0.5 text-xs font-medium ${
