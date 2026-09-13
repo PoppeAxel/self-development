@@ -140,3 +140,49 @@ export function portfolioLatests(portfolios: Portfolio[], entries: PortfolioEntr
     return { portfolio: p, latest, change, changePct }
   })
 }
+
+// --- Deposits vs growth ---
+// The account grows two ways: money put in, and the market. Splitting them is the whole
+// point of logging contributions, but until now nothing showed them apart over time.
+
+export interface TotalWithDeposits {
+  date: string
+  total: number
+  /** Everything paid in up to and including this date. */
+  deposited: number
+}
+
+/** One row per logged date: the total value, with cumulative deposits underneath it. */
+export function totalsWithDeposits(entries: PortfolioEntry[]): TotalWithDeposits[] {
+  let deposited = 0
+  return weekTotals(entries).map((row) => {
+    deposited += row.contribution
+    return { date: row.date, total: row.total, deposited }
+  })
+}
+
+/**
+ * Where the account lands at the end of the year if the last stretch repeats — deliberately
+ * "at this pace", including deposits, since that's the pace the account actually moves at.
+ * Null until there are enough weeks for an average to mean anything.
+ */
+export function yearEndProjection(totals: WeekTotal[], window = 8, minWeeks = 3): { date: string; value: number } | null {
+  if (totals.length < minWeeks) return null
+  const recent = totals.slice(-window)
+  const span = recent.length - 1
+  if (span < 1) return null
+  const perWeek = (recent[recent.length - 1].total - recent[0].total) / span
+
+  const latest = recent[recent.length - 1]
+  const latestDate = new Date(latest.date + 'T00:00:00')
+  const yearEnd = new Date(latestDate.getFullYear(), 11, 31)
+  const weeksLeft = (yearEnd.getTime() - latestDate.getTime()) / (7 * 24 * 60 * 60 * 1000)
+  if (weeksLeft <= 0) return null
+
+  return { date: `${latestDate.getFullYear()}-12-31`, value: latest.total + perWeek * weeksLeft }
+}
+
+/** True when the current Mon–Sun week has no entry yet — what the log nudge keys off. */
+export function weeklyLogDue(entries: PortfolioEntry[], weekStart: string): boolean {
+  return !entries.some((e) => e.date >= weekStart)
+}
