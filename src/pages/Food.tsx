@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { supabase } from '../lib/supabase'
+import { format, subDays } from 'date-fns'
 import { todayISO } from '../lib/dates'
 import { Screen, HeroSegments } from '../components/Screen'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -17,6 +18,8 @@ import {
   fetchOpenFoodFactsProduct,
   defaultMealTypeForNow,
   matchesSearch,
+  quickLogSuggestions,
+  type QuickLogSuggestion,
   MEAL_TYPES,
   MEAL_TYPE_INFO,
   INGREDIENT_CATEGORIES,
@@ -24,7 +27,17 @@ import {
   type Macros,
   type LivsmedelsverketFood,
 } from '../lib/food'
+import { CATEGORY_STYLES as CAT } from '../lib/categories'
 import type { FoodLogEntry, Ingredient, MealType, Recipe, RecipeIngredient } from '../lib/types'
+
+// One hue per meal, for the day-list accent edges. Breakfast ochre, lunch pine, dinner
+// terracotta, snack plum — distinct enough to skim, all from the category palette.
+const MEAL_HUE: Record<MealType, string> = {
+  breakfast: CAT.amber.accent,
+  lunch: CAT.emerald.accent,
+  dinner: CAT.pink.accent,
+  snack: CAT.violet.accent,
+}
 
 function MealTypePicker({ value, onChange }: { value: MealType | null; onChange: (v: MealType | null) => void }) {
   return (
@@ -133,15 +146,30 @@ export function Food() {
   const [scannerOpen, setScannerOpen] = useState(false)
   const [scanLookingUp, setScanLookingUp] = useState(false)
   const [scanLookupError, setScanLookupError] = useState<string | null>(null)
+  // Target from a "stay under calorie budget" task on Today, when one exists — see kcalLeft.
+  const [calorieBudget, setCalorieBudget] = useState<number | null>(null)
+  // Set by the dashed "Dinner — nothing yet" row so the quantify dialog opens on that meal
+  // rather than the time-of-day guess.
+  const [pendingMealType, setPendingMealType] = useState<MealType | null>(null)
 
   async function load() {
     setLoading(true)
-    const [{ data: ingredientRows }, { data: recipeRowsData }, { data: recipeLineRows }, { data: entryRows }] = await Promise.all([
-      supabase.from('ingredients').select('*').order('name'),
-      supabase.from('recipes').select('*').order('name'),
-      supabase.from('recipe_ingredients').select('*').order('position'),
-      supabase.from('food_log_entries').select('*').order('date', { ascending: false }).limit(300),
-    ])
+    const [{ data: ingredientRows }, { data: recipeRowsData }, { data: recipeLineRows }, { data: entryRows }, { data: budgetRow }] =
+      await Promise.all([
+        supabase.from('ingredients').select('*').order('name'),
+        supabase.from('recipes').select('*').order('name'),
+        supabase.from('recipe_ingredients').select('*').order('position'),
+        supabase.from('food_log_entries').select('*').order('date', { ascending: false }).limit(300),
+        supabase
+          .from('daily_tasks')
+          .select('auto_metric_target')
+          .eq('active', true)
+          .eq('auto_metric', 'calorie_budget')
+          .not('auto_metric_target', 'is', null)
+          .limit(1)
+          .maybeSingle(),
+      ])
+    setCalorieBudget(budgetRow?.auto_metric_target != null ? Number(budgetRow.auto_metric_target) : null)
     const byRecipe = new Map<string, RecipeIngredient[]>()
     for (const line of recipeLineRows ?? []) {
       const arr = byRecipe.get(line.recipe_id) ?? []
@@ -178,8 +206,11 @@ export function Food() {
     // A recipe's own meal tag (if it has one) is a better default than a time-of-day
     // guess — e.g. a recipe tagged "Dinner" logged the next day as lunch leftovers is
     // the exception, not the rule.
+    // A meal picked explicitly (the "Dinner — nothing yet" row) wins over the recipe's own
+    // tag, which in turn beats the time-of-day guess.
     const recipeMeal = kind === 'recipe' ? (recipesById.get(id)?.meal_type ?? null) : null
-    setQuantifyMealType(recipeMeal ?? defaultMealTypeForNow())
+    setQuantifyMealType(pendingMealType ?? recipeMeal ?? defaultMealTypeForNow())
+    setPendingMealType(null)
     setAddLogOpen(false)
   }
 
@@ -268,6 +299,75 @@ export function Food() {
     .map(([date, kcal]) => ({ date: date.slice(5), fullDate: date, value: round(kcal) }))
     .sort((a, b) => a.fullDate.localeCompare(b.fullDate))
     .slice(-14)
+
+  // --- One-tap logging ---
+
+  // What a suggestion row needs to render: name, kcal at that quantity, and an icon.
+  // Recipes borrow their meal's glyph; ingredients fall back to a generic one.
+  function describeRef(ref: { kind: 'recipe' | 'ingredient'; id: string }, quantity: number) {
+    if (ref.kind === 'recipe') {
+      const recipe = recipesById.get(ref.id)
+      if (!recipe) return null
+      const perServing = recipePerServingMacros(recipe, recipeLines.get(recipe.id) ?? [], ingredientsById)
+      return {
+        name: recipe.name,
+        kcal: perServing.kcal * quantity,
+        icon: recipe.meal_type ? MEAL_TYPE_INFO[recipe.meal_type].icon : '🍽',
+      }
+    }
+    const ingredient = ingredientsById.get(ref.id)
+    if (!ingredient) return null
+    return { name: ingredient.name, kcal: scaleMacros(ingredientMacros(ingredient), quantity).kcal, icon: '🥗' }
+  }
+
+  const yesterday = format(subDays(new Date(logDate + 'T00:00:00'), 1), 'yyyy-MM-dd')
+  const suggestions = quickLogSuggestions(entries, yesterday, defaultMealTypeForNow(), describeRef)
+
+  // Logs a suggestion straight away at its remembered quantity — the whole point of the
+  // row is that it doesn't open the quantify dialog.
+  async function quickLog(suggestion: QuickLogSuggestion) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    const rows =
+      suggestion.kind === 'repeat-meal'
+        ? suggestion.entries.map((e) => ({
+            recipe_id: e.recipe_id,
+            servings: e.servings,
+            ingredient_id: e.ingredient_id,
+            grams: e.grams,
+            meal_type: suggestion.mealType,
+            date: logDate,
+            user_id: user.id,
+          }))
+        : [
+            {
+              recipe_id: suggestion.ref.kind === 'recipe' ? suggestion.ref.id : null,
+              servings: suggestion.ref.kind === 'recipe' ? suggestion.quantity : null,
+              ingredient_id: suggestion.ref.kind === 'ingredient' ? suggestion.ref.id : null,
+              grams: suggestion.ref.kind === 'ingredient' ? suggestion.quantity : null,
+              meal_type: suggestion.mealType ?? defaultMealTypeForNow(),
+              date: logDate,
+              user_id: user.id,
+            },
+          ]
+    if (rows.length === 0) return
+    await supabase.from('food_log_entries').insert(rows)
+    load()
+  }
+
+  // The app deliberately has no global daily calorie goal (days vary too much for one to
+  // mean anything). A "stay under budget" task on Today is the one place a target does
+  // exist, so the "N left" chip reads from that when there is one, and is absent otherwise.
+  const kcalLeft = calorieBudget != null ? calorieBudget - dayTotal.kcal : null
+
+  // Flex weights for the macro split bar — grams, not calories, matching the design.
+  const macroGrams = dayTotal.protein + dayTotal.carbs + dayTotal.fat
+
+  // The next meal with nothing logged yet, in the usual order — shown as the dashed
+  // "nothing yet · Add" row.
+  const nextEmptyMeal = MEAL_TYPES.find((meal) => !dayEntriesByMeal.has(meal)) ?? null
 
   const matchingRecipes = recipes.filter((r) => matchesSearch(r.name, addLogQuery))
   const matchingIngredients = ingredients.filter((i) => matchesSearch(i.name, addLogQuery))
@@ -521,11 +621,49 @@ export function Food() {
       title="Food"
       onRefresh={load}
       hero={
-        <HeroSegments
-          options={SUB_TABS.map((t) => ({ id: t, label: SUB_TAB_LABELS[t] }))}
-          value={subTab}
-          onChange={setSubTab}
-        />
+        <>
+          <HeroSegments
+            options={SUB_TABS.map((t) => ({ id: t, label: SUB_TAB_LABELS[t] }))}
+            value={subTab}
+            onChange={setSubTab}
+          />
+          {subTab === 'log' && (
+            <>
+              <div className="mt-5 flex items-end justify-between gap-3">
+                <p className="text-[40px] font-semibold leading-none">
+                  {round(dayTotal.kcal).toLocaleString()}
+                  <span className="ml-1 text-base font-medium">kcal</span>
+                </p>
+                {kcalLeft != null && (
+                  <span
+                    className="rounded-full px-[11px] py-[5px] text-xs font-semibold"
+                    style={
+                      kcalLeft >= 0
+                        ? { background: CAT.emerald.tint, color: CAT.emerald.ink }
+                        : { background: CAT.rose.tint, color: CAT.rose.ink }
+                    }
+                  >
+                    {kcalLeft >= 0 ? `${round(kcalLeft).toLocaleString()} left` : `${round(-kcalLeft).toLocaleString()} over`}
+                  </span>
+                )}
+              </div>
+              {macroGrams > 0 && (
+                <>
+                  <div className="mt-3 flex gap-[5px]">
+                    <span className="h-[7px] rounded-full" style={{ flex: dayTotal.protein, background: '#a8cfc0' }} />
+                    <span className="h-[7px] rounded-full" style={{ flex: dayTotal.carbs, background: '#e0cf9a' }} />
+                    <span className="h-[7px] rounded-full" style={{ flex: dayTotal.fat, background: '#e6b39f' }} />
+                  </div>
+                  <div className="mt-[7px] flex gap-3 text-[11px] font-medium text-white">
+                    <span>P {round(dayTotal.protein)}g</span>
+                    <span>C {round(dayTotal.carbs)}g</span>
+                    <span>F {round(dayTotal.fat)}g</span>
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </>
       }
     >
       {subTab === 'log' && (
@@ -540,63 +678,129 @@ export function Food() {
             />
           </div>
 
-          <div className="rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
-            <p className="text-lg font-bold text-ink">{round(dayTotal.kcal)} kcal</p>
-            <MacroRow macros={dayTotal} />
+          {suggestions.length > 0 && (
+            <>
+              <p className="text-[13px] font-semibold text-ink-3">Log again — one tap</p>
+              <div className="flex flex-col gap-2">
+                {suggestions.map((suggestion) => (
+                  <div
+                    key={suggestion.kind === 'repeat-meal' ? `meal:${suggestion.mealType}` : `${suggestion.ref.kind}:${suggestion.ref.id}`}
+                    className="flex items-center gap-3 rounded-[20px] border border-line bg-surface px-3.5 py-3 shadow-card"
+                  >
+                    <span
+                      className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[13px] text-base"
+                      style={{
+                        background: suggestion.kind === 'repeat-meal' ? CAT.amber.tint : CAT.emerald.tint,
+                      }}
+                    >
+                      {suggestion.kind === 'repeat-meal' ? MEAL_TYPE_INFO[suggestion.mealType].icon : suggestion.icon}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-ink">{suggestion.title}</span>
+                      <span className="block truncate text-[11px] text-ink-muted">{suggestion.subtitle}</span>
+                    </span>
+                    <button
+                      onClick={() => quickLog(suggestion)}
+                      aria-label={`Log ${suggestion.title}`}
+                      className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full bg-pine text-lg text-white"
+                    >
+                      +
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          <div className="flex gap-2.5">
+            <button
+              onClick={() => {
+                setScanLookupError(null)
+                openNewIngredient('library')
+                setScannerOpen(true)
+              }}
+              className="flex flex-1 items-center justify-center gap-2 rounded-[20px] bg-pine py-3.5 text-sm font-semibold text-white"
+            >
+              📷 Scan barcode
+            </button>
+            <button
+              onClick={openAddLog}
+              className="shrink-0 rounded-[20px] border border-line-strong bg-surface px-5 py-3.5 text-sm font-semibold text-pine"
+            >
+              Search
+            </button>
           </div>
+
+          <p className="mt-1 text-[13px] font-semibold text-ink-3">{logDate === todayISO() ? 'Today' : logDate}</p>
 
           {loading ? (
             <p className="text-sm text-ink-disabled">Loading…</p>
-          ) : dayEntries.length === 0 ? (
-            <p className="text-sm text-ink-disabled">Nothing logged for this day yet.</p>
           ) : (
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2">
               {mealSections.map(({ meal, entries: mealEntries }) => {
                 const mealTotal = mealEntries.reduce((sum, e) => addMacros(sum, macrosFor(e)), ZERO_MACROS)
                 return (
-                  <div key={meal ?? 'other'}>
-                    <div className="mb-1 flex items-center justify-between px-1">
-                      <span className="text-xs font-semibold uppercase text-ink-disabled">
-                        {meal ? `${MEAL_TYPE_INFO[meal].icon} ${MEAL_TYPE_INFO[meal].label}` : 'Other'}
-                      </span>
-                      <span className="text-xs text-ink-disabled">{round(mealTotal.kcal)} kcal</span>
+                  <div
+                    key={meal ?? 'other'}
+                    className="flex overflow-hidden rounded-[20px] border border-line bg-surface shadow-card"
+                  >
+                    <span
+                      className="w-[5px] shrink-0 self-stretch"
+                      style={{ background: meal ? MEAL_HUE[meal] : CAT.violet.accent }}
+                    />
+                    <div className="min-w-0 flex-1 px-3.5 py-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-sm font-medium text-ink">
+                          {meal ? `${MEAL_TYPE_INFO[meal].icon} ${MEAL_TYPE_INFO[meal].label}` : 'Other'}
+                        </span>
+                        <span className="shrink-0 text-[13px] font-semibold text-ink">{round(mealTotal.kcal)} kcal</span>
+                      </div>
+                      <ul className="mt-1.5 flex flex-col gap-1">
+                        {mealEntries.map((entry) => {
+                          const m = macrosFor(entry)
+                          return (
+                            <li key={entry.id} className="flex items-center gap-2">
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[13px] text-ink-2">{entryLabel(entry)}</span>
+                                <span className="block text-[11px] text-ink-muted">
+                                  {round(m.kcal)} kcal · P {round(m.protein)}g C {round(m.carbs)}g F {round(m.fat)}g
+                                </span>
+                              </span>
+                              <button onClick={() => beginEditEntry(entry)} className="shrink-0 px-0.5 text-sm text-ink-faint" aria-label="Edit entry">
+                                ✎
+                              </button>
+                              <button
+                                onClick={() => setConfirmDeleteEntry(entry)}
+                                className="shrink-0 px-0.5 text-sm text-ink-faint"
+                                aria-label="Remove entry"
+                              >
+                                ✕
+                              </button>
+                            </li>
+                          )
+                        })}
+                      </ul>
                     </div>
-                    <ul className="flex flex-col gap-2">
-                      {mealEntries.map((entry) => {
-                        const m = macrosFor(entry)
-                        return (
-                          <li
-                            key={entry.id}
-                            className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card"
-                          >
-                            <div className="flex-1">
-                              <p className="font-medium text-ink">{entryLabel(entry)}</p>
-                              <p className="text-xs text-ink-disabled">
-                                {round(m.kcal)} kcal · P {round(m.protein)}g C {round(m.carbs)}g F {round(m.fat)}g
-                              </p>
-                            </div>
-                            <button onClick={() => beginEditEntry(entry)} className="pl-3 text-ink-faint" aria-label="Edit entry">
-                              ✎
-                            </button>
-                            <button onClick={() => setConfirmDeleteEntry(entry)} className="pl-3 text-ink-faint" aria-label="Remove entry">
-                              ✕
-                            </button>
-                          </li>
-                        )
-                      })}
-                    </ul>
                   </div>
                 )
               })}
+
+              {nextEmptyMeal && (
+                <button
+                  onClick={() => {
+                    setPendingMealType(nextEmptyMeal)
+                    openAddLog()
+                  }}
+                  className="flex items-center justify-between gap-2 rounded-[20px] border border-dashed border-line-strong bg-surface px-3.5 py-3 text-left"
+                >
+                  <span className="truncate text-sm font-medium text-ink-muted">
+                    {MEAL_TYPE_INFO[nextEmptyMeal].icon} {MEAL_TYPE_INFO[nextEmptyMeal].label} — nothing yet
+                  </span>
+                  <span className="shrink-0 text-[13px] font-semibold text-pine">Add</span>
+                </button>
+              )}
             </div>
           )}
-
-          <button
-            onClick={openAddLog}
-            className="rounded-[20px] border border-line-strong bg-surface py-3 text-sm font-semibold text-pine"
-          >
-            + Add food
-          </button>
 
           {kcalSeries.length > 1 && (
             <div>

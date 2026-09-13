@@ -242,3 +242,123 @@ export async function fetchOpenFoodFactsProduct(barcode: string): Promise<OpenFo
     },
   }
 }
+
+// --- One-tap logging ---
+// Most days repeat: the same breakfast, the same handful of recipes. These pick the
+// candidates worth offering as a single tap, so logging a normal day doesn't mean
+// searching for things already logged dozens of times.
+
+export type QuickLogSuggestion =
+  | {
+      /** Everything logged for the same meal yesterday, re-logged in one go. */
+      kind: 'repeat-meal'
+      mealType: MealType
+      entries: FoodLogEntry[]
+      title: string
+      subtitle: string
+    }
+  | {
+      /** A single recipe or ingredient, at the quantity it was last logged at. */
+      kind: 'frequent'
+      ref: { kind: 'recipe' | 'ingredient'; id: string }
+      mealType: MealType | null
+      quantity: number
+      title: string
+      subtitle: string
+      icon: string
+    }
+
+function entryRefKey(entry: FoodLogEntry): string | null {
+  if (entry.recipe_id) return `recipe:${entry.recipe_id}`
+  if (entry.ingredient_id) return `ingredient:${entry.ingredient_id}`
+  return null
+}
+
+/**
+ * Up to `limit` one-tap rows: yesterday's version of the meal you're most likely logging
+ * right now, then whatever you log most often (excluding anything already covered by that
+ * first row, so the same recipe doesn't appear twice).
+ *
+ * `entries` is the full loaded history; `describe` turns a recipe/ingredient reference
+ * into its name, kcal and icon, which only the page has the maps for.
+ */
+export function quickLogSuggestions(
+  entries: FoodLogEntry[],
+  yesterday: string,
+  nowMeal: MealType,
+  describe: (ref: { kind: 'recipe' | 'ingredient'; id: string }, quantity: number) => { name: string; kcal: number; icon: string } | null,
+  limit = 3,
+): QuickLogSuggestion[] {
+  const suggestions: QuickLogSuggestion[] = []
+  const coveredRefs = new Set<string>()
+
+  const yesterdaysMeal = entries.filter((e) => e.date === yesterday && e.meal_type === nowMeal)
+  if (yesterdaysMeal.length > 0) {
+    const names: string[] = []
+    let kcal = 0
+    for (const entry of yesterdaysMeal) {
+      const ref = entry.recipe_id
+        ? ({ kind: 'recipe', id: entry.recipe_id } as const)
+        : entry.ingredient_id
+          ? ({ kind: 'ingredient', id: entry.ingredient_id } as const)
+          : null
+      if (!ref) continue
+      const described = describe(ref, entry.recipe_id ? (entry.servings ?? 1) : (entry.grams ?? 0))
+      if (!described) continue
+      names.push(described.name)
+      kcal += described.kcal
+      const key = entryRefKey(entry)
+      if (key) coveredRefs.add(key)
+    }
+    if (names.length > 0) {
+      suggestions.push({
+        kind: 'repeat-meal',
+        mealType: nowMeal,
+        entries: yesterdaysMeal,
+        title: `Yesterday's ${MEAL_TYPE_INFO[nowMeal].label.toLowerCase()}`,
+        subtitle: `${names.join(', ')} · ${Math.round(kcal)} kcal`,
+      })
+    }
+  }
+
+  // Count how often each thing gets logged, remembering the most recent quantity and
+  // meal so the tap reproduces what you actually eat, not a default portion.
+  const tally = new Map<string, { ref: { kind: 'recipe' | 'ingredient'; id: string }; count: number; latest: FoodLogEntry }>()
+  for (const entry of entries) {
+    const key = entryRefKey(entry)
+    if (!key) continue
+    const ref = entry.recipe_id
+      ? ({ kind: 'recipe', id: entry.recipe_id } as const)
+      : ({ kind: 'ingredient', id: entry.ingredient_id as string } as const)
+    const existing = tally.get(key)
+    if (existing) {
+      existing.count += 1
+      if (entry.date > existing.latest.date) existing.latest = entry
+    } else {
+      tally.set(key, { ref, count: 1, latest: entry })
+    }
+  }
+
+  const frequent = [...tally.entries()]
+    .filter(([key]) => !coveredRefs.has(key))
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, limit - suggestions.length)
+
+  for (const [, { ref, count, latest }] of frequent) {
+    const quantity = ref.kind === 'recipe' ? (latest.servings ?? 1) : (latest.grams ?? 0)
+    const described = describe(ref, quantity)
+    if (!described) continue
+    const amount = ref.kind === 'recipe' ? `${quantity} serving${quantity === 1 ? '' : 's'}` : `${Math.round(quantity)} g`
+    suggestions.push({
+      kind: 'frequent',
+      ref,
+      mealType: latest.meal_type,
+      quantity,
+      title: described.name,
+      subtitle: `${amount} · ${Math.round(described.kcal)} kcal · logged ${count}×`,
+      icon: described.icon,
+    })
+  }
+
+  return suggestions
+}
