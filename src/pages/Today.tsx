@@ -46,6 +46,8 @@ export function Today() {
   const [weightInput, setWeightInput] = useState('')
   const [todayCalories, setTodayCalories] = useState<number | null>(null)
   const [summaryOpen, setSummaryOpen] = useState(false)
+  // Completed tasks collapse behind a "N done · show" toggle so the list is what's left.
+  const [showDone, setShowDone] = useState(false)
   const [addFormOpen, setAddFormOpen] = useState(false)
   const [confirmTask, setConfirmTask] = useState<DailyTask | null>(null)
   const [metricEntryTask, setMetricEntryTask] = useState<DailyTask | null>(null)
@@ -362,7 +364,14 @@ export function Today() {
   }
 
   const doneCount = tasks.filter(isTaskDone).length
-  const pct = tasks.length ? (doneCount / tasks.length) * 100 : 0
+  const remainingCount = tasks.length - doneCount
+  const outstandingTasks = tasks.filter((t) => !isTaskDone(t))
+  const completedTasks = tasks.filter(isTaskDone)
+  // Settings' step goal wins, but a "walk N steps" task carries the same intent — fall
+  // back to its target so the hero line works without setting the goal in two places.
+  const stepTaskTarget = tasks.find((t) => t.auto_metric === 'steps')?.auto_metric_target ?? null
+  const effectiveStepGoal = stepGoal ?? stepTaskTarget
+  const stepsToGoal = effectiveStepGoal != null && steps != null && effectiveStepGoal > steps ? effectiveStepGoal - steps : null
   const categoryById = new Map(categories.map((c) => [c.id, c]))
   const metricEntryInfo = metricEntryTask && isAutoMetric(metricEntryTask.auto_metric) ? METRIC_INFO[metricEntryTask.auto_metric] : null
   // Recurring tasks default to reminding every day; a one-time task only has one
@@ -372,129 +381,8 @@ export function Today() {
     : [getDay(new Date((newScheduledDate || viewDate) + 'T00:00:00'))]
   const activeReminderDays = reminderDays.length ? reminderDays : defaultReminderDays
 
-  const hero = (
-    <>
-      {(tasks.length > 0 || steps != null || weightToday != null || todayCalories != null) && (
-        <button onClick={() => setSummaryOpen((o) => !o)} className="mt-5 flex w-full items-center gap-4 text-left">
-          {tasks.length > 0 && (
-            <ProgressRing
-              percent={pct}
-              size={66}
-              strokeWidth={6}
-              color={THEME.pineArc}
-              trackColor={THEME.heroRingTrack}
-              disc={THEME.pineDisc}
-            >
-              <span className="text-base font-semibold text-white">
-                {doneCount}/{tasks.length}
-              </span>
-            </ProgressRing>
-          )}
-          <span className="flex flex-wrap gap-1.5">
-            {steps != null && <HeroChip>🚶 {steps.toLocaleString()}</HeroChip>}
-            {weightToday != null && <HeroChip>⚖️ {weightToday} kg</HeroChip>}
-            {todayCalories != null && <HeroChip>🔥 {todayCalories.toLocaleString()} kcal</HeroChip>}
-          </span>
-        </button>
-      )}
-
-      <div className="mt-4 flex items-center justify-between gap-2 rounded-[18px] bg-white/14 px-2.5 py-[7px]">
-        <button
-          onClick={() => setViewDate((d) => format(subDays(new Date(d + 'T00:00:00'), 1), 'yyyy-MM-dd'))}
-          aria-label="Previous day"
-          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-white/18 text-white"
-        >
-          ‹
-        </button>
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-medium text-white">
-            {isToday ? 'Today' : format(new Date(viewDate + 'T00:00:00'), 'EEEE, MMM d')}
-          </span>
-          {!isToday && (
-            <button
-              onClick={() => setViewDate(todayISO())}
-              className="shrink-0 rounded-full bg-surface px-2.5 py-0.5 text-xs font-semibold text-pine"
-            >
-              Jump to today
-            </button>
-          )}
-        </div>
-        <button
-          onClick={() => setViewDate((d) => format(addDays(new Date(d + 'T00:00:00'), 1), 'yyyy-MM-dd'))}
-          aria-label="Next day"
-          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-white/18 text-white"
-        >
-          ›
-        </button>
-      </div>
-    </>
-  )
-
-  return (
-    <Screen title="Today" onRefresh={load} hero={hero}>
-      <MorningCheckIn onSaved={load} />
-
-      {summaryOpen && (
-        <div className="flex flex-col gap-3 rounded-3xl border border-line bg-surface p-4 shadow-card">
-          {steps != null && (
-            <div className="flex items-center gap-4">
-              <ProgressRing percent={stepGoal ? (steps / stepGoal) * 100 : 0} size={48} strokeWidth={5}>
-                <span className="text-xs">🚶</span>
-              </ProgressRing>
-              <div>
-                <p className="font-semibold text-ink">
-                  {steps.toLocaleString()} {stepGoal ? `/ ${stepGoal.toLocaleString()}` : ''} steps
-                </p>
-                <p className="text-xs font-medium text-ink-muted">Synced from Garmin</p>
-              </div>
-            </div>
-          )}
-          <div className="flex items-center gap-4">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[15px] bg-cat-violet-tint text-lg">⚖️</span>
-            <div className="flex-1">
-              {weightToday != null ? (
-                <>
-                  <p className="font-semibold text-ink">{weightToday} kg</p>
-                  <p className="text-xs font-medium text-ink-muted">
-                    {goalWeight != null ? `Goal ${goalWeight} kg` : `Logged ${isToday ? 'today' : 'that day'}`}
-                  </p>
-                </>
-              ) : (
-                <div className="flex gap-2">
-                  <input
-                    value={weightInput}
-                    onChange={(e) => setWeightInput(e.target.value)}
-                    type="number"
-                    step="0.1"
-                    placeholder="Log weight (kg)"
-                    className="min-w-0 flex-1 rounded-[20px] border border-line bg-surface px-3 py-2 text-sm text-ink placeholder-ink-disabled outline-none focus:border-pine"
-                  />
-                  <button onClick={logWeight} className="shrink-0 rounded-[20px] bg-pine px-4 py-2 text-sm font-semibold text-white">
-                    Log
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-          {todayCalories != null && (
-            <div className="flex items-center gap-4">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[15px] bg-cat-amber-tint text-lg">🔥</span>
-              <div>
-                <p className="font-semibold text-ink">{todayCalories.toLocaleString()} kcal</p>
-                <p className="text-xs font-medium text-ink-muted">See Journal for a breakdown</p>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {loading ? (
-        <p className="text-sm text-ink-disabled">Loading…</p>
-      ) : tasks.length === 0 ? (
-        <p className="text-sm text-ink-disabled">No daily tasks yet. Add one below.</p>
-      ) : (
-        <ul className="flex flex-col gap-2.5">
-          {tasks.map((task) => {
+  // One task row. Rendered twice: the outstanding list, and the collapsed done list.
+  function renderTask(task: DailyTask) {
             const isBudget = task.auto_metric === CALORIE_BUDGET_METRIC
             const done = isTaskDone(task)
             const category = task.category_id ? categoryById.get(task.category_id) : undefined
@@ -597,16 +485,167 @@ export function Today() {
                   )}
                 </button>
               </li>
-            )
-          })}
-        </ul>
+    )
+  }
+
+  const hero = (
+    <>
+      {/* Lead with what's left rather than what's done — the ring told you the same thing
+          but made you do the subtraction. */}
+      {(tasks.length > 0 || steps != null || weightToday != null || todayCalories != null) && (
+        <button onClick={() => setSummaryOpen((o) => !o)} className="mt-4 block w-full text-left">
+          <p className="text-[15px] font-medium leading-relaxed text-white">
+            {tasks.length === 0 ? (
+              'Nothing scheduled today.'
+            ) : remainingCount === 0 ? (
+              <>
+                <strong className="font-semibold">All done</strong> today.
+              </>
+            ) : (
+              <>
+                <strong className="font-semibold">{remainingCount} left</strong> today
+                {stepsToGoal != null && ` — and ${stepsToGoal.toLocaleString()} steps to your goal`}.
+              </>
+            )}
+          </p>
+          {tasks.length > 0 && (
+            <span className="mt-3.5 flex gap-[5px]">
+              {tasks.map((task) => (
+                <span
+                  key={task.id}
+                  className="h-2 flex-1 rounded-full"
+                  style={{ background: isTaskDone(task) ? THEME.pineArc : 'rgba(255,255,255,.25)' }}
+                />
+              ))}
+            </span>
+          )}
+          <span className="mt-3.5 flex flex-wrap gap-1.5">
+            {steps != null && <HeroChip>🚶 {steps.toLocaleString()}</HeroChip>}
+            {weightToday != null && <HeroChip>⚖️ {weightToday} kg</HeroChip>}
+            {todayCalories != null && <HeroChip>🔥 {todayCalories.toLocaleString()} kcal</HeroChip>}
+          </span>
+        </button>
       )}
-      <button
-        onClick={openAddForm}
-        className="rounded-[20px] border border-line-strong bg-surface p-3.5 text-[15px] font-semibold text-pine"
-      >
-        + Add task
-      </button>
+
+      <div className="mt-4 flex items-center justify-between gap-2 rounded-[18px] bg-white/14 px-2.5 py-[7px]">
+        <button
+          onClick={() => setViewDate((d) => format(subDays(new Date(d + 'T00:00:00'), 1), 'yyyy-MM-dd'))}
+          aria-label="Previous day"
+          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-white/18 text-white"
+        >
+          ‹
+        </button>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-medium text-white">
+            {isToday ? 'Today' : format(new Date(viewDate + 'T00:00:00'), 'EEEE, MMM d')}
+          </span>
+          {!isToday && (
+            <button
+              onClick={() => setViewDate(todayISO())}
+              className="shrink-0 rounded-full bg-surface px-2.5 py-0.5 text-xs font-semibold text-pine"
+            >
+              Jump to today
+            </button>
+          )}
+        </div>
+        <button
+          onClick={() => setViewDate((d) => format(addDays(new Date(d + 'T00:00:00'), 1), 'yyyy-MM-dd'))}
+          aria-label="Next day"
+          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-white/18 text-white"
+        >
+          ›
+        </button>
+      </div>
+    </>
+  )
+
+  return (
+    <Screen title="Today" onRefresh={load} hero={hero}>
+      <MorningCheckIn onSaved={load} />
+
+      {summaryOpen && (
+        <div className="flex flex-col gap-3 rounded-3xl border border-line bg-surface p-4 shadow-card">
+          {steps != null && (
+            <div className="flex items-center gap-4">
+              <ProgressRing percent={stepGoal ? (steps / stepGoal) * 100 : 0} size={48} strokeWidth={5}>
+                <span className="text-xs">🚶</span>
+              </ProgressRing>
+              <div>
+                <p className="font-semibold text-ink">
+                  {steps.toLocaleString()} {stepGoal ? `/ ${stepGoal.toLocaleString()}` : ''} steps
+                </p>
+                <p className="text-xs font-medium text-ink-muted">Synced from Garmin</p>
+              </div>
+            </div>
+          )}
+          <div className="flex items-center gap-4">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[15px] bg-cat-violet-tint text-lg">⚖️</span>
+            <div className="flex-1">
+              {weightToday != null ? (
+                <>
+                  <p className="font-semibold text-ink">{weightToday} kg</p>
+                  <p className="text-xs font-medium text-ink-muted">
+                    {goalWeight != null ? `Goal ${goalWeight} kg` : `Logged ${isToday ? 'today' : 'that day'}`}
+                  </p>
+                </>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    value={weightInput}
+                    onChange={(e) => setWeightInput(e.target.value)}
+                    type="number"
+                    step="0.1"
+                    placeholder="Log weight (kg)"
+                    className="min-w-0 flex-1 rounded-[20px] border border-line bg-surface px-3 py-2 text-sm text-ink placeholder-ink-disabled outline-none focus:border-pine"
+                  />
+                  <button onClick={logWeight} className="shrink-0 rounded-[20px] bg-pine px-4 py-2 text-sm font-semibold text-white">
+                    Log
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+          {todayCalories != null && (
+            <div className="flex items-center gap-4">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[15px] bg-cat-amber-tint text-lg">🔥</span>
+              <div>
+                <p className="font-semibold text-ink">{todayCalories.toLocaleString()} kcal</p>
+                <p className="text-xs font-medium text-ink-muted">See Journal for a breakdown</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {loading ? (
+        <p className="text-sm text-ink-disabled">Loading…</p>
+      ) : tasks.length === 0 ? (
+        <p className="text-sm text-ink-disabled">No daily tasks yet. Add one below.</p>
+      ) : (
+        <>
+          {outstandingTasks.length > 0 ? (
+            <>
+              <p className="text-[13px] font-semibold text-ink-3">Left today</p>
+              <ul className="flex flex-col gap-2.5">{outstandingTasks.map(renderTask)}</ul>
+            </>
+          ) : (
+            <p className="text-sm text-ink-disabled">Everything's done for today.</p>
+          )}
+          {showDone && completedTasks.length > 0 && (
+            <ul className="flex flex-col gap-2.5">{completedTasks.map(renderTask)}</ul>
+          )}
+        </>
+      )}
+      <div className="flex items-center justify-between gap-3 rounded-[20px] border border-line-strong bg-surface px-4 py-3.5">
+        <button onClick={openAddForm} className="text-[15px] font-semibold text-pine">
+          + Add task
+        </button>
+        {completedTasks.length > 0 && (
+          <button onClick={() => setShowDone((v) => !v)} className="shrink-0 text-xs font-medium text-ink-muted">
+            {completedTasks.length} done · {showDone ? 'hide' : 'show'}
+          </button>
+        )}
+      </div>
 
       {addFormOpen && (
         <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">

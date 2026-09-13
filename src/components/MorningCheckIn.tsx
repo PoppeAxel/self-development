@@ -84,56 +84,55 @@ export function MorningCheckIn({ onSaved }: { onSaved: () => void }) {
 
   if (!open) return null
 
+  // An inline card at the top of Today's list rather than a modal over it — the prompt is
+  // a nudge, not something worth blocking the screen for. The once-a-day localStorage
+  // gate is unchanged, so skipping still keeps it away until tomorrow.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6" onClick={dismiss}>
-      <div className="w-full max-w-xs rounded-3xl border border-line bg-surface p-5 shadow-card" onClick={(e) => e.stopPropagation()}>
-        <p className="text-lg font-bold text-ink">Good morning ☀️</p>
-        <p className="mt-1 text-sm text-ink-3">Quick check-in before the day gets going.</p>
-        <div className="mt-4 flex flex-col gap-3">
-          {needsWeight && (
-            <div>
-              <label className="mb-1 block text-xs font-medium text-ink-3">Weight (kg)</label>
-              <input
-                autoFocus
-                value={weightInput}
-                onChange={(e) => setWeightInput(e.target.value)}
-                type="number"
-                step="0.1"
-                placeholder="e.g. 82.4"
-                className="w-full rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
-              />
-            </div>
-          )}
-          {needsSleep && (
-            <div>
-              <label className="mb-1 block text-xs font-medium text-ink-3">Sleep last night</label>
-              <div className="flex gap-2">
-                <input
-                  value={sleepHoursPart}
-                  onChange={(e) => setSleepHoursPart(e.target.value)}
-                  type="number"
-                  placeholder="Hours"
-                  className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
-                />
-                <input
-                  value={sleepMinutesPart}
-                  onChange={(e) => setSleepMinutesPart(e.target.value)}
-                  type="number"
-                  placeholder="Minutes"
-                  className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="mt-4 flex gap-2">
-          <button onClick={dismiss} className="flex-1 rounded-[20px] bg-track px-4 py-2.5 font-medium text-ink-2">
-            Skip today
-          </button>
-          <button onClick={save} className="flex-1 rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white">
-            Save
-          </button>
-        </div>
+    <div className="rounded-[22px] border border-line bg-surface px-4 py-3.5 shadow-card">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-ink">Morning check-in</p>
+        <button onClick={dismiss} className="shrink-0 text-xs font-medium text-ink-muted">
+          Skip
+        </button>
+      </div>
+      <div className="mt-2.5 flex items-center gap-2">
+        {needsWeight && (
+          <input
+            value={weightInput}
+            onChange={(e) => setWeightInput(e.target.value)}
+            type="number"
+            step="0.1"
+            placeholder="Weight kg"
+            aria-label="Weight in kilograms"
+            className="min-w-0 flex-1 rounded-2xl border border-line bg-page px-3 py-2.5 text-[13px] text-ink placeholder-ink-muted outline-none focus:border-pine"
+          />
+        )}
+        {needsSleep && (
+          <>
+            <input
+              value={sleepHoursPart}
+              onChange={(e) => setSleepHoursPart(e.target.value)}
+              type="number"
+              placeholder="Slept h"
+              aria-label="Hours slept"
+              className="min-w-0 flex-1 rounded-2xl border border-line bg-page px-3 py-2.5 text-[13px] text-ink placeholder-ink-muted outline-none focus:border-pine"
+            />
+            <input
+              value={sleepMinutesPart}
+              onChange={(e) => setSleepMinutesPart(e.target.value)}
+              type="number"
+              placeholder="min"
+              aria-label="Minutes slept"
+              className="w-16 min-w-0 shrink-0 rounded-2xl border border-line bg-page px-3 py-2.5 text-[13px] text-ink placeholder-ink-muted outline-none focus:border-pine"
+            />
+          </>
+        )}
+        <button
+          onClick={save}
+          className="shrink-0 rounded-2xl bg-pine px-4 py-2.5 text-[13px] font-semibold text-white"
+        >
+          Save
+        </button>
       </div>
     </div>
   )
