@@ -33,6 +33,7 @@ import {
   type LivsmedelsverketFood,
 } from '../lib/food'
 import { CATEGORY_STYLES as CAT } from '../lib/categories'
+import { resolveImportedLines, type ImportedRecipe } from '../lib/recipeImport'
 import type { FoodLogEntry, Ingredient, MealType, Recipe, RecipeIngredient } from '../lib/types'
 
 // One hue per meal, for the day-list accent edges. Breakfast ochre, lunch pine, dinner
@@ -80,6 +81,9 @@ interface RecipeIngredientRow {
   ingredientId: string
   name: string
   grams: string
+  /** The original line this row came from, when it was imported from a URL — kept so an
+      unresolved row still shows what it's meant to be ("2 msk olivolja"). */
+  importedFrom?: string
 }
 
 interface IngredientFormState {
@@ -178,6 +182,18 @@ export function Food() {
   const [pickingIngredientFor, setPickingIngredientFor] = useState<number | 'new' | null>(null)
   const [ingredientPickQuery, setIngredientPickQuery] = useState('')
   const [confirmDeleteRecipe, setConfirmDeleteRecipe] = useState<Recipe | null>(null)
+
+  // Import a recipe from a URL. The fetch and JSON-LD parsing happen in the import-recipe
+  // edge function (recipe sites aren't CORS-open); matching the resulting ingredient lines
+  // against the library happens here, and anything unmatched is left for the recipe
+  // builder to resolve with the pickers it already has.
+  const [importOpen, setImportOpen] = useState(false)
+  const [importUrl, setImportUrl] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [importError, setImportError] = useState<string | null>(null)
+  // The site's own per-serving figures, shown beside what the app computes. Never stored —
+  // recipes hold no macro columns, macros are always derived from the ingredient rows.
+  const [importedNutrition, setImportedNutrition] = useState<ImportedRecipe['statedNutrition']>(null)
 
   const [ingredientFormOpen, setIngredientFormOpen] = useState(false)
   // 'recipe' means this ingredient is being created from inside the recipe builder's
@@ -496,6 +512,23 @@ export function Food() {
     beginQuantify(kind, id, name, lastQuantity ?? undefined)
   }
 
+  // Live totals for the recipe builder, from whichever rows are resolved so far.
+  const builderServings = Number(recipeServings) || 1
+  const builderResolvedRows = recipeRows.filter((r) => r.ingredientId && Number(r.grams) > 0)
+  const unresolvedRowCount = recipeRows.length - builderResolvedRows.length
+  const builderPerServing =
+    builderResolvedRows.length > 0
+      ? scaleMacros(
+          builderResolvedRows.reduce((sum, row) => {
+            const ingredient = ingredientsById.get(row.ingredientId)
+            return ingredient ? addMacros(sum, scaleMacros(ingredientMacros(ingredient), Number(row.grams))) : sum
+          }, ZERO_MACROS),
+          // scaleMacros works per 100g, so dividing by servings means scaling by
+          // 100/servings rather than 1/servings.
+          100 / builderServings,
+        )
+      : null
+
   // One ingredient row, used by both the open category and the flat search results.
   // `withCategory` swaps the portion/source caption for which category it's filed under,
   // which is the useful thing to know when results span all of them.
@@ -564,6 +597,7 @@ export function Food() {
     setRecipeServings('1')
     setRecipeMealType(null)
     setRecipeRows([])
+    setImportedNutrition(null)
     setRecipeBuilderOpen(true)
   }
 
@@ -580,6 +614,51 @@ export function Food() {
         grams: String(l.grams),
       })),
     )
+    setImportedNutrition(null)
+    setRecipeBuilderOpen(true)
+  }
+
+  async function runImport() {
+    const url = importUrl.trim()
+    if (!url) return
+    setImporting(true)
+    setImportError(null)
+    const { data, error } = await supabase.functions.invoke<ImportedRecipe>('import-recipe', { body: { url } })
+    setImporting(false)
+
+    if (error || !data) {
+      // The function puts a readable sentence in the body for the cases worth explaining
+      // (unreachable page, no recipe markup); anything else gets a generic line.
+      let message = "Couldn't import that link."
+      const context = (error as { context?: Response })?.context
+      if (context && typeof context.json === 'function') {
+        try {
+          const body = await context.json()
+          if (typeof body?.error === 'string') message = body.error
+        } catch {
+          /* fall through to the generic message */
+        }
+      }
+      setImportError(message)
+      return
+    }
+
+    const resolved = resolveImportedLines(data.ingredientLines, ingredients)
+    setEditingRecipe(null)
+    setRecipeName(data.name)
+    setRecipeServings(data.servings != null ? String(data.servings) : '1')
+    setRecipeMealType(null)
+    setRecipeRows(
+      resolved.map((line) => ({
+        ingredientId: line.match?.id ?? '',
+        name: line.match?.name ?? '',
+        grams: line.grams != null ? String(Math.round(line.grams)) : '',
+        importedFrom: line.raw,
+      })),
+    )
+    setImportedNutrition(data.statedNutrition)
+    setImportOpen(false)
+    setImportUrl('')
     setRecipeBuilderOpen(true)
   }
 
@@ -589,7 +668,19 @@ export function Food() {
       setRecipeRows((rows) => [...rows, { ingredientId: ingredient.id, name: ingredient.name, grams: defaultGrams }])
     } else {
       setRecipeRows((rows) =>
-        rows.map((r, i) => (i === pickingIngredientFor ? { ...r, ingredientId: ingredient.id, name: ingredient.name } : r)),
+        rows.map((r, i) =>
+          i === pickingIngredientFor
+            ? {
+                ...r,
+                ingredientId: ingredient.id,
+                name: ingredient.name,
+                // An imported row often arrives with no grams (a volume or count unit we
+                // couldn't convert). Once it has an ingredient, its portion is the best
+                // starting point available.
+                grams: r.grams || (ingredient.portion_grams != null ? String(ingredient.portion_grams) : ''),
+              }
+            : r,
+        ),
       )
     }
     setPickingIngredientFor(null)
@@ -1143,12 +1234,24 @@ export function Food() {
             </div>
           )}
 
-          <button
-            onClick={openNewRecipe}
-            className="rounded-[20px] border border-line-strong bg-surface py-3.5 text-sm font-semibold text-pine"
-          >
-            + New recipe
-          </button>
+          <div className="flex gap-2.5">
+            <button
+              onClick={() => {
+                setImportUrl('')
+                setImportError(null)
+                setImportOpen(true)
+              }}
+              className="flex-1 rounded-[20px] bg-pine py-3.5 text-sm font-semibold text-white"
+            >
+              🔗 Import from URL
+            </button>
+            <button
+              onClick={openNewRecipe}
+              className="flex-1 rounded-[20px] border border-line-strong bg-surface py-3.5 text-sm font-semibold text-pine"
+            >
+              + New recipe
+            </button>
+          </div>
         </>
       )}
 
@@ -1469,6 +1572,51 @@ export function Food() {
       )}
 
       {/* Recipe builder */}
+      {/* Paste a link; everything after the fetch happens in the recipe builder, so the
+          pickers and the new-ingredient form are the ones already in use elsewhere. */}
+      {importOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6" onClick={() => setImportOpen(false)}>
+          <div
+            className="w-full max-w-xs rounded-3xl border border-line bg-surface p-5 shadow-card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="font-semibold text-ink">Import a recipe</p>
+            <p className="mt-1 text-sm text-ink-3">
+              Paste a recipe link. Ingredients get matched against your library — anything unmatched you'll resolve in the
+              builder before saving.
+            </p>
+            <input
+              autoFocus
+              value={importUrl}
+              onChange={(e) => setImportUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !importing) runImport()
+              }}
+              type="url"
+              inputMode="url"
+              placeholder="https://…"
+              className="mt-3 w-full rounded-[20px] border border-line bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
+            />
+            {importError && <p className="mt-2 text-xs text-cat-rose-ink">{importError}</p>}
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={() => setImportOpen(false)}
+                className="flex-1 rounded-[20px] bg-track px-4 py-2.5 font-medium text-ink-2"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={runImport}
+                disabled={importing || !importUrl.trim()}
+                className="flex-1 rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white disabled:opacity-50"
+              >
+                {importing ? 'Reading…' : 'Import'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {recipeBuilderOpen && (
         <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
           <div className="flex items-center justify-between px-4 pt-4">
@@ -1508,11 +1656,49 @@ export function Food() {
               <MealTypePicker value={recipeMealType} onChange={setRecipeMealType} />
             </div>
 
+            {/* What the rows currently add up to. For an imported recipe the site's own
+                figure sits beside it — a cross-check on whether the ingredient matching
+                came out sane, not something that gets stored. */}
+            {(builderPerServing != null || importedNutrition?.kcal != null) && (
+              <div className="rounded-[20px] border border-line bg-surface px-4 py-3">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-xs font-medium text-ink-muted">Computed from these ingredients</span>
+                  {builderPerServing && (
+                    <span className="text-[17px] font-semibold text-ink">{round(builderPerServing.kcal)} kcal/serving</span>
+                  )}
+                </div>
+                {builderPerServing && <MacroRow macros={builderPerServing} />}
+                {importedNutrition?.kcal != null && (
+                  <p className="mt-1.5 border-t border-line pt-1.5 text-[11px] text-ink-muted">
+                    The site states {round(importedNutrition.kcal)} kcal/serving
+                    {builderPerServing && unresolvedRowCount > 0
+                      ? ` — ${unresolvedRowCount} line${unresolvedRowCount === 1 ? '' : 's'} still unresolved, so expect a gap.`
+                      : builderPerServing && Math.abs(importedNutrition.kcal - builderPerServing.kcal) > importedNutrition.kcal * 0.25
+                        ? ' — that is well off what these ingredients add up to; worth checking a match or two.'
+                        : '.'}
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="flex flex-col gap-2">
               {recipeRows.map((row, i) => {
                 const portionIngredient = row.ingredientId ? ingredientsById.get(row.ingredientId) : null
                 return (
-                  <div key={i} className="flex flex-col gap-2 rounded-[20px] border border-line p-3">
+                  <div
+                    key={i}
+                    className={`flex flex-col gap-2 rounded-[20px] border p-3 ${
+                      row.importedFrom && !row.ingredientId ? 'border-cat-amber' : 'border-line'
+                    }`}
+                  >
+                    {/* An imported line keeps its original text: unresolved, it's the only
+                        clue what the row should be; resolved, it's how you check the match. */}
+                    {row.importedFrom && (
+                      <p className="text-[11px] text-ink-muted">
+                        {row.ingredientId ? 'From: ' : 'Unmatched: '}
+                        <span className={row.ingredientId ? '' : 'font-semibold text-cat-amber-ink'}>{row.importedFrom}</span>
+                      </p>
+                    )}
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
@@ -1520,7 +1706,7 @@ export function Food() {
                           setPickingIngredientFor(i)
                           setIngredientPickQuery('')
                         }}
-                        className="min-w-0 flex-1 text-left font-medium text-ink"
+                        className={`min-w-0 flex-1 text-left font-medium ${row.name ? 'text-ink' : 'text-pine'}`}
                       >
                         {row.name || 'Choose ingredient…'}
                       </button>
