@@ -17,6 +17,23 @@ import { createClient } from 'npm:@supabase/supabase-js@2'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
 
+// Edge functions get no CORS headers for free, and a browser POST carrying Authorization
+// and a JSON content type is preflighted — so without these the call never leaves the
+// browser. Every response below goes through `json()`/OPTIONS so the headers can't be
+// forgotten on one branch.
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+  })
+}
+
 interface ParsedRecipe {
   name: string
   servings: number | null
@@ -178,6 +195,8 @@ function parseRecipeNode(node: Record<string, unknown>, sourceUrl: string): Pars
 }
 
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS })
+
   const authHeader = req.headers.get('Authorization') ?? ''
   const jwt = authHeader.replace(/^Bearer /, '')
   const authedClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { global: { headers: { Authorization: authHeader } } })
@@ -186,22 +205,19 @@ Deno.serve(async (req) => {
     error: authError,
   } = await authedClient.auth.getUser(jwt)
   if (authError || !user) {
-    return new Response('Unauthorized', { status: 401 })
+    return json({ error: 'Unauthorized' }, 401)
   }
 
   let body: { url?: string }
   try {
     body = await req.json()
   } catch {
-    return new Response('Invalid JSON body', { status: 400 })
+    return json({ error: 'Invalid JSON body' }, 400)
   }
 
   const target = body.url ? isSafeUrl(body.url.trim()) : null
   if (!target) {
-    return new Response(JSON.stringify({ error: "That doesn't look like a public recipe link." }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return json({ error: "That doesn't look like a public recipe link." }, 400)
   }
 
   let html: string
@@ -216,29 +232,21 @@ Deno.serve(async (req) => {
       signal: AbortSignal.timeout(15000),
     })
     if (!res.ok) {
-      return new Response(JSON.stringify({ error: `The site returned ${res.status}.` }), {
-        status: 502,
-        headers: { 'Content-Type': 'application/json' },
-      })
+      return json({ error: `The site returned ${res.status}.` }, 502)
     }
     html = await res.text()
   } catch {
-    return new Response(JSON.stringify({ error: "Couldn't reach that page." }), {
-      status: 502,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return json({ error: "Couldn't reach that page." }, 502)
   }
 
   const recipeNode = collectJsonLdNodes(html).find(hasRecipeType)
   const parsed = recipeNode ? parseRecipeNode(recipeNode, target.toString()) : null
   if (!parsed) {
-    return new Response(
-      JSON.stringify({
-        error: "That page doesn't publish a recipe in a format this can read — add it manually instead.",
-      }),
-      { status: 422, headers: { 'Content-Type': 'application/json' } },
+    return json(
+      { error: "That page doesn't publish a recipe in a format this can read — add it manually instead." },
+      422,
     )
   }
 
-  return new Response(JSON.stringify(parsed), { headers: { 'Content-Type': 'application/json' } })
+  return json(parsed)
 })
