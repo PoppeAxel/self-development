@@ -84,6 +84,9 @@ interface RecipeIngredientRow {
   /** The original line this row came from, when it was imported from a URL — kept so an
       unresolved row still shows what it's meant to be ("2 msk olivolja"). */
   importedFrom?: string
+  /** Plausible library rows for an unmatched imported line, offered as one-tap chips.
+      Never auto-applied — that's the whole point (see resolveLine in recipeImport.ts). */
+  suggestions?: { id: string; name: string }[]
 }
 
 interface IngredientFormState {
@@ -654,6 +657,7 @@ export function Food() {
         name: line.match?.name ?? '',
         grams: line.grams != null ? String(Math.round(line.grams)) : '',
         importedFrom: line.raw,
+        suggestions: line.suggestions.map((i) => ({ id: i.id, name: i.name })),
       })),
     )
     setImportedNutrition(data.statedNutrition)
@@ -1698,6 +1702,39 @@ export function Food() {
                         {row.ingredientId ? 'From: ' : 'Unmatched: '}
                         <span className={row.ingredientId ? '' : 'font-semibold text-cat-amber-ink'}>{row.importedFrom}</span>
                       </p>
+                    )}
+                    {/* Offered, never applied — the import deliberately won't guess which
+                        of these is right, since a wrong one silently skews the macros. */}
+                    {!row.ingredientId && row.suggestions && row.suggestions.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] text-ink-muted">Did you mean</span>
+                        {row.suggestions.map((suggestion) => (
+                          <button
+                            key={suggestion.id}
+                            type="button"
+                            onClick={() => {
+                              const ingredient = ingredientsById.get(suggestion.id)
+                              if (!ingredient) return
+                              setRecipeRows((rows) =>
+                                rows.map((r, idx) =>
+                                  idx === i
+                                    ? {
+                                        ...r,
+                                        ingredientId: ingredient.id,
+                                        name: ingredient.name,
+                                        grams:
+                                          r.grams || (ingredient.portion_grams != null ? String(ingredient.portion_grams) : ''),
+                                      }
+                                    : r,
+                                ),
+                              )
+                            }}
+                            className="rounded-full bg-cat-emerald-tint px-2.5 py-1 text-[11px] font-semibold text-cat-emerald-ink"
+                          >
+                            {suggestion.name}
+                          </button>
+                        ))}
+                      </div>
                     )}
                     <div className="flex items-center gap-2">
                       <button
