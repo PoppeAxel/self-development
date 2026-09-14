@@ -1142,6 +1142,25 @@ export function Food() {
 
       {subTab === 'recipes' && (
         <>
+          <div className="flex gap-2.5">
+            <button
+              onClick={() => {
+                setImportUrl('')
+                setImportError(null)
+                setImportOpen(true)
+              }}
+              className="flex-1 rounded-[20px] bg-pine py-3.5 text-sm font-semibold text-white"
+            >
+              🔗 Import from URL
+            </button>
+            <button
+              onClick={openNewRecipe}
+              className="flex-1 rounded-[20px] border border-line-strong bg-surface py-3.5 text-sm font-semibold text-pine"
+            >
+              + New recipe
+            </button>
+          </div>
+
           <ChipRail
             options={[
               { id: 'all' as const, label: `All ${recipes.length}` },
@@ -1233,25 +1252,6 @@ export function Food() {
               })}
             </div>
           )}
-
-          <div className="flex gap-2.5">
-            <button
-              onClick={() => {
-                setImportUrl('')
-                setImportError(null)
-                setImportOpen(true)
-              }}
-              className="flex-1 rounded-[20px] bg-pine py-3.5 text-sm font-semibold text-white"
-            >
-              🔗 Import from URL
-            </button>
-            <button
-              onClick={openNewRecipe}
-              className="flex-1 rounded-[20px] border border-line-strong bg-surface py-3.5 text-sm font-semibold text-pine"
-            >
-              + New recipe
-            </button>
-          </div>
         </>
       )}
 
