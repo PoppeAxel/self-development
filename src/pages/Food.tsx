@@ -1688,6 +1688,10 @@ export function Food() {
             <div className="flex flex-col gap-2">
               {recipeRows.map((row, i) => {
                 const portionIngredient = row.ingredientId ? ingredientsById.get(row.ingredientId) : null
+                // Read the name off the library rather than the row's copy, so renaming an
+                // ingredient mid-recipe shows up here immediately. `row.name` is only a
+                // fallback for a row whose ingredient has since been deleted.
+                const rowName = row.ingredientId ? (portionIngredient?.name ?? row.name) : ''
                 return (
                   <div
                     key={i}
@@ -1743,10 +1747,23 @@ export function Food() {
                           setPickingIngredientFor(i)
                           setIngredientPickQuery('')
                         }}
-                        className={`min-w-0 flex-1 text-left font-medium ${row.name ? 'text-ink' : 'text-pine'}`}
+                        className={`min-w-0 flex-1 text-left font-medium ${rowName ? 'text-ink' : 'text-pine'}`}
                       >
-                        {row.name || 'Choose ingredient…'}
+                        {rowName || 'Choose ingredient…'}
                       </button>
+                      {/* Edit the ingredient itself without leaving the recipe — fix wrong
+                          macros, rename it, or give it a portion ("1 klyfta = 5 g"). The
+                          form renders at z-[65], above this builder at z-50. */}
+                      {portionIngredient && (
+                        <button
+                          type="button"
+                          onClick={() => openEditIngredient(portionIngredient)}
+                          className="shrink-0 px-1 text-sm text-ink-faint"
+                          aria-label={`Edit ${portionIngredient.name}`}
+                        >
+                          ✎
+                        </button>
+                      )}
                       <input
                         value={row.grams}
                         onChange={(e) => setRecipeRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, grams: e.target.value } : r)))}
