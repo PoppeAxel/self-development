@@ -449,7 +449,7 @@ export function groupByCategory(ingredients: Ingredient[]): Map<string, Ingredie
 /**
  * A day totalling less than this is treated as incompletely logged rather than as a real
  * intake day, and is left out of every calorie *average* (the maintenance estimate, and
- * the weekly intake averages the review and Insights read). Pontus doesn't eat 300 kcal
+ * the weekly intake averages the Weekly review reads). Pontus doesn't eat 300 kcal
  * days — a total that low means a meal never got logged, and averaging it in drags the
  * estimate down exactly like a missing day would if missing days counted as zero.
  *

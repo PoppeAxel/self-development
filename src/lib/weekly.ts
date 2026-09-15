@@ -4,10 +4,11 @@ import { dailyKcalTotals, MIN_LOGGED_KCAL } from './food'
 import { isStrengthWorkout } from './workouts'
 import type { FoodLogEntry, Ingredient, JournalEntry, JournalEntryType, Recipe, RecipeIngredient, Workout } from './types'
 
-// Journal, the Weekly review and Insights all need the same thing: daily values bucketed
-// into Mon–Sun weeks, with an average, a total, and a week-over-week trend. Journal grew
-// three near-identical copies of that logic (weight, sleep, steps) plus two sum-only ones
+// Journal and the Weekly review need the same thing: daily values bucketed into Mon–Sun
+// weeks, with an average, a total, and a week-over-week trend. Journal grew three
+// near-identical copies of that logic (weight, sleep, steps) plus two sum-only ones
 // (cardio distance, strength minutes); this is the one implementation they all use.
+// (The Insights view was a third reader until it was removed in 2026-09-15.)
 
 export interface WeekBucket {
   weekStart: string
