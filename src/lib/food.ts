@@ -445,3 +445,36 @@ export function groupByCategory(ingredients: Ingredient[]): Map<string, Ingredie
   }
   return groups
 }
+
+/**
+ * A day totalling less than this is treated as incompletely logged rather than as a real
+ * intake day, and is left out of every calorie *average* (the maintenance estimate, and
+ * the weekly intake averages the review and Insights read). Pontus doesn't eat 300 kcal
+ * days — a total that low means a meal never got logged, and averaging it in drags the
+ * estimate down exactly like a missing day would if missing days counted as zero.
+ *
+ * The logs themselves are untouched: the Food tab's day list and daily-calorie chart still
+ * show what was actually logged. This only governs what an average is allowed to average.
+ */
+export const MIN_LOGGED_KCAL = 1000
+
+/**
+ * kcal per date across a set of log entries. Journal's maintenance estimate and
+ * weekly.ts's intakeKcalWeeks both need exactly this; anything else that needs daily
+ * totals should call this rather than walking the entries again.
+ */
+export function dailyKcalTotals(
+  foodEntries: FoodLogEntry[],
+  recipes: Recipe[],
+  recipeLines: Map<string, RecipeIngredient[]>,
+  ingredients: Ingredient[],
+): Map<string, number> {
+  const recipesById = new Map(recipes.map((r) => [r.id, r]))
+  const ingredientsById = new Map(ingredients.map((i) => [i.id, i]))
+  const kcalByDate = new Map<string, number>()
+  for (const entry of foodEntries) {
+    const kcal = logEntryMacros(entry, recipesById, recipeLines, ingredientsById).kcal
+    kcalByDate.set(entry.date, (kcalByDate.get(entry.date) ?? 0) + kcal)
+  }
+  return kcalByDate
+}

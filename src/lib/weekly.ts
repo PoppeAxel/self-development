@@ -1,6 +1,6 @@
 import { addDays, format, parseISO } from 'date-fns'
 import { weekStartISO } from './dates'
-import { logEntryMacros } from './food'
+import { dailyKcalTotals, MIN_LOGGED_KCAL } from './food'
 import { isStrengthWorkout } from './workouts'
 import type { FoodLogEntry, Ingredient, JournalEntry, JournalEntryType, Recipe, RecipeIngredient, Workout } from './types'
 
@@ -115,8 +115,9 @@ export function sessionCountWeeks(workouts: Workout[], kind: 'strength' | 'cardi
 
 /**
  * kcal per logged day, bucketed by week. `avg` is kcal/day over the days actually logged —
- * missing days are excluded rather than counted as zero, same rule the maintenance
- * estimate uses, so a half-logged week doesn't read as a crash diet.
+ * missing days are excluded rather than counted as zero, so a half-logged week doesn't read
+ * as a crash diet. A day under `MIN_LOGGED_KCAL` is treated the same way as a missing one:
+ * it's a day a meal never got logged, not a day of eating 300 kcal.
  */
 export function intakeKcalWeeks(
   foodEntries: FoodLogEntry[],
@@ -124,14 +125,12 @@ export function intakeKcalWeeks(
   recipeLines: Map<string, RecipeIngredient[]>,
   ingredients: Ingredient[],
 ): WeekBucket[] {
-  const recipesById = new Map(recipes.map((r) => [r.id, r]))
-  const ingredientsById = new Map(ingredients.map((i) => [i.id, i]))
-  const kcalByDate = new Map<string, number>()
-  for (const entry of foodEntries) {
-    const kcal = logEntryMacros(entry, recipesById, recipeLines, ingredientsById).kcal
-    kcalByDate.set(entry.date, (kcalByDate.get(entry.date) ?? 0) + kcal)
-  }
-  return bucketByWeek([...kcalByDate.entries()].map(([date, value]) => ({ date, value })))
+  const kcalByDate = dailyKcalTotals(foodEntries, recipes, recipeLines, ingredients)
+  return bucketByWeek(
+    [...kcalByDate.entries()]
+      .filter(([, value]) => value >= MIN_LOGGED_KCAL)
+      .map(([date, value]) => ({ date, value })),
+  )
 }
 
 // --- Week labels ---

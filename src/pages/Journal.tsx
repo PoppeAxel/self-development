@@ -13,7 +13,7 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from 'recharts'
-import { parseISO } from 'date-fns'
+import { format, parseISO } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { periodEndISO, todayISO, weekStartISO } from '../lib/dates'
 import {
@@ -47,7 +47,7 @@ import { GymPrograms } from '../components/GymPrograms'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
 import { formatWorkoutDuration, formatWorkoutDistance, isStrengthWorkout, getSportStyle } from '../lib/workouts'
-import { logEntryMacros } from '../lib/food'
+import { dailyKcalTotals, MIN_LOGGED_KCAL } from '../lib/food'
 import type {
   Category,
   Goal,
@@ -335,6 +335,9 @@ export function Journal() {
   const [sleepHoursPart, setSleepHoursPart] = useState('')
   const [sleepMinutesPart, setSleepMinutesPart] = useState('')
   const [goalWeight, setGoalWeight] = useState<number | null>(null)
+  // Null = never reset, so the estimate uses its full 28-day window (see the estimate below).
+  const [maintenanceResetDate, setMaintenanceResetDate] = useState<string | null>(null)
+  const [confirmResetMaintenance, setConfirmResetMaintenance] = useState(false)
   const [stepGoal, setStepGoal] = useState<number | null>(null)
   const [weightExpanded, setWeightExpanded] = useState(false)
   const [stepsExpanded, setStepsExpanded] = useState(false)
@@ -389,6 +392,7 @@ export function Journal() {
     ])
     setEntries(data ?? [])
     setGoalWeight(settingsRow?.goal_weight != null ? Number(settingsRow.goal_weight) : null)
+    setMaintenanceResetDate(settingsRow?.maintenance_reset_date ?? null)
     setStepGoal(settingsRow?.step_goal != null ? Number(settingsRow.step_goal) : null)
     setWorkouts(workoutRows ?? [])
     setFoodEntries(foodEntryRows ?? [])
@@ -579,18 +583,19 @@ export function Journal() {
   // those are unreliable, and unnecessary anyway: weight change already nets out
   // training along with everything else, so it's the only "calories out" signal used.
   // 1 kg of body-mass change ≈ 7700 kcal (standard estimate for fat mass).
-  const recipesById = new Map(recipes.map((r) => [r.id, r]))
-  const ingredientsById = new Map(ingredients.map((i) => [i.id, i]))
-  const kcalByDate = new Map<string, number>()
-  for (const e of foodEntries) {
-    const kcal = logEntryMacros(e, recipesById, recipeLines, ingredientsById).kcal
-    kcalByDate.set(e.date, (kcalByDate.get(e.date) ?? 0) + kcal)
-  }
+  const kcalByDate = dailyKcalTotals(foodEntries, recipes, recipeLines, ingredients)
   const CALORIE_WINDOW_DAYS = 28
   const calorieWindowStart = new Date()
   calorieWindowStart.setDate(calorieWindowStart.getDate() - CALORIE_WINDOW_DAYS)
-  const calorieWindowStartStr = calorieWindowStart.toISOString().slice(0, 10)
-  const recentDailyKcal = [...kcalByDate.entries()].filter(([date]) => date >= calorieWindowStartStr).map(([, kcal]) => kcal)
+  // A reset only ever narrows the window — it can't reach further back than the 28 days
+  // the estimate is willing to average in the first place.
+  const calorieWindowStartStr = [calorieWindowStart.toISOString().slice(0, 10), maintenanceResetDate ?? '']
+    .reduce((a, b) => (b > a ? b : a))
+  // Days under MIN_LOGGED_KCAL are dropped, not averaged in: a 300 kcal day is a day a meal
+  // never got logged, and counting it drags the estimate down exactly like a zero would.
+  const recentDailyKcal = [...kcalByDate.entries()]
+    .filter(([date, kcal]) => date >= calorieWindowStartStr && kcal >= MIN_LOGGED_KCAL)
+    .map(([, kcal]) => kcal)
   const avgDailyKcal =
     recentDailyKcal.length > 0 ? recentDailyKcal.reduce((a, b) => a + b, 0) / recentDailyKcal.length : null
 
@@ -600,6 +605,16 @@ export function Journal() {
   const showCalorieEstimate = avgDailyKcal != null && recentDailyKcal.length >= MIN_LOGGED_DAYS_FOR_ESTIMATE && weightTrendPerWeek != null
   const estimatedMaintenanceKcal = showCalorieEstimate ? avgDailyKcal! - (weightTrendPerWeek! * 7700) / 7 : null
   const dailyDeficitOrSurplus = showCalorieEstimate ? avgDailyKcal! - estimatedMaintenanceKcal! : null
+
+  // Setting the date to today makes every day logged before now invisible to the estimate.
+  // The food logs themselves are untouched — the Food tab still shows them.
+  async function setMaintenanceReset(date: string | null) {
+    setConfirmResetMaintenance(false)
+    setMaintenanceResetDate(date)
+    const { data: user } = await supabase.auth.getUser()
+    if (!user.user) return
+    await supabase.from('user_settings').upsert({ user_id: user.user.id, maintenance_reset_date: date })
+  }
 
   const weeklyStepsAsc = journalWeeks(entries, 'steps')
   const weeklySteps = [...weeklyStepsAsc].reverse().slice(0, 12)
@@ -1140,12 +1155,55 @@ export function Journal() {
 
       {tab === 'weight' && showCalorieEstimate && (
         <div className="rounded-[22px] border border-line bg-surface px-4 py-3.5 shadow-card">
-          <p className="text-xs font-medium text-ink-muted">Maintenance estimate · last {recentDailyKcal.length} logged days</p>
+          <div className="flex items-start justify-between gap-2">
+            <p className="min-w-0 text-xs font-medium text-ink-muted">
+              Maintenance estimate · {recentDailyKcal.length} logged day{recentDailyKcal.length === 1 ? '' : 's'}
+              {maintenanceResetDate && ` since ${format(parseISO(maintenanceResetDate), 'd MMM')}`}
+            </p>
+            <span className="flex shrink-0 gap-1.5">
+              {maintenanceResetDate && (
+                <button
+                  onClick={() => setMaintenanceReset(null)}
+                  className="rounded-[14px] bg-track px-2.5 py-1 text-[11px] font-semibold text-ink-3"
+                >
+                  Undo
+                </button>
+              )}
+              <button
+                onClick={() => setConfirmResetMaintenance(true)}
+                className="rounded-[14px] bg-track px-2.5 py-1 text-[11px] font-semibold text-ink-3"
+              >
+                Reset
+              </button>
+            </span>
+          </div>
           <p className="mt-0.5 text-[22px] font-semibold text-ink">{Math.round(estimatedMaintenanceKcal!).toLocaleString()} kcal/day</p>
           <p className={`mt-1 text-xs font-semibold ${dailyDeficitOrSurplus! < 0 ? 'text-cat-emerald-ink' : 'text-cat-rose-ink'}`}>
             {Math.round(Math.abs(dailyDeficitOrSurplus!)).toLocaleString()} kcal/day{' '}
             {dailyDeficitOrSurplus! < 0 ? 'deficit' : 'surplus'}
           </p>
+          <p className="mt-1.5 text-[11px] text-ink-disabled">
+            Days under {MIN_LOGGED_KCAL.toLocaleString()} kcal are treated as half-logged and left out.
+          </p>
+        </div>
+      )}
+
+      {/* With a reset active the card usually can't render yet (it needs {MIN_LOGGED_DAYS_FOR_ESTIMATE}
+          qualifying days), and a silently missing card reads as a bug. This says where it went
+          and is also the only way back — undoing the reset restores the old window. */}
+      {tab === 'weight' && !showCalorieEstimate && maintenanceResetDate && (
+        <div className="rounded-[22px] border border-line bg-surface px-4 py-3.5 shadow-card">
+          <p className="text-xs font-medium text-ink-muted">Maintenance estimate · reset {format(parseISO(maintenanceResetDate), 'd MMM')}</p>
+          <p className="mt-1 text-sm text-ink-3">
+            {recentDailyKcal.length} of {MIN_LOGGED_DAYS_FOR_ESTIMATE} logged days since then — it comes back once there are{' '}
+            {MIN_LOGGED_DAYS_FOR_ESTIMATE}.
+          </p>
+          <button
+            onClick={() => setMaintenanceReset(null)}
+            className="mt-2.5 rounded-[14px] bg-track px-3 py-1.5 text-xs font-semibold text-ink-3"
+          >
+            Undo reset
+          </button>
         </div>
       )}
 
@@ -1721,6 +1779,15 @@ export function Journal() {
           </ul>
         </>
       ))}
+
+      <ConfirmDialog
+        open={confirmResetMaintenance}
+        title="Reset the maintenance estimate?"
+        message="It starts over from today and ignores everything logged before now. Your food logs aren't touched, and you can undo this from the card."
+        confirmLabel="Reset"
+        onConfirm={() => setMaintenanceReset(todayISO())}
+        onCancel={() => setConfirmResetMaintenance(false)}
+      />
 
       <ConfirmDialog
         open={confirmDeleteEntry !== null}

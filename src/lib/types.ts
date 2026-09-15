@@ -73,6 +73,8 @@ export interface UserSettings {
   user_id: string
   goal_weight: number | null
   step_goal: number | null
+  /** The maintenance estimate ignores food logs before this date. Null = no reset. */
+  maintenance_reset_date: string | null
 }
 
 export interface Workout {
