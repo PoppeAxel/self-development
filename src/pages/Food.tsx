@@ -34,7 +34,8 @@ import {
 } from '../lib/food'
 import { CATEGORY_STYLES as CAT } from '../lib/categories'
 import { resolveImportedLines, type ImportedRecipe } from '../lib/recipeImport'
-import type { FoodLogEntry, Ingredient, MealType, Recipe, RecipeIngredient } from '../lib/types'
+import { normalizeUrl, linkHost, linkLabel } from '../lib/links'
+import type { FoodLogEntry, Ingredient, MealType, Recipe, RecipeIngredient, SavedLink } from '../lib/types'
 
 // One hue per meal, for the day-list accent edges. Breakfast ochre, lunch pine, dinner
 // terracotta, snack plum — distinct enough to skim, all from the category palette.
@@ -105,9 +106,9 @@ function emptyIngredientForm(): IngredientFormState {
   return { name: '', kcal: '', protein: '', carbs: '', fat: '', fiber: '', portionLabel: '', portionGrams: '', category: '' }
 }
 
-type FoodSubTab = 'log' | 'recipes' | 'library'
-const SUB_TABS: FoodSubTab[] = ['log', 'recipes', 'library']
-const SUB_TAB_LABELS: Record<FoodSubTab, string> = { log: 'Log', recipes: 'Recipes', library: 'Library' }
+type FoodSubTab = 'log' | 'recipes' | 'library' | 'links'
+const SUB_TABS: FoodSubTab[] = ['log', 'recipes', 'library', 'links']
+const SUB_TAB_LABELS: Record<FoodSubTab, string> = { log: 'Log', recipes: 'Recipes', library: 'Library', links: 'Links' }
 
 type RecipeSort = 'logged' | 'recent' | 'az' | 'kcal'
 const RECIPE_SORT_LABELS: Record<RecipeSort, string> = {
@@ -198,6 +199,20 @@ export function Food() {
   // recipes hold no macro columns, macros are always derived from the ingredient rows.
   const [importedNutrition, setImportedNutrition] = useState<ImportedRecipe['statedNutrition']>(null)
 
+  // Saved recipe links (the Links sub-tab). Duplicates are prevented by the unique
+  // (user_id, url_key) constraint; the client-side check against the loaded list only
+  // exists to say which link it collided with instead of surfacing a constraint error.
+  const [links, setLinks] = useState<SavedLink[]>([])
+  const [linkUrl, setLinkUrl] = useState('')
+  const [linkTitle, setLinkTitle] = useState('')
+  const [linkError, setLinkError] = useState<string | null>(null)
+  const [savingLink, setSavingLink] = useState(false)
+  const [linkSearchQuery, setLinkSearchQuery] = useState('')
+  // Which saved link's Import button is running — anchors the spinner and any error to
+  // that row, since the import sheet isn't open in this path.
+  const [importingLinkId, setImportingLinkId] = useState<string | null>(null)
+  const [confirmDeleteLink, setConfirmDeleteLink] = useState<SavedLink | null>(null)
+
   const [ingredientFormOpen, setIngredientFormOpen] = useState(false)
   // 'recipe' means this ingredient is being created from inside the recipe builder's
   // ingredient picker (pickingIngredientFor already holds which row/slot it's for) — on
@@ -230,7 +245,7 @@ export function Food() {
 
   async function load() {
     setLoading(true)
-    const [{ data: ingredientRows }, { data: recipeRowsData }, { data: recipeLineRows }, { data: entryRows }, { data: budgetRow }] =
+    const [{ data: ingredientRows }, { data: recipeRowsData }, { data: recipeLineRows }, { data: entryRows }, { data: budgetRow }, { data: linkRows }] =
       await Promise.all([
         supabase.from('ingredients').select('*').order('name'),
         supabase.from('recipes').select('*').order('name'),
@@ -244,6 +259,7 @@ export function Food() {
           .not('auto_metric_target', 'is', null)
           .limit(1)
           .maybeSingle(),
+        supabase.from('saved_links').select('*').order('created_at', { ascending: false }),
       ])
     setCalorieBudget(budgetRow?.auto_metric_target != null ? Number(budgetRow.auto_metric_target) : null)
     const byRecipe = new Map<string, RecipeIngredient[]>()
@@ -256,6 +272,7 @@ export function Food() {
     setRecipes(recipeRowsData ?? [])
     setRecipeLines(byRecipe)
     setEntries(entryRows ?? [])
+    setLinks(linkRows ?? [])
     setLoading(false)
   }
 
@@ -478,6 +495,12 @@ export function Food() {
     }
   })
 
+  // Links already arrive newest-first from the query. The search covers the name and the
+  // URL itself, so "ica" finds every link from that site even when none of them is named.
+  const visibleLinks = links.filter(
+    (l) => matchesSearch(l.title ?? '', linkSearchQuery) || matchesSearch(l.url, linkSearchQuery),
+  )
+
   const ingredientGroups = groupByCategory(ingredients)
   const categoryKeys = orderedCategoryKeys(ingredientGroups.keys())
   const weekAgo = format(subDays(new Date(), 7), 'yyyy-MM-dd')
@@ -621,8 +644,11 @@ export function Food() {
     setRecipeBuilderOpen(true)
   }
 
-  async function runImport() {
-    const url = importUrl.trim()
+  // `rawUrl` comes from a saved link's Import button; without one this reads the sheet's
+  // input. Both paths end the same way: the builder opens prefilled and the link is
+  // remembered in the Links tab.
+  async function runImport(rawUrl?: string) {
+    const url = (rawUrl ?? importUrl).trim()
     if (!url) return
     setImporting(true)
     setImportError(null)
@@ -643,6 +669,7 @@ export function Food() {
         }
       }
       setImportError(message)
+      setImportingLinkId(null)
       return
     }
 
@@ -663,7 +690,89 @@ export function Food() {
     setImportedNutrition(data.statedNutrition)
     setImportOpen(false)
     setImportUrl('')
+    setImportingLinkId(null)
     setRecipeBuilderOpen(true)
+    rememberLink(url, data.name)
+  }
+
+  // Every successful import also lands in the Links tab, so the list builds itself without
+  // anything extra to remember. A link that's already there is touched, not duplicated.
+  async function rememberLink(rawUrl: string, name: string | null) {
+    const normalized = normalizeUrl(rawUrl)
+    if (!normalized) return
+    const now = new Date().toISOString()
+
+    const existing = links.find((l) => l.url_key === normalized.key)
+    if (existing) {
+      // Only fill a missing title — a name typed by hand outranks the site's own.
+      const patch = { last_imported_at: now, title: existing.title ?? name }
+      const { data } = await supabase.from('saved_links').update(patch).eq('id', existing.id).select().maybeSingle()
+      if (data) setLinks((prev) => prev.map((l) => (l.id === data.id ? data : l)))
+      return
+    }
+
+    const row = {
+      url: normalized.url,
+      url_key: normalized.key,
+      title: name || null,
+      last_imported_at: now,
+    }
+    // onConflict rather than a plain insert: `links` can be stale (imported from the sheet
+    // in another tab/session), and the constraint would otherwise turn a successful import
+    // into a visible error for something the user never asked for.
+    const { data } = await supabase
+      .from('saved_links')
+      .upsert(row, { onConflict: 'user_id,url_key' })
+      .select()
+      .maybeSingle()
+    if (data) setLinks((prev) => [data, ...prev.filter((l) => l.id !== data.id)])
+  }
+
+  async function saveLink(e: React.FormEvent) {
+    e.preventDefault()
+    const normalized = normalizeUrl(linkUrl)
+    if (!normalized) {
+      setLinkError("That doesn't look like a web link — it needs to be an http(s) address.")
+      return
+    }
+    const existing = links.find((l) => l.url_key === normalized.key)
+    if (existing) {
+      setLinkError(
+        `Already saved as "${linkLabel(existing)}" on ${format(new Date(existing.created_at), 'd MMM')}.`,
+      )
+      return
+    }
+
+    setSavingLink(true)
+    setLinkError(null)
+    const { data, error } = await supabase
+      .from('saved_links')
+      .insert({
+        url: normalized.url,
+        url_key: normalized.key,
+        // Left null when unnamed, so the row falls back to the URL's own slug AND an import
+        // can still fill in the recipe's real name later. A name typed here outranks both.
+        title: linkTitle.trim() || null,
+      })
+      .select()
+      .single()
+    setSavingLink(false)
+
+    if (error) {
+      // 23505 = the unique (user_id, url_key) constraint, i.e. the row exists but wasn't in
+      // the copy this page loaded.
+      setLinkError(error.code === '23505' ? 'That link is already saved.' : "Couldn't save that link.")
+      return
+    }
+    setLinks((prev) => [data, ...prev])
+    setLinkUrl('')
+    setLinkTitle('')
+  }
+
+  async function deleteLink(link: SavedLink) {
+    setConfirmDeleteLink(null)
+    setLinks((prev) => prev.filter((l) => l.id !== link.id))
+    await supabase.from('saved_links').delete().eq('id', link.id)
   }
 
   function addIngredientToRecipe(ingredient: Ingredient) {
@@ -944,6 +1053,13 @@ export function Food() {
                 value={librarySearchQuery}
                 onChange={setLibrarySearchQuery}
                 placeholder={`Search ${ingredients.length} ingredient${ingredients.length === 1 ? '' : 's'}`}
+              />
+            )}
+            {subTab === 'links' && links.length > 0 && (
+              <HeroSearch
+                value={linkSearchQuery}
+                onChange={setLinkSearchQuery}
+                placeholder={`Search ${links.length} link${links.length === 1 ? '' : 's'}`}
               />
             )}
             {subTab === 'log' && (
@@ -1390,6 +1506,111 @@ export function Food() {
         </>
       )}
 
+      {/* Saved links: recipe pages parked for later. The Import button runs the exact same
+          path as the Recipes tab's sheet, so a saved link is one tap from a prefilled
+          builder. Duplicates can't accumulate here — see saveLink/rememberLink. */}
+      {subTab === 'links' && (
+        <>
+          <form onSubmit={saveLink} className="flex flex-col gap-2 rounded-[22px] border border-line bg-surface p-3.5 shadow-card">
+            <input
+              value={linkUrl}
+              onChange={(e) => {
+                setLinkUrl(e.target.value)
+                setLinkError(null)
+              }}
+              // Deliberately not type="url": that makes the browser block the submit with its
+              // own message for a scheme-less paste ("ica.se/recept/…"), which normalizeUrl
+              // handles fine. Validation belongs to saveLink, which can say something useful.
+              type="text"
+              inputMode="url"
+              placeholder="https://…"
+              aria-label="Link to save"
+              className="w-full rounded-[18px] border border-line bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
+            />
+            <div className="flex gap-2">
+              <input
+                value={linkTitle}
+                onChange={(e) => setLinkTitle(e.target.value)}
+                placeholder="Name (optional)"
+                aria-label="Name for this link"
+                className="min-w-0 flex-1 rounded-[18px] border border-line bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
+              />
+              <button
+                type="submit"
+                disabled={savingLink || !linkUrl.trim()}
+                className="shrink-0 rounded-[18px] bg-pine px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {savingLink ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+            {linkError && <p className="text-xs text-cat-rose-ink">{linkError}</p>}
+            {!linkError && (
+              <p className="text-[11px] text-ink-disabled">
+                Left blank, the name is taken from the link — and replaced by the recipe's real name once imported.
+              </p>
+            )}
+          </form>
+
+          {loading ? (
+            <p className="text-sm text-ink-disabled">Loading…</p>
+          ) : links.length === 0 ? (
+            <p className="text-sm text-ink-disabled">
+              No saved links yet. Paste one above, or import a recipe from a URL — every import is saved here.
+            </p>
+          ) : visibleLinks.length === 0 ? (
+            <p className="text-sm text-ink-disabled">No links match "{linkSearchQuery}".</p>
+          ) : (
+            <div className="flex flex-col gap-2.5">
+              {visibleLinks.map((link) => (
+                <div key={link.id} className="rounded-[22px] border border-line bg-surface px-4 py-3.5 shadow-card">
+                  <div className="flex items-start justify-between gap-2.5">
+                    <div className="min-w-0">
+                      <p className="truncate text-[15px] font-semibold text-ink">{linkLabel(link)}</p>
+                      <p className="mt-0.5 truncate text-[11px] font-medium text-ink-muted">
+                        🔗 {linkHost(link.url)} · saved {format(new Date(link.created_at), 'd MMM')}
+                        {link.last_imported_at && ` · imported ${format(new Date(link.last_imported_at), 'd MMM')}`}
+                      </p>
+                    </div>
+                    <a
+                      href={link.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={`Open ${linkLabel(link)}`}
+                      className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-track text-xs text-ink-3"
+                    >
+                      ↗
+                    </a>
+                  </div>
+                  {importingLinkId === link.id && importError && (
+                    <p className="mt-2 text-xs text-cat-rose-ink">{importError}</p>
+                  )}
+                  <div className="mt-2.5 flex items-center justify-end gap-1.5">
+                    <button
+                      onClick={() => {
+                        setImportError(null)
+                        setImportingLinkId(link.id)
+                        runImport(link.url)
+                      }}
+                      disabled={importing}
+                      className="rounded-[14px] bg-cat-emerald-tint px-3 py-1.5 text-xs font-semibold text-cat-emerald-ink disabled:opacity-50"
+                    >
+                      {importing && importingLinkId === link.id ? 'Reading…' : 'Import'}
+                    </button>
+                    <button
+                      onClick={() => setConfirmDeleteLink(link)}
+                      aria-label={`Remove ${linkLabel(link)}`}
+                      className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-track text-xs text-ink-3"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
       {/* View recipe — read-only breakdown of which ingredients drive the recipe's
           calories/macros, sorted highest-kcal-first, so a suspiciously high-calorie
           recipe can be traced back to the actual line that's off (wrong grams, wrong
@@ -1610,7 +1831,7 @@ export function Food() {
                 Cancel
               </button>
               <button
-                onClick={runImport}
+                onClick={() => runImport()}
                 disabled={importing || !importUrl.trim()}
                 className="flex-1 rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white disabled:opacity-50"
               >
@@ -2090,6 +2311,16 @@ export function Food() {
           setConfirmDeleteEntry(null)
         }}
         onCancel={() => setConfirmDeleteEntry(null)}
+      />
+
+      <ConfirmDialog
+        open={confirmDeleteLink !== null}
+        title={`Remove "${confirmDeleteLink ? linkLabel(confirmDeleteLink) : ''}"?`}
+        message="The link is removed from this list. Any recipe already imported from it stays."
+        onConfirm={() => {
+          if (confirmDeleteLink) deleteLink(confirmDeleteLink)
+        }}
+        onCancel={() => setConfirmDeleteLink(null)}
       />
 
       <ConfirmDialog

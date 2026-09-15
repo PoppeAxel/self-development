@@ -202,3 +202,15 @@ export interface FoodLogEntry {
   meal_type: MealType | null
   created_at: string
 }
+
+export interface SavedLink {
+  id: string
+  user_id: string
+  /** The usable URL — opened and imported as-is. */
+  url: string
+  /** Normalized form of `url`, unique per user — see normalizeUrl in src/lib/links.ts. */
+  url_key: string
+  title: string | null
+  last_imported_at: string | null
+  created_at: string
+}
