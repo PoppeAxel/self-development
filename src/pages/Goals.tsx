@@ -1,13 +1,25 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { format } from 'date-fns'
-import { PARENT_PERIOD, PERIOD_LABELS, PERIOD_TYPES, periodEndISO, periodStartISO, weekStartISO } from '../lib/dates'
-import { goalMetricInfo, isGoalMetric, resolveGoalProgress, rolloverRecurringGoals, SESSION_METRIC_INFO, SESSION_METRICS } from '../lib/goals'
+import { PARENT_PERIOD, PERIOD_LABELS, PERIOD_TYPES, periodStartISO } from '../lib/dates'
+import {
+  goalMetricInfo,
+  goalPace,
+  isGoalDone,
+  isGoalMetric,
+  isOffPace,
+  paceVerdict,
+  resolveGoalProgress,
+  rolloverRecurringGoals,
+  SESSION_METRIC_INFO,
+  SESSION_METRICS,
+  type GoalPace,
+} from '../lib/goals'
 import { AUTO_METRICS, METRIC_INFO } from '../lib/metrics'
 import { CATEGORY_STYLES } from '../lib/categories'
-import { THEME } from '../lib/theme'
-import { ProgressRing } from '../components/ProgressRing'
-import { Screen, HeroSegments } from '../components/Screen'
+import { useNav } from '../contexts/NavContext'
+import { Screen } from '../components/Screen'
+import { DaysRing, PaceBars, PaceLegend, VerdictChip } from '../components/Pace'
 import type { Goal, PeriodType } from '../lib/types'
 
 // Goals have no category column of their own, so the card's accent hue comes from what
@@ -21,134 +33,116 @@ function goalHue(goal: Goal, done: boolean, isRollup: boolean) {
   return CATEGORY_STYLES.violet
 }
 
-// Nested bars step toward the card surface rather than using hand-picked tints per
-// category — mixing the accent with the card colour gives the design's mid/light pair
-// (Training #c07a60 / #d19c88) for every hue, including ones the design never drew.
-function depthTint(accent: string, depth: number): string {
-  if (depth === 0) return accent
-  const weight = depth === 1 ? 75 : 55
-  return `color-mix(in srgb, ${accent} ${weight}%, ${THEME.surface})`
-}
+// Sections run longest-horizon first, so the year frames the quarter that frames the week.
+const SECTION_ORDER: PeriodType[] = ['year', 'quarter', 'month', 'week']
 
-const DEPTH_BAR_HEIGHT = ['h-2', 'h-1.5', 'h-[5px]']
-
-// A child node's short prefix: "Q3", "Sep", "This week". The parent card already says
-// which goal this rolls into, so the node only has to say when it is.
-function periodNodeLabel(goal: Goal): string {
-  const start = new Date(goal.period_start + 'T00:00:00')
-  switch (goal.period_type) {
+function sectionHeading(periodType: PeriodType, periodStart: string): string {
+  const start = new Date(periodStart + 'T00:00:00')
+  switch (periodType) {
     case 'year':
-      return format(start, 'yyyy')
+      return 'YEAR'
     case 'quarter':
       return `Q${Math.floor(start.getMonth() / 3) + 1}`
     case 'month':
-      return format(start, 'MMM')
+      return format(start, 'MMMM').toUpperCase()
     case 'week':
-      return goal.period_start === weekStartISO() ? 'This week' : `Week of ${format(start, 'MMM d')}`
+      return 'THIS WEEK'
   }
 }
 
-interface TreeNode {
+type GoalFilter = 'all' | 'offPace' | 'done'
+
+interface ResolvedGoal {
   goal: Goal
   progress: number
   isRollup: boolean
-  children: TreeNode[]
+  pace: GoalPace
+  done: boolean
+  offPace: boolean
 }
 
 export function Goals() {
-  const [periodType, setPeriodType] = useState<PeriodType>('week')
-  const [goals, setGoals] = useState<Goal[]>([])
-  const [progress, setProgress] = useState<Map<string, { progress: number; isRollup: boolean }>>(new Map())
-  const [parentOptions, setParentOptions] = useState<Goal[]>([])
+  const { openGoalDetail } = useNav()
+  const [rows, setRows] = useState<ResolvedGoal[]>([])
+  const [taskCounts, setTaskCounts] = useState<Map<string, number>>(new Map())
+  // Every goal by series, so a card can name the parent it rolls into and count the
+  // children that roll into it without a second round of queries.
+  const [goalsBySeries, setGoalsBySeries] = useState<Map<string, Goal>>(new Map())
+  const [childCounts, setChildCounts] = useState<Map<string, number>>(new Map())
+  const [filter, setFilter] = useState<GoalFilter>('all')
+  const [loading, setLoading] = useState(true)
+
+  // Create form. The period select replaces the removed pills as the way to pick a horizon.
   const [title, setTitle] = useState('')
   const [target, setTarget] = useState('')
+  const [formPeriod, setFormPeriod] = useState<PeriodType>('week')
   const [recurring, setRecurring] = useState(false)
   const [autoMetric, setAutoMetric] = useState('')
   const [parentSeriesId, setParentSeriesId] = useState('')
-  const [loading, setLoading] = useState(true)
-  // A view switch, not a period — Tree shows the selected period's goals with whatever
-  // rolls into them nested underneath; List is the flat view this page has always had.
-  const [view, setView] = useState<'tree' | 'list'>('list')
-  const [tree, setTree] = useState<TreeNode[]>([])
-  const [unlinkedCount, setUnlinkedCount] = useState(0)
-  const periodStart = periodStartISO(periodType)
-  const parentPeriod = PARENT_PERIOD[periodType]
+  const [parentOptions, setParentOptions] = useState<Goal[]>([])
+  const formParentPeriod = PARENT_PERIOD[formPeriod]
 
   async function load() {
     setLoading(true)
     await rolloverRecurringGoals()
-    const { data } = await supabase
-      .from('goals')
-      .select('*')
-      .eq('period_type', periodType)
-      .eq('period_start', periodStart)
-      .order('created_at')
-    const loaded = (data ?? []) as Goal[]
-    setGoals(loaded)
-    const entries = await Promise.all(loaded.map(async (g) => [g.id, await resolveGoalProgress(g)] as const))
-    setProgress(new Map(entries))
+    // One fetch of every goal rather than four period-scoped ones: the table is small, and
+    // having them all means parent titles and child counts need no extra round trips.
+    const [{ data: goalRows }, { data: taskRows }] = await Promise.all([
+      supabase.from('goals').select('*').order('created_at'),
+      supabase.from('daily_tasks').select('goal_series_id').eq('active', true).not('goal_series_id', 'is', null),
+    ])
+    const all = (goalRows ?? []) as Goal[]
 
-    if (parentPeriod) {
-      const { data: parents } = await supabase
-        .from('goals')
-        .select('*')
-        .eq('period_type', parentPeriod)
-        .eq('period_start', periodStartISO(parentPeriod))
-        .order('created_at')
-      setParentOptions((parents ?? []) as Goal[])
-    } else {
-      setParentOptions([])
+    const bySeries = new Map<string, Goal>()
+    const children = new Map<string, number>()
+    for (const g of all) {
+      if (!bySeries.has(g.series_id)) bySeries.set(g.series_id, g)
+      if (g.parent_series_id) children.set(g.parent_series_id, (children.get(g.parent_series_id) ?? 0) + 1)
     }
+    setGoalsBySeries(bySeries)
+    setChildCounts(children)
+
+    const counts = new Map<string, number>()
+    for (const t of taskRows ?? []) {
+      if (t.goal_series_id) counts.set(t.goal_series_id, (counts.get(t.goal_series_id) ?? 0) + 1)
+    }
+    setTaskCounts(counts)
+
+    // All four horizons at their current period — the screen shows every one at once.
+    const currentStart = Object.fromEntries(PERIOD_TYPES.map((p) => [p, periodStartISO(p)])) as Record<PeriodType, string>
+    const current = all.filter((g) => g.period_start === currentStart[g.period_type])
+
+    const resolved = await Promise.all(
+      current.map(async (goal) => {
+        const { progress, isRollup } = await resolveGoalProgress(goal)
+        const pace = goalPace(goal, progress)
+        const done = isGoalDone(goal, progress, isRollup)
+        return { goal, progress, isRollup, pace, done, offPace: isOffPace(pace, done) }
+      }),
+    )
+    setRows(resolved)
     setLoading(false)
   }
 
   useEffect(() => {
     load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [periodType])
+  }, [])
 
-  // Tree view needs every goal, not just this period's, to follow a chain down through
-  // quarters and months to weeks. Only fetched when that view is actually open.
+  // Parent options follow the period picked in the form, not a page-level period any more.
   useEffect(() => {
-    if (view !== 'tree') return
-    let cancelled = false
-
-    async function loadTree() {
-      const { data } = await supabase.from('goals').select('*').order('created_at')
-      if (cancelled) return
-      const all = (data ?? []) as Goal[]
-      const roots = all.filter((g) => g.period_type === periodType && g.period_start === periodStart)
-
-      // A child belongs to this node when it points at the series AND its period falls
-      // inside the parent's — the same containment rule resolveGoalProgress uses.
-      function childrenOf(goal: Goal): Goal[] {
-        const end = periodEndISO(goal.period_type, goal.period_start)
-        return all.filter(
-          (g) => g.parent_series_id === goal.series_id && g.period_start >= goal.period_start && g.period_start <= end,
-        )
-      }
-
-      async function build(goal: Goal): Promise<TreeNode> {
-        const [resolved, children] = await Promise.all([
-          resolveGoalProgress(goal),
-          Promise.all(childrenOf(goal).map(build)),
-        ])
-        return { goal, progress: resolved.progress, isRollup: resolved.isRollup, children }
-      }
-
-      const built = await Promise.all(roots.map(build))
-      if (cancelled) return
-      setTree(built)
-      // "Unlinked" = a goal in this period that neither feeds anything nor is fed by
-      // anything, so the rollup view has nothing to show for it.
-      setUnlinkedCount(roots.filter((g) => !g.parent_series_id && childrenOf(g).length === 0).length)
+    if (!formParentPeriod) {
+      setParentOptions([])
+      return
     }
-
-    loadTree()
-    return () => {
-      cancelled = true
-    }
-  }, [view, periodType, periodStart, goals])
+    const start = periodStartISO(formParentPeriod)
+    supabase
+      .from('goals')
+      .select('*')
+      .eq('period_type', formParentPeriod)
+      .eq('period_start', start)
+      .order('created_at')
+      .then(({ data }) => setParentOptions((data ?? []) as Goal[]))
+  }, [formParentPeriod])
 
   async function addGoal(e: React.FormEvent) {
     e.preventDefault()
@@ -160,8 +154,8 @@ export function Goals() {
     await supabase.from('goals').insert({
       title: title.trim(),
       target_value: target ? Number(target) : null,
-      period_type: periodType,
-      period_start: periodStart,
+      period_type: formPeriod,
+      period_start: periodStartISO(formPeriod),
       user_id: user.id,
       recurring: recurring || !!autoMetric,
       auto_metric: autoMetric || null,
@@ -175,97 +169,41 @@ export function Goals() {
     load()
   }
 
-  async function bump(goal: Goal, delta: number) {
-    const newProgress = Math.max(0, goal.progress + delta)
-    const status = goal.target_value && newProgress >= goal.target_value ? 'done' : 'active'
-    setGoals((gs) => gs.map((g) => (g.id === goal.id ? { ...g, progress: newProgress, status } : g)))
-    setProgress((p) => new Map(p).set(goal.id, { progress: newProgress, isRollup: false }))
-    await supabase.from('goals').update({ progress: newProgress, status }).eq('id', goal.id)
-  }
-
-  async function remove(goal: Goal) {
-    setGoals((gs) => gs.filter((g) => g.id !== goal.id))
-    await supabase.from('goals').delete().eq('id', goal.id)
-  }
-
-  const completedCount = goals.filter((g) => {
-    const p = progress.get(g.id)
-    const isAuto = isGoalMetric(g.auto_metric) || p?.isRollup
-    return isAuto ? g.target_value != null && (p?.progress ?? 0) >= g.target_value : g.status === 'done'
-  }).length
-
-  // One node of the rollup chain: the bar thins and the fill lightens with each level, so
-  // depth reads without needing a label for it.
-  function renderNode(node: TreeNode, depth: number, accent: string) {
-    const { goal, progress, children } = node
-    const pct = goal.target_value ? Math.min(100, (progress / goal.target_value) * 100) : 0
-    return (
-      <div key={goal.id}>
-        <div className="flex items-center justify-between gap-2">
-          <span className={`min-w-0 truncate ${depth === 1 ? 'text-sm font-medium text-ink' : 'text-[13px] font-medium text-ink-2'}`}>
-            {periodNodeLabel(goal)} · {goal.title}
-          </span>
-          {goal.target_value != null && (
-            <span className="shrink-0 text-xs font-semibold text-ink-2">
-              {Math.round(progress).toLocaleString()} / {goal.target_value.toLocaleString()}
-            </span>
-          )}
-        </div>
-        <span className={`mt-1.5 block overflow-hidden rounded-full bg-ring-track ${DEPTH_BAR_HEIGHT[Math.min(depth, 2)]}`}>
-          <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: depthTint(accent, depth) }} />
-        </span>
-        {children.length > 0 && (
-          <div className="mt-2.5 flex flex-col gap-2.5 border-l-2 border-ring-track pl-3.5">
-            {children.map((child) => renderNode(child, depth + 1, accent))}
-          </div>
-        )}
-      </div>
-    )
-  }
+  const visible = rows.filter((r) => (filter === 'all' ? true : filter === 'done' ? r.done : r.offPace))
+  const doneCount = rows.filter((r) => r.done).length
+  const offPaceCount = rows.filter((r) => r.offPace).length
+  // "At or ahead of pace" counts only goals that can have a verdict at all.
+  const paced = rows.filter((r) => r.pace.delta != null && r.pace.started)
+  const atOrAhead = paced.filter((r) => r.pace.onPace || (r.pace.delta ?? 0) >= 0).length
 
   const hero = (
     <>
-      <HeroSegments
-        options={PERIOD_TYPES.map((p) => ({ id: p, label: PERIOD_LABELS[p] }))}
-        value={periodType}
-        onChange={setPeriodType}
-      />
-      <div className="mt-2 flex items-center gap-2">
-        {(['tree', 'list'] as const).map((v) => (
+      <div className="mt-4 flex gap-1.5 rounded-[18px] bg-white/14 p-[5px]">
+        {(
+          [
+            { id: 'all' as const, label: `All ${rows.length}` },
+            { id: 'offPace' as const, label: `Off pace ${offPaceCount}` },
+            { id: 'done' as const, label: `Done ${doneCount}` },
+          ] satisfies { id: GoalFilter; label: string }[]
+        ).map((option) => (
           <button
-            key={v}
-            onClick={() => setView(v)}
-            className={`rounded-[14px] px-3.5 py-2 text-xs capitalize transition ${
-              view === v ? 'bg-surface font-semibold text-pine-dark' : 'bg-white/14 font-medium text-white'
+            key={option.id}
+            onClick={() => setFilter(option.id)}
+            className={`flex-1 rounded-[14px] py-2 text-xs transition ${
+              filter === option.id ? 'bg-surface font-semibold text-pine-dark' : 'font-medium text-white'
             }`}
           >
-            {v}
+            {option.label}
           </button>
         ))}
-        <span className="text-[11px] font-medium text-white">view</span>
       </div>
-      {view === 'tree' && (
-        <p className="mt-[18px] text-[15px] font-medium leading-relaxed text-white">
-          Every {PERIOD_LABELS[periodType].toLowerCase()} goal, and what rolls into it.
-        </p>
-      )}
-      {view === 'list' && !loading && goals.length > 0 && (
-        <div className="mt-[18px] flex items-center gap-3.5">
-          <ProgressRing
-            percent={(completedCount / goals.length) * 100}
-            size={54}
-            strokeWidth={5}
-            color={THEME.pineArc}
-            trackColor={THEME.heroRingTrack}
-            disc={THEME.pineDisc}
-          >
-            <span className="text-[13px] font-semibold text-white">
-              {completedCount}/{goals.length}
-            </span>
-          </ProgressRing>
-          <p className="text-sm font-medium text-white">
-            {completedCount} of {goals.length} done this {PERIOD_LABELS[periodType].toLowerCase().replace('ly', '')}
-          </p>
+      {!loading && paced.length > 0 && (
+        <div className="mt-3.5 flex flex-col gap-[5px]">
+          <span className="text-sm font-medium leading-snug text-white">
+            {atOrAhead} of {paced.length} goal{paced.length === 1 ? '' : 's'}{' '}
+            {atOrAhead === 1 && paced.length === 1 ? 'is' : 'are'} at or ahead of pace.
+          </span>
+          <PaceLegend />
         </div>
       )}
     </>
@@ -273,174 +211,142 @@ export function Goals() {
 
   return (
     <Screen title="Goals" onRefresh={load} hero={hero}>
-      {view === 'tree' && (
-        <>
-          {tree.length === 0 ? (
-            <p className="text-sm text-ink-disabled">No {PERIOD_LABELS[periodType].toLowerCase()} goals yet.</p>
-          ) : (
-            <ul className="flex flex-col gap-3.5">
-              {tree.map((node) => {
-                const { goal, progress, isRollup, children } = node
-                const done = goal.target_value != null && progress >= goal.target_value
+      {loading ? (
+        <p className="text-sm text-ink-disabled">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-ink-disabled">No goals yet — add one below.</p>
+      ) : visible.length === 0 ? (
+        <p className="text-sm text-ink-disabled">
+          {filter === 'offPace' ? 'Nothing is behind pace right now.' : 'Nothing finished yet this period.'}
+        </p>
+      ) : (
+        SECTION_ORDER.map((periodType) => {
+          const section = visible.filter((r) => r.goal.period_type === periodType)
+          if (section.length === 0) return null
+          // Every goal in a section shares a period, so any of them can say how long is left.
+          const daysLeft = section[0].pace.daysLeft
+          const sectionOffPace = section.filter((r) => r.offPace).length
+          const countLine = [
+            `${section.length} goal${section.length === 1 ? '' : 's'}`,
+            `${daysLeft} day${daysLeft === 1 ? '' : 's'} left`,
+            sectionOffPace > 0 ? `${sectionOffPace} off pace` : null,
+          ]
+            .filter(Boolean)
+            .join(' · ')
+
+          return (
+            <div key={periodType} className="flex flex-col gap-[9px]">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-semibold tracking-[0.1em] text-ink-3">
+                  {sectionHeading(periodType, section[0].goal.period_start)}
+                </span>
+                <span className="text-[11px] font-medium text-ink-disabled">{countLine}</span>
+                <span className="h-px flex-1 bg-line-strong" />
+              </div>
+
+              {section.map(({ goal, progress, isRollup, pace, done }) => {
                 const style = goalHue(goal, done, isRollup)
                 const pct = goal.target_value ? Math.min(100, (progress / goal.target_value) * 100) : 0
                 const metricInfo = isGoalMetric(goal.auto_metric) ? goalMetricInfo(goal.auto_metric) : null
-                const chip = [
-                  metricInfo ? `${metricInfo.icon} auto` : isRollup ? '🔗 rollup' : 'manual',
-                  PERIOD_LABELS[goal.period_type].toLowerCase(),
-                ].join(' · ')
+                const verdict = paceVerdict(goal, pace)
+                const parent = goal.parent_series_id ? goalsBySeries.get(goal.parent_series_id) : undefined
+                const tasks = taskCounts.get(goal.series_id) ?? 0
+                const feeds = childCounts.get(goal.series_id) ?? 0
+                // What drives the goal, then what it connects to — one quiet line rather
+                // than the row of badges this card used to carry.
+                const footer = [
+                  metricInfo ? `${metricInfo.icon} auto` : isRollup ? '🔗 from sub-goals' : 'manual',
+                  tasks > 0 ? `${tasks} daily task${tasks === 1 ? '' : 's'}` : null,
+                  parent ? `→ ${parent.title}` : feeds > 0 ? `feeds ${feeds} goal${feeds === 1 ? '' : 's'}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
+
                 return (
-                  <li key={goal.id} className="flex overflow-hidden rounded-3xl border border-line bg-surface shadow-card">
+                  <button
+                    key={goal.id}
+                    onClick={() => openGoalDetail(goal.id)}
+                    className="flex overflow-hidden rounded-[20px] border border-line bg-surface text-left shadow-card"
+                  >
                     <span className="w-[5px] shrink-0 self-stretch" style={{ background: style.accent }} />
-                    <div className="min-w-0 flex-1 px-[18px] py-4">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <span
-                            className="inline-block rounded-full px-2.5 py-[3px] text-[11px] font-semibold"
-                            style={{ background: style.tint, color: style.ink }}
-                          >
-                            {chip}
-                          </span>
-                          <p className="mt-2 text-[17px] font-semibold text-ink">{goal.title}</p>
-                        </div>
+                    <div className="min-w-0 flex-1 px-[15px] py-[13px]">
+                      <div className="flex items-start justify-between gap-2.5">
+                        <p className={`min-w-0 text-[15px] font-semibold ${done ? 'text-ink-disabled line-through' : 'text-ink'}`}>
+                          {goal.title}
+                        </p>
                         {goal.target_value != null && (
-                          <span className="shrink-0 text-xl font-semibold" style={{ color: style.ink }}>
+                          <span className="shrink-0 text-base font-semibold" style={{ color: style.ink }}>
                             {Math.round(pct)}%
                           </span>
                         )}
                       </div>
-                      <span className="mt-2.5 block h-2 overflow-hidden rounded-full bg-ring-track">
-                        <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: style.accent }} />
-                      </span>
-                      {children.length > 0 && (
-                        <div className="mt-3.5 flex flex-col gap-2.5 border-l-2 border-ring-track pl-3.5">
-                          {children.map((child) => renderNode(child, 1, style.accent))}
-                        </div>
-                      )}
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-          <div className="flex items-center justify-between gap-3 rounded-[20px] border border-line-strong bg-surface px-4 py-3.5">
-            <button onClick={() => setView('list')} className="text-sm font-semibold text-pine">
-              + New goal
-            </button>
-            {unlinkedCount > 0 && (
-              <span className="shrink-0 text-xs font-medium text-ink-muted">
-                {unlinkedCount} unlinked
-              </span>
-            )}
-          </div>
-        </>
-      )}
 
-      {view === 'list' &&
-        (loading ? (
-          <p className="text-sm text-ink-disabled">Loading…</p>
-        ) : goals.length === 0 ? (
-          <p className="text-sm text-ink-disabled">No {PERIOD_LABELS[periodType].toLowerCase()} goals yet.</p>
-        ) : (
-          <ul className="flex flex-col gap-3">
-          {goals.map((goal) => {
-            const goalProgress = progress.get(goal.id)
-            const isRollup = goalProgress?.isRollup ?? false
-            const isAuto = isGoalMetric(goal.auto_metric) || isRollup
-            const value = isAuto ? goalProgress?.progress ?? 0 : goal.progress
-            const pct = goal.target_value ? Math.min(100, (value / goal.target_value) * 100) : 0
-            const done = isAuto ? goal.target_value != null && value >= goal.target_value : goal.status === 'done'
-            const metricInfo = isGoalMetric(goal.auto_metric) ? goalMetricInfo(goal.auto_metric) : null
-            const style = goalHue(goal, done, isRollup)
-            // One chip instead of four badges — what drives the goal, then its state.
-            const chipParts = [
-              metricInfo ? `${metricInfo.icon} auto` : isRollup ? '🔗 from sub-goals' : null,
-              goal.recurring && !metricInfo ? `↻ ${PERIOD_LABELS[periodType].toLowerCase()}` : null,
-              done ? 'done' : null,
-            ].filter(Boolean)
-            return (
-              <li
-                key={goal.id}
-                className="flex overflow-hidden rounded-3xl border border-line bg-surface shadow-card"
-              >
-                <span className="w-[5px] self-stretch" style={{ background: style.accent }} />
-                <div className="min-w-0 flex-1 px-[18px] py-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className={`text-[17px] font-semibold ${done ? 'text-ink-disabled line-through' : 'text-ink'}`}>{goal.title}</p>
-                      <span
-                        className="mt-1.5 inline-block rounded-full px-2.5 py-[3px] text-[11px] font-semibold"
-                        style={{ background: style.tint, color: style.ink }}
-                      >
-                        {chipParts.length ? chipParts.join(' · ') : 'active'}
-                      </span>
-                    </div>
-                    <button onClick={() => remove(goal)} className="shrink-0 text-ink-faint" aria-label="Remove goal">
-                      ✕
-                    </button>
-                  </div>
-                  {goal.target_value ? (
-                    <div className="mt-3.5 flex items-center gap-3.5">
-                      <ProgressRing percent={pct} size={56} strokeWidth={6} color={style.accent} disc={THEME.surface}>
-                        <span className="text-[13px] font-semibold text-ink">{Math.round(pct)}%</span>
-                      </ProgressRing>
-                      <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
-                        <span className="truncate text-[15px] font-medium text-ink-2">
-                          {value.toLocaleString()} / {goal.target_value.toLocaleString()} {metricInfo?.unit ?? ''}
-                        </span>
-                        {!isAuto && (
-                          <div className="flex shrink-0 gap-2">
-                            <button
-                              onClick={() => bump(goal, -1)}
-                              className="h-[34px] w-[34px] rounded-full bg-track font-semibold text-ink-3"
-                            >
-                              −
-                            </button>
-                            <button
-                              onClick={() => bump(goal, 1)}
-                              className="h-[34px] w-[34px] rounded-full font-semibold text-white"
-                              style={{ background: style.check }}
-                            >
-                              +
-                            </button>
+                      {goal.target_value != null ? (
+                        <div className="mt-2.5 flex items-center gap-3">
+                          <DaysRing pace={pace} />
+                          <div className="flex min-w-0 flex-1 flex-col gap-1">
+                            <div className="flex items-baseline justify-between gap-2">
+                              <span className="truncate text-xs font-medium text-ink-2">
+                                {Math.round(progress).toLocaleString()} / {goal.target_value.toLocaleString()}
+                                {metricInfo ? ` ${metricInfo.unit}` : ''}
+                              </span>
+                              {pace.expected != null && (
+                                <span className="shrink-0 text-[10px] font-medium text-ink-muted">
+                                  pace {Math.round(pace.expected).toLocaleString()}
+                                </span>
+                              )}
+                            </div>
+                            <PaceBars progressPct={pct} pacePct={pace.elapsedFraction * 100} accent={style.accent} />
                           </div>
-                        )}
+                        </div>
+                      ) : (
+                        // No target means no pace to show — it falls back to the plain
+                        // done/active treatment rather than inventing a number.
+                        <p className="mt-1.5 text-xs font-medium text-ink-muted">
+                          {done ? 'Done' : 'No target — tracked as done or not done'}
+                        </p>
+                      )}
+
+                      <div className="mt-[9px] flex flex-wrap items-center gap-[7px]">
+                        {verdict && <VerdictChip label={verdict.label} tone={verdict.tone} />}
+                        <span className="text-[10px] font-medium text-ink-muted">{footer}</span>
                       </div>
                     </div>
-                  ) : isAuto ? null : (
-                    <button
-                      onClick={() =>
-                        supabase
-                          .from('goals')
-                          .update({ status: done ? 'active' : 'done' })
-                          .eq('id', goal.id)
-                          .then(load)
-                      }
-                      className="mt-3 text-sm font-semibold"
-                      style={{ color: style.ink }}
-                    >
-                      {done ? 'Mark as active' : 'Mark as done'}
-                    </button>
-                  )}
-                </div>
-              </li>
-            )
-          })}
-          </ul>
-        ))}
+                  </button>
+                )
+              })}
+            </div>
+          )
+        })
+      )}
 
-      <form onSubmit={addGoal} className="flex flex-col gap-2.5">
+      <form onSubmit={addGoal} className="mt-1 flex flex-col gap-2.5">
         <div className="flex gap-2.5">
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder={`New ${PERIOD_LABELS[periodType].toLowerCase()} goal`}
+            placeholder={`New ${PERIOD_LABELS[formPeriod].toLowerCase()} goal`}
             className="min-w-0 flex-1 rounded-[20px] border border-line bg-surface px-4 py-3 text-sm text-ink placeholder-ink-disabled outline-none focus:border-pine"
           />
           <button type="submit" className="shrink-0 rounded-[20px] bg-pine px-5 py-3 text-sm font-semibold text-white">
             Add
           </button>
         </div>
+        <select
+          value={formPeriod}
+          onChange={(e) => {
+            setFormPeriod(e.target.value as PeriodType)
+            setParentSeriesId('')
+          }}
+          aria-label="Goal period"
+          className="rounded-[20px] border border-line bg-surface px-4 py-3 text-sm text-ink outline-none focus:border-pine"
+        >
+          {PERIOD_TYPES.map((p) => (
+            <option key={p} value={p}>
+              {PERIOD_LABELS[p]} goal
+            </option>
+          ))}
+        </select>
         <input
           value={target}
           onChange={(e) => setTarget(e.target.value)}
@@ -469,7 +375,7 @@ export function Goals() {
             ))}
           </optgroup>
         </select>
-        {parentPeriod && (
+        {formParentPeriod && (
           <select
             value={parentSeriesId}
             onChange={(e) => setParentSeriesId(e.target.value)}
@@ -478,7 +384,7 @@ export function Goals() {
             <option value="">No parent goal</option>
             {parentOptions.map((g) => (
               <option key={g.id} value={g.series_id}>
-                Roll up into: {g.title} ({PERIOD_LABELS[parentPeriod]})
+                Roll up into: {g.title} ({PERIOD_LABELS[formParentPeriod]})
               </option>
             ))}
           </select>
@@ -486,7 +392,7 @@ export function Goals() {
         {!autoMetric && (
           <label className="flex items-center gap-2 text-sm text-ink-3">
             <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} className="accent-pine" />
-            Recurring every {PERIOD_LABELS[periodType].toLowerCase().replace('ly', '')}
+            Recurring every {PERIOD_LABELS[formPeriod].toLowerCase().replace('ly', '')}
           </label>
         )}
       </form>

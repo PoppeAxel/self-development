@@ -1,13 +1,31 @@
 import { useEffect, useState } from 'react'
 import { format, addDays, subDays, getDay } from 'date-fns'
 import { supabase } from '../lib/supabase'
-import { todayISO, weekStartISO, localTimeToUTC, utcTimeToLocal, DAY_LABELS } from '../lib/dates'
-import { rolloverRecurringGoals } from '../lib/goals'
+import {
+  todayISO,
+  weekStartISO,
+  localTimeToUTC,
+  utcTimeToLocal,
+  periodEndISO,
+  PERIOD_TYPES,
+  DAY_LABELS,
+} from '../lib/dates'
+import {
+  rolloverRecurringGoals,
+  goalPace,
+  isGoalDone,
+  isGoalMetric,
+  goalMetricInfo,
+  paceVerdict,
+  resolveGoalProgress,
+  type GoalPace,
+} from '../lib/goals'
 import { ensureDefaultCategories, CATEGORY_STYLES } from '../lib/categories'
 import { AUTO_METRICS, METRIC_INFO, isAutoMetric, upsertMetricValue, type AutoMetric } from '../lib/metrics'
 import { addMacros, logEntryMacros, ZERO_MACROS } from '../lib/food'
 import { THEME } from '../lib/theme'
 import { ProgressRing } from '../components/ProgressRing'
+import { useNav } from '../contexts/NavContext'
 import { Screen, HeroChip } from '../components/Screen'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { MorningCheckIn } from '../components/MorningCheckIn'
@@ -23,7 +41,14 @@ export function Today() {
   const [tasks, setTasks] = useState<DailyTask[]>([])
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set())
   const [categories, setCategories] = useState<Category[]>([])
+  const { openGoalDetail } = useNav()
   const [weekGoals, setWeekGoals] = useState<Goal[]>([])
+  // Every goal a task on this day points at — any horizon, not just this week's — with its
+  // progress and pace resolved, so a task row can say which goal it moves and how that goal
+  // is doing. Keyed by series_id, which is what daily_tasks.goal_series_id holds.
+  const [taskGoals, setTaskGoals] = useState<Map<string, { goal: Goal; progress: number; pace: GoalPace; done: boolean }>>(
+    new Map(),
+  )
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [editingTask, setEditingTask] = useState<DailyTask | null>(null)
   const [newTitle, setNewTitle] = useState('')
@@ -114,6 +139,35 @@ export function Today() {
       supabase.from('ingredients').select('*'),
     ])
     const allTasks = taskRows ?? []
+    // One extra query, batched over the day's linked series rather than per task.
+    const linkedSeries = [...new Set(allTasks.map((t) => t.goal_series_id).filter(Boolean))] as string[]
+    if (linkedSeries.length > 0) {
+      const { data: linkedGoalRows } = await supabase.from('goals').select('*').in('series_id', linkedSeries)
+      // A series has one row per period; the one that matters today is the one whose period
+      // contains this day — the same containment rule the rollup uses.
+      const current = new Map<string, Goal>()
+      for (const g of (linkedGoalRows ?? []) as Goal[]) {
+        if (g.period_start > date) continue
+        if (periodEndISO(g.period_type, g.period_start) < date) continue
+        const existing = current.get(g.series_id)
+        // Prefer the tightest horizon: a weekly goal says more about today than a yearly one.
+        if (!existing || PERIOD_TYPES.indexOf(g.period_type) < PERIOD_TYPES.indexOf(existing.period_type)) {
+          current.set(g.series_id, g)
+        }
+      }
+      const resolved = await Promise.all(
+        [...current.values()].map(async (goal) => {
+          const { progress, isRollup } = await resolveGoalProgress(goal)
+          return [
+            goal.series_id,
+            { goal, progress, pace: goalPace(goal, progress), done: isGoalDone(goal, progress, isRollup) },
+          ] as const
+        }),
+      )
+      setTaskGoals(new Map(resolved))
+    } else {
+      setTaskGoals(new Map())
+    }
     const completed = new Set((completionRows ?? []).map((r) => r.task_id))
     const todaysMetrics = new Map<AutoMetric, number>()
     for (const m of AUTO_METRICS) {
@@ -365,6 +419,10 @@ export function Today() {
 
   const doneCount = tasks.filter(isTaskDone).length
   const remainingCount = tasks.length - doneCount
+  // Attribution counts: a task "moves a goal" when its linked series resolved to a goal
+  // whose period covers today — a link to a series with no current period says nothing.
+  const attributedCount = tasks.filter((t) => t.goal_series_id && taskGoals.has(t.goal_series_id)).length
+  const unattributedCount = tasks.length - attributedCount
   const outstandingTasks = tasks.filter((t) => !isTaskDone(t))
   const completedTasks = tasks.filter(isTaskDone)
   // Settings' step goal wins, but a "walk N steps" task carries the same intent — fall
@@ -387,7 +445,25 @@ export function Today() {
             const done = isTaskDone(task)
             const category = task.category_id ? categoryById.get(task.category_id) : undefined
             const style = category ? CATEGORY_STYLES[category.color] : CATEGORY_STYLES.violet
-            const goal = task.goal_series_id ? weekGoals.find((g) => g.series_id === task.goal_series_id) : undefined
+            const linked = task.goal_series_id ? taskGoals.get(task.goal_series_id) : undefined
+            // "No goal" stays deliberately plain: the handoff pairs it with a streak, and
+            // streaks are the one concept this app dropped on purpose (see CONTEXT.md).
+            const attribution = linked
+              ? (() => {
+                  const verdict = paceVerdict(linked.goal, linked.pace)
+                  const unit = isGoalMetric(linked.goal.auto_metric) ? goalMetricInfo(linked.goal.auto_metric).unit : ''
+                  const amounts =
+                    linked.goal.target_value != null
+                      ? ` · ${Math.round(linked.progress).toLocaleString()}/${linked.goal.target_value.toLocaleString()}${unit ? ` ${unit}` : ''}`
+                      : ''
+                  return {
+                    label: `→ ${linked.goal.title}${amounts}${verdict ? ` · ${verdict.label}` : ''}`,
+                    color: verdict?.tone === 'behind' ? '#a33327' : THEME.ink2,
+                  }
+                })()
+              : task.goal_series_id
+                ? { label: '→ goal has no current period', color: THEME.inkDisabled }
+                : { label: 'No goal', color: THEME.inkDisabled }
             const metric = isAutoMetric(task.auto_metric) ? task.auto_metric : null
             const metricInfo = metric ? METRIC_INFO[metric] : null
             const effectiveStartDate = task.scheduled_date ?? task.created_at.slice(0, 10)
@@ -405,7 +481,8 @@ export function Today() {
             // or late state, rather than a row of separate badges.
             const metaParts: React.ReactNode[] = []
             if (category) metaParts.push(category.name)
-            if (goal) metaParts.push(`→ ${goal.title} ${goal.progress}/${goal.target_value}`)
+            // The linked goal now gets its own line under the title (see below), so it no
+            // longer rides along in the category/one-time meta line.
             if (!task.recurring) {
               metaParts.push(isLate ? <span className="text-cat-rose-ink">late</span> : 'one-time')
             }
@@ -433,6 +510,14 @@ export function Today() {
                     >
                       {task.title}
                     </span>
+                    {/* Which goal this task moves, and how that goal is doing — the other
+                        half of the loop that goal_series_id has always described but
+                        nothing ever surfaced. */}
+                    {attribution && (
+                      <span className="truncate text-[11px] font-medium" style={{ color: attribution.color }}>
+                        {attribution.label}
+                      </span>
+                    )}
                     {metricPct != null ? (
                       <span className="flex items-center gap-2">
                         <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
@@ -466,6 +551,15 @@ export function Today() {
                     )}
                   </span>
                 </button>
+                {linked && (
+                  <button
+                    onClick={() => openGoalDetail(linked.goal.id)}
+                    className="shrink-0 px-0.5 text-sm text-ink-faint"
+                    aria-label={`Open ${linked.goal.title}`}
+                  >
+                    ›
+                  </button>
+                )}
                 <button onClick={() => openEditForm(task)} className="shrink-0 px-0.5 text-sm text-ink-faint" aria-label="Edit task">
                   ✎
                 </button>
@@ -508,6 +602,11 @@ export function Today() {
               </>
             )}
           </p>
+          {tasks.length > 0 && attributedCount > 0 && (
+            <p className="mt-1.5 text-[13px] font-medium text-white/80">
+              {attributedCount} of today's {tasks.length} task{tasks.length === 1 ? '' : 's'} move a goal.
+            </p>
+          )}
           {tasks.length > 0 && (
             <span className="mt-3.5 flex gap-[5px]">
               {tasks.map((task) => (
@@ -640,11 +739,18 @@ export function Today() {
         <button onClick={openAddForm} className="text-[15px] font-semibold text-pine">
           + Add task
         </button>
-        {completedTasks.length > 0 && (
-          <button onClick={() => setShowDone((v) => !v)} className="shrink-0 text-xs font-medium text-ink-muted">
-            {completedTasks.length} done · {showDone ? 'hide' : 'show'}
-          </button>
-        )}
+        <span className="flex shrink-0 items-center gap-2.5">
+          {unattributedCount > 0 && (
+            <span className="text-[11px] font-medium text-ink-muted">
+              {unattributedCount} task{unattributedCount === 1 ? '' : 's'} feed{unattributedCount === 1 ? 's' : ''} nothing
+            </span>
+          )}
+          {completedTasks.length > 0 && (
+            <button onClick={() => setShowDone((v) => !v)} className="text-xs font-medium text-ink-muted">
+              {completedTasks.length} done · {showDone ? 'hide' : 'show'}
+            </button>
+          )}
+        </span>
       </div>
 
       {addFormOpen && (
