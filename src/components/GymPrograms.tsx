@@ -1,11 +1,14 @@
-import { Fragment, useEffect, useState } from 'react'
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+import { useImperativeHandle, useState, type Ref } from 'react'
 import { supabase } from '../lib/supabase'
-import { todayISO } from '../lib/dates'
-import { formatWorkoutDuration } from '../lib/workouts'
-import { MUSCLE_GROUPS, MUSCLE_REGIONS, TRACKED_LIFTS, estimatedOneRepMax, recentAverage, liftTrendPerWeek } from '../lib/exercises'
+import { MUSCLE_GROUPS } from '../lib/exercises'
+import { lastTime } from '../lib/training'
 import { ConfirmDialog } from './ConfirmDialog'
-import type { Exercise, GymProgram, GymProgramExercise, GymSession, GymSessionSet, Workout } from '../lib/types'
+import type { Exercise, GymProgram, GymProgramExercise, GymSession, GymSessionSet } from '../lib/types'
+
+// Program CRUD, the program builder, the exercise library and the edit-a-past-session
+// sheet. Everything it shows is owned by the Training tab (src/components/Training.tsx),
+// which opens these sheets through the ref and reloads on `onChanged`. Lift progress,
+// muscle balance and recent sessions used to live here too; they moved to Training.
 
 interface ExerciseRow {
   name: string
@@ -20,41 +23,111 @@ interface SessionExerciseRow {
   sets: { reps: string; weight: string }[]
 }
 
+export interface GymProgramsHandle {
+  newProgram: () => void
+  editPrograms: () => void
+  editSession: (session: GymSession) => void
+}
+
 function emptyExerciseRow(): ExerciseRow {
   return { name: '', sets: '3', reps: '10', primaryMuscle: '', secondaryMuscle: '' }
 }
 
-function summarizeSet(s: GymSessionSet): string {
-  if (s.reps != null && s.weight != null) return `${s.reps}@${s.weight}kg`
-  if (s.reps != null) return `${s.reps} reps`
-  if (s.weight != null) return `${s.weight}kg`
-  return '—'
+const SHEET = 'fixed inset-0 flex flex-col bg-page safe-top safe-bottom'
+const CLOSE_BTN = 'rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2'
+const INPUT =
+  'rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine'
+
+/**
+ * Pick a replacement exercise from the library, same-muscle ones first. Shared by the
+ * program builder, the past-session editor and live workout mode. `z` is the layer it
+ * sits on — always one above whatever sheet opened it.
+ */
+export function SwapSheet({
+  exercises,
+  currentName,
+  primaryMuscle,
+  onPick,
+  onClose,
+  z = 'z-[60]',
+}: {
+  exercises: Exercise[]
+  currentName: string
+  primaryMuscle: string | null | undefined
+  onPick: (ex: Exercise) => void
+  onClose: () => void
+  z?: string
+}) {
+  const [query, setQuery] = useState('')
+  const q = query.trim().toLowerCase()
+  const candidates = exercises
+    .filter((ex) => ex.name.toLowerCase() !== currentName.trim().toLowerCase())
+    .filter((ex) => !q || ex.name.toLowerCase().includes(q))
+    .sort((a, b) => {
+      const aMatches = primaryMuscle && a.primary_muscle === primaryMuscle ? 0 : 1
+      const bMatches = primaryMuscle && b.primary_muscle === primaryMuscle ? 0 : 1
+      return aMatches !== bMatches ? aMatches - bMatches : a.name.localeCompare(b.name)
+    })
+  return (
+    <div className={`${SHEET} ${z}`}>
+      <div className="flex items-center justify-between px-4 pt-4">
+        <h2 className="text-lg font-bold text-ink">Swap exercise</h2>
+        <button onClick={onClose} className={CLOSE_BTN}>
+          Close ✕
+        </button>
+      </div>
+      <div className="p-4">
+        <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search exercises" className={`w-full ${INPUT}`} />
+      </div>
+      <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-4 pb-4">
+        {candidates.length === 0 && <p className="text-sm text-ink-disabled">No matches.</p>}
+        {candidates.map((ex) => (
+          <button
+            key={ex.id}
+            type="button"
+            onClick={() => onPick(ex)}
+            className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 text-left shadow-card"
+          >
+            <span className="font-medium text-ink">{ex.name}</span>
+            <span className="text-xs text-ink-disabled">{ex.primary_muscle ?? 'Uncategorized'}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
 }
 
-export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] }) {
-  const [programs, setPrograms] = useState<GymProgram[]>([])
-  const [exercisesByProgram, setExercisesByProgram] = useState<Map<string, GymProgramExercise[]>>(new Map())
-  const [sessions, setSessions] = useState<GymSession[]>([])
-  const [setsBySession, setSetsBySession] = useState<Map<string, GymSessionSet[]>>(new Map())
-  const [loading, setLoading] = useState(true)
-  const [linkingSessionId, setLinkingSessionId] = useState<string | null>(null)
+export function GymPrograms({
+  ref,
+  programs,
+  exercisesByProgram,
+  exercises,
+  sessions,
+  setsBySession,
+  onChanged,
+}: {
+  ref: Ref<GymProgramsHandle>
+  programs: GymProgram[]
+  exercisesByProgram: Map<string, GymProgramExercise[]>
+  exercises: Exercise[]
+  /** Newest first. */
+  sessions: GymSession[]
+  setsBySession: Map<string, GymSessionSet[]>
+  onChanged: () => void
+}) {
   const [confirmDeleteProgram, setConfirmDeleteProgram] = useState<GymProgram | null>(null)
-  const [confirmDeleteSession, setConfirmDeleteSession] = useState<GymSession | null>(null)
-  const [exercises, setExercises] = useState<Exercise[]>([])
+  const [programsListOpen, setProgramsListOpen] = useState(false)
 
   const [builderOpen, setBuilderOpen] = useState(false)
   const [editingProgram, setEditingProgram] = useState<GymProgram | null>(null)
   const [programName, setProgramName] = useState('')
   const [exerciseRows, setExerciseRows] = useState<ExerciseRow[]>([emptyExerciseRow()])
   const [substitutingIndex, setSubstitutingIndex] = useState<number | null>(null)
-  const [substituteQuery, setSubstituteQuery] = useState('')
 
-  const [loggingProgram, setLoggingProgram] = useState<GymProgram | null>(null)
   const [editingSession, setEditingSession] = useState<GymSession | null>(null)
-  const [sessionDate, setSessionDate] = useState(todayISO())
+  const [sessionDate, setSessionDate] = useState('')
   const [sessionRows, setSessionRows] = useState<SessionExerciseRow[]>([])
   const [substitutingSessionIndex, setSubstitutingSessionIndex] = useState<number | null>(null)
-  const [substituteSessionQuery, setSubstituteSessionQuery] = useState('')
   const [addingExercise, setAddingExercise] = useState(false)
   const [addExerciseQuery, setAddExerciseQuery] = useState('')
   const [addToProgramToo, setAddToProgramToo] = useState(false)
@@ -66,48 +139,10 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
   const [exerciseFormPrimary, setExerciseFormPrimary] = useState('')
   const [exerciseFormSecondary, setExerciseFormSecondary] = useState('')
   const [confirmDeleteExercise, setConfirmDeleteExercise] = useState<Exercise | null>(null)
-  const [programsOpen, setProgramsOpen] = useState(false)
-  const [expandedRegion, setExpandedRegion] = useState<string | null>(null)
-  const [sessionsOpen, setSessionsOpen] = useState(false)
 
-  async function load() {
-    setLoading(true)
-    const [{ data: programRows }, { data: exerciseRowsData }, { data: sessionRows }, { data: exerciseCatalogRows }] = await Promise.all([
-      supabase.from('gym_programs').select('*').order('created_at'),
-      supabase.from('gym_program_exercises').select('*').order('position'),
-      supabase.from('gym_sessions').select('*').order('date', { ascending: false }).limit(20),
-      supabase.from('exercises').select('*').order('name'),
-    ])
-    const byProgram = new Map<string, GymProgramExercise[]>()
-    for (const e of exerciseRowsData ?? []) {
-      const arr = byProgram.get(e.program_id) ?? []
-      arr.push(e)
-      byProgram.set(e.program_id, arr)
-    }
-    setPrograms(programRows ?? [])
-    setExercisesByProgram(byProgram)
-    setSessions(sessionRows ?? [])
-    setExercises(exerciseCatalogRows ?? [])
+  const exerciseByName = new Map(exercises.map((ex) => [ex.name.toLowerCase(), ex]))
 
-    const sessionIds = (sessionRows ?? []).map((s) => s.id)
-    if (sessionIds.length > 0) {
-      const { data: setRows } = await supabase.from('gym_session_sets').select('*').in('session_id', sessionIds)
-      const bySession = new Map<string, GymSessionSet[]>()
-      for (const s of setRows ?? []) {
-        const arr = bySession.get(s.session_id) ?? []
-        arr.push(s)
-        bySession.set(s.session_id, arr)
-      }
-      setSetsBySession(bySession)
-    } else {
-      setSetsBySession(new Map())
-    }
-    setLoading(false)
-  }
-
-  useEffect(() => {
-    load()
-  }, [])
+  useImperativeHandle(ref, () => ({ newProgram: openBuilder, editPrograms: () => setProgramsListOpen(true), editSession: openEditSession }))
 
   function openBuilder() {
     setEditingProgram(null)
@@ -119,7 +154,6 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
   function openEditProgram(program: GymProgram) {
     const progExercises = (exercisesByProgram.get(program.id) ?? []).slice().sort((a, b) => a.position - b.position)
     const exerciseById = new Map(exercises.map((ex) => [ex.id, ex]))
-    const exerciseByName = new Map(exercises.map((ex) => [ex.name.toLowerCase(), ex]))
     setEditingProgram(program)
     setProgramName(program.name)
     setExerciseRows(
@@ -193,12 +227,12 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
 
     setBuilderOpen(false)
     setEditingProgram(null)
-    load()
+    onChanged()
   }
 
   async function deleteProgram(program: GymProgram) {
-    setPrograms((ps) => ps.filter((p) => p.id !== program.id))
     await supabase.from('gym_programs').delete().eq('id', program.id)
+    onChanged()
   }
 
   function openNewExercise() {
@@ -249,98 +283,15 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
 
     setExerciseFormOpen(false)
     setEditingExercise(null)
-    load()
+    onChanged()
   }
 
   async function deleteExercise(ex: Exercise) {
-    setExercises((es) => es.filter((e) => e.id !== ex.id))
     await supabase.from('exercises').delete().eq('id', ex.id)
+    onChanged()
   }
 
-  // Most recent logged sets for an exercise (by name, case-insensitive), searching
-  // sessions newest-first — used to prefill "last time you did this" reps/weight.
-  function lastLoggedSets(exerciseName: string): GymSessionSet[] | null {
-    const target = exerciseName.toLowerCase()
-    for (const session of sessions) {
-      const sets = (setsBySession.get(session.id) ?? []).filter((s) => s.exercise_name.toLowerCase() === target)
-      if (sets.length > 0) return sets.slice().sort((a, b) => a.set_number - b.set_number)
-    }
-    return null
-  }
-
-  // Estimated 1-rep-max per session for a tracked lift, ascending by date — the best
-  // (highest e1RM) set that session, so different rep ranges stay comparable over time.
-  function liftProgress(exerciseName: string): { date: string; e1rm: number }[] {
-    const target = exerciseName.toLowerCase()
-    const points: { date: string; e1rm: number }[] = []
-    for (const session of sessions) {
-      const sets = (setsBySession.get(session.id) ?? []).filter(
-        (s) => s.exercise_name.toLowerCase() === target && s.weight != null && s.reps != null,
-      )
-      if (sets.length === 0) continue
-      const best = Math.max(...sets.map((s) => estimatedOneRepMax(s.weight as number, s.reps as number)))
-      points.push({ date: session.date, e1rm: Math.round(best * 10) / 10 })
-    }
-    return points.sort((a, b) => a.date.localeCompare(b.date))
-  }
-
-  // Rolling average sets/week per muscle group over the trailing window, so a single
-  // heavy or light week doesn't misrepresent how balanced training actually is. A set
-  // counts fully toward its exercise's primary muscle and at half weight toward its
-  // secondary muscle (the common convention for indirect stimulus, e.g. rows for biceps).
-  function muscleBalance(windowDays: number): { muscle: string; primaryPerWeek: number; secondaryPerWeek: number; totalPerWeek: number }[] {
-    const cutoff = new Date()
-    cutoff.setDate(cutoff.getDate() - windowDays)
-    const cutoffStr = cutoff.toISOString().slice(0, 10)
-    const totals = new Map<string, { primary: number; secondary: number }>()
-    for (const session of sessions) {
-      if (session.date < cutoffStr) continue
-      for (const s of setsBySession.get(session.id) ?? []) {
-        const ex = exerciseByName.get(s.exercise_name.toLowerCase())
-        if (!ex) continue
-        if (ex.primary_muscle) {
-          const t = totals.get(ex.primary_muscle) ?? { primary: 0, secondary: 0 }
-          t.primary += 1
-          totals.set(ex.primary_muscle, t)
-        }
-        if (ex.secondary_muscle) {
-          const t = totals.get(ex.secondary_muscle) ?? { primary: 0, secondary: 0 }
-          t.secondary += 1
-          totals.set(ex.secondary_muscle, t)
-        }
-      }
-    }
-    const weeks = windowDays / 7
-    return MUSCLE_GROUPS.map((muscle) => {
-      const t = totals.get(muscle) ?? { primary: 0, secondary: 0 }
-      return {
-        muscle,
-        primaryPerWeek: t.primary / weeks,
-        secondaryPerWeek: (t.secondary * 0.5) / weeks,
-        totalPerWeek: (t.primary + t.secondary * 0.5) / weeks,
-      }
-    }).sort((a, b) => b.totalPerWeek - a.totalPerWeek)
-  }
-
-  function openLogSession(program: GymProgram) {
-    const progExercises = (exercisesByProgram.get(program.id) ?? []).slice().sort((a, b) => a.position - b.position)
-    setSessionRows(
-      progExercises.map((ex) => {
-        const previous = lastLoggedSets(ex.name)
-        return {
-          exerciseName: ex.name,
-          sets: Array.from({ length: ex.target_sets }, (_, i) => ({
-            reps: previous?.[i]?.reps != null ? String(previous[i].reps) : '',
-            weight: previous?.[i]?.weight != null ? String(previous[i].weight) : '',
-          })),
-        }
-      }),
-    )
-    setSessionDate(todayISO())
-    setEditingSession(null)
-    setLoggingProgram(program)
-  }
-
+  // Past sessions are edited here; new ones are logged in live workout mode instead.
   function openEditSession(session: GymSession) {
     const program = session.program_id ? (programs.find((p) => p.id === session.program_id) ?? null) : null
     const programExercises = program ? (exercisesByProgram.get(program.id) ?? []).slice().sort((a, b) => a.position - b.position) : []
@@ -372,16 +323,15 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
       }),
     )
     setSessionDate(session.date)
-    setLoggingProgram(null)
     setEditingSession(session)
   }
 
   // Replaces a session row's exercise in place (e.g. equipment unavailable, an injury) —
-  // this only affects the session being logged, not the underlying program. To log an
+  // this only affects the session being edited, not the underlying program. To log an
   // extra exercise without losing the original, use "+ Add exercise" instead of swapping.
   function pickSubstituteForSession(newExerciseName: string) {
     if (substitutingSessionIndex == null) return
-    const previous = lastLoggedSets(newExerciseName)
+    const previous = lastTime(newExerciseName, sessions, setsBySession, editingSession?.id)?.sets
     setSessionRows((rows) =>
       rows.map((r, idx) => {
         if (idx !== substitutingSessionIndex) return r
@@ -397,15 +347,9 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
     setSubstitutingSessionIndex(null)
   }
 
-  // The program a session belongs to, if any — a brand-new session logs against
-  // `loggingProgram`, an existing one carries `editingSession.program_id` (nullable, since
-  // a session can outlive its program being deleted). Used to offer "also add to the
-  // program" when adding an ad-hoc exercise mid-session.
-  function sessionProgram(): GymProgram | null {
-    if (loggingProgram) return loggingProgram
-    if (editingSession?.program_id) return programs.find((p) => p.id === editingSession.program_id) ?? null
-    return null
-  }
+  // The program the edited session belongs to, if it still exists — used to offer "also
+  // add to the program" when adding an ad-hoc exercise.
+  const sessionProgram = editingSession?.program_id ? (programs.find((p) => p.id === editingSession.program_id) ?? null) : null
 
   // Adds an exercise to just this session (3 blank sets, same starting point as a new
   // program row) without touching anything else already logged. Optionally also persists
@@ -414,7 +358,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
     setSessionRows((rows) => [...rows, { exerciseName: name, sets: Array.from({ length: 3 }, () => ({ reps: '', weight: '' })) }])
     setAddingExercise(false)
 
-    const program = alsoAddToProgram ? sessionProgram() : null
+    const program = alsoAddToProgram ? sessionProgram : null
     if (!program) return
     const {
       data: { user },
@@ -431,33 +375,19 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
       position,
       exercise_id: exerciseId,
     })
-    load()
+    onChanged()
   }
 
   async function saveSession() {
-    if (!loggingProgram && !editingSession) return
+    if (!editingSession) return
     const {
       data: { user },
     } = await supabase.auth.getUser()
     if (!user) return
+    const sessionId = editingSession.id
 
-    const sessionId = editingSession
-      ? editingSession.id
-      : await (async () => {
-          if (!loggingProgram) return null
-          const { data: session, error } = await supabase
-            .from('gym_sessions')
-            .insert({ user_id: user.id, program_id: loggingProgram.id, program_name: loggingProgram.name, date: sessionDate })
-            .select()
-            .single()
-          return error || !session ? null : session.id
-        })()
-    if (!sessionId) return
-
-    if (editingSession) {
-      await supabase.from('gym_sessions').update({ date: sessionDate }).eq('id', sessionId)
-      await supabase.from('gym_session_sets').delete().eq('session_id', sessionId)
-    }
+    await supabase.from('gym_sessions').update({ date: sessionDate }).eq('id', sessionId)
+    await supabase.from('gym_session_sets').delete().eq('session_id', sessionId)
 
     const setsToInsert = sessionRows.flatMap((row) =>
       row.sets
@@ -474,318 +404,56 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
     )
     if (setsToInsert.length > 0) await supabase.from('gym_session_sets').insert(setsToInsert)
 
-    setLoggingProgram(null)
     setEditingSession(null)
-    load()
+    onChanged()
   }
 
-  async function deleteSession(session: GymSession) {
-    setSessions((ss) => ss.filter((s) => s.id !== session.id))
-    await supabase.from('gym_sessions').delete().eq('id', session.id)
-  }
-
-  async function linkSession(session: GymSession, workout: Workout) {
-    setSessions((ss) => ss.map((s) => (s.id === session.id ? { ...s, strava_workout_id: workout.id } : s)))
-    setLinkingSessionId(null)
-    await supabase.from('gym_sessions').update({ strava_workout_id: workout.id }).eq('id', session.id)
-  }
-
-  async function unlinkSession(session: GymSession) {
-    setSessions((ss) => ss.map((s) => (s.id === session.id ? { ...s, strava_workout_id: null } : s)))
-    await supabase.from('gym_sessions').update({ strava_workout_id: null }).eq('id', session.id)
-  }
-
-  const workoutById = new Map(strengthWorkouts.map((w) => [w.id, w]))
-  const linkedWorkoutIds = new Set(sessions.map((s) => s.strava_workout_id).filter((id): id is string => id != null))
-  const exerciseByName = new Map(exercises.map((ex) => [ex.name.toLowerCase(), ex]))
-
-  const trackedLiftProgress = TRACKED_LIFTS.map((name) => ({ name, points: liftProgress(name) })).filter(
-    (lift) => lift.points.length > 0,
+  const libraryButton = (
+    <button type="button" onClick={() => setLibraryOpen(true)} className="text-sm font-medium text-ink-3">
+      📋 Exercise library ({exercises.length})
+    </button>
   )
-  const muscleBalanceWindowDays = 28
-  const muscleBalanceData = muscleBalance(muscleBalanceWindowDays)
-  const muscleByName = new Map(muscleBalanceData.map((m) => [m.muscle, m]))
-  const regionBalance = Object.entries(MUSCLE_REGIONS)
-    .map(([region, muscles]) => {
-      const items = muscles.map((m) => muscleByName.get(m)!).filter(Boolean)
-      return { region, items, totalPerWeek: items.reduce((sum, m) => sum + m.totalPerWeek, 0) }
-    })
-    .sort((a, b) => b.totalPerWeek - a.totalPerWeek)
-  const regionMax = Math.max(...regionBalance.map((r) => r.totalPerWeek), 1)
-  const muscleBalanceMax = Math.max(...muscleBalanceData.map((m) => m.totalPerWeek), 1)
 
   return (
-    <div className="flex flex-col gap-3">
-      <h2 className="text-sm font-semibold text-ink-3">Lift progress</h2>
-      {trackedLiftProgress.length === 0 ? (
-        <p className="text-sm text-ink-disabled">
-          Log weight and reps for Squat, Bench press, Deadlift, or Military press (overhead press) to see your estimated 1-rep-max
-          trend here.
-        </p>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {trackedLiftProgress.map(({ name, points }) => {
-            // Averaging the last few sessions (rather than just the latest) keeps one
-            // off day — poor sleep, fatigue — from swinging the headline number, and the
-            // trend below is a regression across every session rather than two isolated
-            // points, for the same reason.
-            const windowSize = Math.min(3, points.length)
-            const current = recentAverage(points, windowSize)
-            const trend = liftTrendPerWeek(points)
-            return (
-              <div key={name} className="rounded-[20px] border border-line bg-surface p-3 shadow-card">
-                <div className="flex items-center justify-between">
-                  <p className="font-medium text-ink">{name}</p>
-                  <div className="text-right">
-                    <p className="text-sm font-bold text-ink">{current.toFixed(1)} kg e1RM</p>
-                    <p className="text-[11px] text-ink-disabled">
-                      {points.length > 1 ? `avg of last ${windowSize} session${windowSize === 1 ? '' : 's'}` : '1 session logged'}
-                    </p>
-                    {trend !== null ? (
-                      <p
-                        className={`text-xs font-semibold ${
-                          Math.abs(trend) < 0.05 ? 'text-ink-disabled' : trend > 0 ? 'text-cat-emerald-ink' : 'text-cat-rose-ink'
-                        }`}
-                      >
-                        {trend > 0 ? '↗' : trend < 0 ? '↘' : '→'} {Math.abs(trend).toFixed(1)} kg/wk
-                      </p>
-                    ) : points.length < 3 ? (
-                      <p className="text-[11px] text-ink-disabled">
-                        Log {3 - points.length} more session{3 - points.length === 1 ? '' : 's'} for a trend
-                      </p>
-                    ) : (
-                      <p className="text-[11px] text-ink-disabled">Not enough date spread yet for a trend</p>
-                    )}
-                  </div>
-                </div>
-                {points.length > 1 && (
-                  <div className="mt-2 h-24">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={points} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#eae3d5" />
-                        <XAxis dataKey="date" stroke="#8b8577" fontSize={10} tickFormatter={(d: string) => d.slice(5)} />
-                        <YAxis stroke="#8b8577" fontSize={10} domain={['dataMin - 5', 'dataMax + 5']} width={32} />
-                        <Tooltip
-                          contentStyle={{ background: '#fdfbf6', border: '1px solid #e9e2d4', fontSize: 12, borderRadius: 12, color: '#23241f' }}
-                          formatter={(value) => [`${value} kg`, 'e1RM']}
-                        />
-                        <Line type="monotone" dataKey="e1rm" stroke="#a8563f" strokeWidth={2.5} dot={{ r: 3, fill: '#a8563f' }} isAnimationActive={false} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      <div>
-        <h2 className="text-sm font-semibold text-ink-3">Muscle balance</h2>
-        <p className="mb-2 text-[11px] text-ink-disabled">
-          Avg sets/week, last {muscleBalanceWindowDays / 7} weeks · secondary muscles (lighter) count half a set · tap a region for detail
-        </p>
-        {muscleBalanceData.every((m) => m.totalPerWeek === 0) ? (
-          <p className="text-sm text-ink-disabled">Log some sessions with categorized exercises to see your balance across muscle groups.</p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {regionBalance.map(({ region, items, totalPerWeek }) => (
-              <div key={region}>
-                <button
-                  type="button"
-                  onClick={() => setExpandedRegion((r) => (r === region ? null : region))}
-                  className="flex w-full items-center gap-2"
-                >
-                  <span className="w-20 shrink-0 text-left text-xs font-medium text-ink-2">{region}</span>
-                  <div className="h-4 flex-1 overflow-hidden rounded-full bg-track">
-                    <div className="flex h-full">
-                      {items.map((m) => (
-                        <Fragment key={m.muscle}>
-                          <div className="h-full bg-cat-pink" style={{ width: `${(m.primaryPerWeek / regionMax) * 100}%` }} />
-                          <div className="h-full bg-cat-pink-tint" style={{ width: `${(m.secondaryPerWeek / regionMax) * 100}%` }} />
-                        </Fragment>
-                      ))}
-                    </div>
-                  </div>
-                  <span className="w-10 shrink-0 text-right text-xs font-medium text-ink-2">{totalPerWeek.toFixed(1)}</span>
-                  <span className="w-3 shrink-0 text-ink-disabled">{expandedRegion === region ? '▲' : '▼'}</span>
-                </button>
-                {expandedRegion === region && (
-                  <div className="mt-2 ml-4 flex flex-col gap-1.5 border-l-2 border-line pl-3">
-                    {items.map((m) => (
-                      <div key={m.muscle} className="flex items-center gap-2">
-                        <span className="w-24 shrink-0 text-xs text-ink-3">{m.muscle}</span>
-                        <div className="h-3 flex-1 overflow-hidden rounded-full bg-track">
-                          <div className="flex h-full">
-                            <div className="h-full bg-cat-pink" style={{ width: `${(m.primaryPerWeek / muscleBalanceMax) * 100}%` }} />
-                            <div className="h-full bg-cat-pink-tint" style={{ width: `${(m.secondaryPerWeek / muscleBalanceMax) * 100}%` }} />
-                          </div>
-                        </div>
-                        <span className="w-8 shrink-0 text-right text-xs text-ink-3">{m.totalPerWeek.toFixed(1)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
+    <>
+      {programsListOpen && (
+        <div className={`${SHEET} z-50`}>
+          <div className="flex items-center justify-between px-4 pt-4">
+            <h2 className="text-lg font-bold text-ink">Programs</h2>
+            <button onClick={() => setProgramsListOpen(false)} className={CLOSE_BTN}>
+              Close ✕
+            </button>
           </div>
-        )}
-      </div>
-
-      <button
-        onClick={() => setProgramsOpen((o) => !o)}
-        className="flex items-center justify-between text-sm font-semibold text-ink-3"
-      >
-        <span>Your programs ({programs.length})</span>
-        <span className="text-ink-disabled">{programsOpen ? 'Hide ▲' : 'Show ▼'}</span>
-      </button>
-      {programsOpen && (loading ? (
-        <p className="text-sm text-ink-disabled">Loading…</p>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {programs.map((program) => {
-            const exercises = (exercisesByProgram.get(program.id) ?? []).slice().sort((a, b) => a.position - b.position)
-            return (
-              <div
-                key={program.id}
-                className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card"
-              >
-                <button onClick={() => openLogSession(program)} className="flex-1 text-left">
-                  <p className="font-medium text-ink">{program.name}</p>
-                  <p className="text-[11px] text-ink-disabled">
-                    {exercises.length} exercise{exercises.length === 1 ? '' : 's'} — tap to log
-                  </p>
-                </button>
-                <button onClick={() => openEditProgram(program)} className="pl-3 text-ink-faint" aria-label="Edit program">
-                  ✎
-                </button>
-                <button onClick={() => setConfirmDeleteProgram(program)} className="pl-3 text-ink-faint" aria-label="Remove program">
-                  ✕
-                </button>
-              </div>
-            )
-          })}
-        </div>
-      ))}
-      <button
-        onClick={openBuilder}
-        className="rounded-[20px] border border-line-strong bg-surface py-3 text-sm font-semibold text-pine"
-      >
-        + New program
-      </button>
-      <button onClick={() => setLibraryOpen(true)} className="text-sm font-medium text-ink-3">
-        📋 Exercise library ({exercises.length})
-      </button>
-
-      {sessions.length > 0 && (
-        <div className="mt-2">
-          <button
-            onClick={() => setSessionsOpen((o) => !o)}
-            className="mb-2 flex w-full items-center justify-between text-sm font-semibold text-ink-3"
-          >
-            <span>Recent sessions ({sessions.length})</span>
-            <span className="text-ink-disabled">{sessionsOpen ? 'Hide ▲' : 'Show ▼'}</span>
-          </button>
-          {sessionsOpen && (
-          <ul className="flex flex-col gap-2">
-            {sessions.map((session) => {
-              const sets = setsBySession.get(session.id) ?? []
-              const byExercise = new Map<string, GymSessionSet[]>()
-              for (const s of sets) {
-                const arr = byExercise.get(s.exercise_name) ?? []
-                arr.push(s)
-                byExercise.set(s.exercise_name, arr)
-              }
+          <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-4">
+            {programs.map((program) => {
+              const count = (exercisesByProgram.get(program.id) ?? []).length
               return (
-                <li key={session.id} className="rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-ink">{session.program_name ?? 'Session'}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-ink-disabled">{session.date}</span>
-                      <button onClick={() => openEditSession(session)} className="text-ink-faint" aria-label="Edit session">
-                        ✎
-                      </button>
-                      <button onClick={() => setConfirmDeleteSession(session)} className="text-ink-faint" aria-label="Remove session">
-                        ✕
-                      </button>
-                    </div>
-                  </div>
-                  {[...byExercise.entries()].map(([name, exSets]) => (
-                    <p key={name} className="mt-1 text-[11px] text-ink-3">
-                      <span className="font-medium text-ink-2">{name}:</span>{' '}
-                      {exSets
-                        .sort((a, b) => a.set_number - b.set_number)
-                        .map(summarizeSet)
-                        .join(', ')}
+                <div key={program.id} className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
+                  <button onClick={() => openEditProgram(program)} className="flex-1 text-left">
+                    <p className="font-medium text-ink">{program.name}</p>
+                    <p className="text-[11px] text-ink-disabled">
+                      {count} exercise{count === 1 ? '' : 's'}
                     </p>
-                  ))}
-
-                  {session.strava_workout_id ? (
-                    (() => {
-                      const linkedWorkout = workoutById.get(session.strava_workout_id)
-                      return (
-                        <div className="mt-2 flex items-center justify-between rounded-xl bg-cat-amber-tint px-2.5 py-1.5">
-                          <span className="text-[11px] text-cat-amber-ink">
-                            🔗 {linkedWorkout ? `${linkedWorkout.name} · ${formatWorkoutDuration(linkedWorkout.duration_seconds)}` : 'Linked'}
-                          </span>
-                          <button onClick={() => unlinkSession(session)} className="text-[11px] font-medium text-ink-disabled">
-                            Unlink
-                          </button>
-                        </div>
-                      )
-                    })()
-                  ) : linkingSessionId === session.id ? (
-                    (() => {
-                      const candidates = strengthWorkouts
-                        .filter((w) => !linkedWorkoutIds.has(w.id))
-                        .sort(
-                          (a, b) =>
-                            Math.abs(new Date(a.date).getTime() - new Date(session.date).getTime()) -
-                            Math.abs(new Date(b.date).getTime() - new Date(session.date).getTime()),
-                        )
-                        .slice(0, 5)
-                      return (
-                        <div className="mt-2 flex flex-col gap-1 rounded-xl bg-track p-2">
-                          {candidates.length === 0 ? (
-                            <p className="text-[11px] text-ink-disabled">No unlinked Strava workouts found yet.</p>
-                          ) : (
-                            candidates.map((w) => (
-                              <button
-                                key={w.id}
-                                onClick={() => linkSession(session, w)}
-                                className="rounded-lg bg-surface px-2 py-1.5 text-left text-[11px] text-ink-2 shadow-card"
-                              >
-                                {w.date} · {w.name} · {formatWorkoutDuration(w.duration_seconds)}
-                              </button>
-                            ))
-                          )}
-                          <button
-                            onClick={() => setLinkingSessionId(null)}
-                            className="text-left text-[11px] font-medium text-ink-disabled"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      )
-                    })()
-                  ) : (
-                    <button
-                      onClick={() => setLinkingSessionId(session.id)}
-                      className="mt-2 text-[11px] font-medium text-cat-rose-ink"
-                    >
-                      Link to Strava workout
-                    </button>
-                  )}
-                </li>
+                  </button>
+                  <button onClick={() => openEditProgram(program)} className="pl-3 text-ink-faint" aria-label="Edit program">
+                    ✎
+                  </button>
+                  <button onClick={() => setConfirmDeleteProgram(program)} className="pl-3 text-ink-faint" aria-label="Remove program">
+                    ✕
+                  </button>
+                </div>
               )
             })}
-          </ul>
-          )}
+            <button onClick={openBuilder} className="rounded-[20px] border border-line-strong bg-surface py-3 text-sm font-semibold text-pine">
+              + New program
+            </button>
+            {libraryButton}
+          </div>
         </div>
       )}
 
       {builderOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
+        <div className={`${SHEET} z-[55]`}>
           <div className="flex items-center justify-between px-4 pt-4">
             <h2 className="text-lg font-bold text-ink">{editingProgram ? 'Edit program' : 'New program'}</h2>
             <button
@@ -793,7 +461,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                 setBuilderOpen(false)
                 setEditingProgram(null)
               }}
-              className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2"
+              className={CLOSE_BTN}
             >
               Close ✕
             </button>
@@ -804,7 +472,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
               value={programName}
               onChange={(e) => setProgramName(e.target.value)}
               placeholder="Program name, e.g. Push Day"
-              className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
+              className={INPUT}
             />
             <div className="flex flex-col gap-2">
               {exerciseRows.map((row, i) => (
@@ -816,14 +484,11 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                         setExerciseRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, name: e.target.value } : r)))
                       }
                       placeholder="Exercise, e.g. Bench Press"
-                      className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
+                      className={`min-w-0 flex-1 ${INPUT}`}
                     />
                     <button
                       type="button"
-                      onClick={() => {
-                        setSubstitutingIndex(i)
-                        setSubstituteQuery('')
-                      }}
+                      onClick={() => setSubstitutingIndex(i)}
                       className="shrink-0 px-2 text-ink-disabled"
                       aria-label="Swap exercise"
                     >
@@ -899,195 +564,135 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
             <button type="submit" className="mt-2 rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white">
               {editingProgram ? 'Save changes' : 'Save program'}
             </button>
+            {libraryButton}
           </form>
 
           {substitutingIndex !== null && (
-            <div className="fixed inset-0 z-[60] flex flex-col bg-page safe-top safe-bottom">
-              <div className="flex items-center justify-between px-4 pt-4">
-                <h2 className="text-lg font-bold text-ink">Swap exercise</h2>
-                <button
-                  onClick={() => setSubstitutingIndex(null)}
-                  className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2"
-                >
-                  Close ✕
-                </button>
-              </div>
-              <div className="p-4">
-                <input
-                  autoFocus
-                  value={substituteQuery}
-                  onChange={(e) => setSubstituteQuery(e.target.value)}
-                  placeholder="Search exercises"
-                  className="w-full rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
-                />
-              </div>
-              <div className="flex-1 overflow-y-auto px-4 pb-4">
-                {(() => {
-                  const currentRow = exerciseRows[substitutingIndex]
-                  const query = substituteQuery.trim().toLowerCase()
-                  const candidates = exercises
-                    .filter((ex) => ex.name.toLowerCase() !== currentRow.name.trim().toLowerCase())
-                    .filter((ex) => !query || ex.name.toLowerCase().includes(query))
-                    .sort((a, b) => {
-                      const aMatches = currentRow.primaryMuscle && a.primary_muscle === currentRow.primaryMuscle ? 0 : 1
-                      const bMatches = currentRow.primaryMuscle && b.primary_muscle === currentRow.primaryMuscle ? 0 : 1
-                      return aMatches !== bMatches ? aMatches - bMatches : a.name.localeCompare(b.name)
-                    })
-                  if (candidates.length === 0) {
-                    return <p className="text-sm text-ink-disabled">No matches — type a new name in the exercise field instead.</p>
-                  }
-                  return (
-                    <div className="flex flex-col gap-2">
-                      {candidates.map((ex) => (
-                        <button
-                          key={ex.id}
-                          type="button"
-                          onClick={() => {
-                            setExerciseRows((rows) =>
-                              rows.map((r, idx) =>
-                                idx === substitutingIndex
-                                  ? { ...r, name: ex.name, primaryMuscle: ex.primary_muscle ?? '', secondaryMuscle: ex.secondary_muscle ?? '' }
-                                  : r,
-                              ),
-                            )
-                            setSubstitutingIndex(null)
-                          }}
-                          className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 text-left shadow-card"
-                        >
-                          <span className="font-medium text-ink">{ex.name}</span>
-                          <span className="text-xs text-ink-disabled">{ex.primary_muscle ?? 'Uncategorized'}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )
-                })()}
-              </div>
-            </div>
+            <SwapSheet
+              exercises={exercises}
+              currentName={exerciseRows[substitutingIndex].name}
+              primaryMuscle={exerciseRows[substitutingIndex].primaryMuscle}
+              onClose={() => setSubstitutingIndex(null)}
+              onPick={(ex) => {
+                setExerciseRows((rows) =>
+                  rows.map((r, idx) =>
+                    idx === substitutingIndex
+                      ? { ...r, name: ex.name, primaryMuscle: ex.primary_muscle ?? '', secondaryMuscle: ex.secondary_muscle ?? '' }
+                      : r,
+                  ),
+                )
+                setSubstitutingIndex(null)
+              }}
+            />
           )}
         </div>
       )}
 
-      {(loggingProgram || editingSession) && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
+      {editingSession && (
+        <div className={`${SHEET} z-50`}>
           <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-ink">
-              {editingSession ? (editingSession.program_name ?? 'Session') : loggingProgram!.name}
-            </h2>
-            <button
-              onClick={() => {
-                setLoggingProgram(null)
-                setEditingSession(null)
-              }}
-              className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2"
-            >
+            <h2 className="text-lg font-bold text-ink">{editingSession.program_name ?? 'Session'}</h2>
+            <button onClick={() => setEditingSession(null)} className={CLOSE_BTN}>
               Close ✕
             </button>
           </div>
           <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
-            <input
-              value={sessionDate}
-              onChange={(e) => setSessionDate(e.target.value)}
-              type="date"
-              className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink outline-none focus:border-pine"
-            />
+            <input value={sessionDate} onChange={(e) => setSessionDate(e.target.value)} type="date" className={INPUT} />
             {sessionRows.map((row, exIdx) => {
               const catalogEx = exerciseByName.get(row.exerciseName.toLowerCase())
               return (
-              <div key={exIdx} className="rounded-[20px] border border-line bg-surface p-3 shadow-card">
-                <div className="mb-2 flex items-center justify-between">
-                  <p className="font-medium text-ink">
-                    {row.exerciseName}
-                    {catalogEx?.primary_muscle && (
-                      <span className="ml-2 text-xs font-normal text-ink-disabled">
-                        {catalogEx.primary_muscle}
-                        {catalogEx.secondary_muscle ? ` · ${catalogEx.secondary_muscle}` : ''}
-                      </span>
-                    )}
-                  </p>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSubstitutingSessionIndex(exIdx)
-                        setSubstituteSessionQuery('')
-                      }}
-                      className="pl-2 text-ink-disabled"
-                      aria-label="Swap exercise"
-                    >
-                      ⇄
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSessionRows((rows) => rows.filter((_, ri) => ri !== exIdx))}
-                      className="pl-2 text-ink-faint"
-                      aria-label="Remove exercise from this session"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  {row.sets.map((set, setIdx) => (
-                    <div key={setIdx} className="flex items-center gap-2">
-                      <span className="w-12 shrink-0 text-xs text-ink-disabled">Set {setIdx + 1}</span>
-                      <input
-                        value={set.reps}
-                        onChange={(e) =>
-                          setSessionRows((rows) =>
-                            rows.map((r, ri) =>
-                              ri === exIdx
-                                ? { ...r, sets: r.sets.map((s, si) => (si === setIdx ? { ...s, reps: e.target.value } : s)) }
-                                : r,
-                            ),
-                          )
-                        }
-                        type="number"
-                        placeholder="Reps"
-                        className="min-w-0 flex-1 rounded-xl border border-line-strong bg-surface px-3 py-2 text-ink placeholder-ink-disabled outline-none focus:border-pine"
-                      />
-                      <input
-                        value={set.weight}
-                        onChange={(e) =>
-                          setSessionRows((rows) =>
-                            rows.map((r, ri) =>
-                              ri === exIdx
-                                ? { ...r, sets: r.sets.map((s, si) => (si === setIdx ? { ...s, weight: e.target.value } : s)) }
-                                : r,
-                            ),
-                          )
-                        }
-                        type="number"
-                        step="0.5"
-                        placeholder="kg"
-                        className="min-w-0 flex-1 rounded-xl border border-line-strong bg-surface px-3 py-2 text-ink placeholder-ink-disabled outline-none focus:border-pine"
-                      />
+                <div key={exIdx} className="rounded-[20px] border border-line bg-surface p-3 shadow-card">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="font-medium text-ink">
+                      {row.exerciseName}
+                      {catalogEx?.primary_muscle && (
+                        <span className="ml-2 text-xs font-normal text-ink-disabled">
+                          {catalogEx.primary_muscle}
+                          {catalogEx.secondary_muscle ? ` · ${catalogEx.secondary_muscle}` : ''}
+                        </span>
+                      )}
+                    </p>
+                    <div className="flex shrink-0 items-center gap-1">
                       <button
                         type="button"
-                        onClick={() =>
-                          setSessionRows((rows) =>
-                            rows.map((r, ri) => (ri === exIdx ? { ...r, sets: r.sets.filter((_, si) => si !== setIdx) } : r)),
-                          )
-                        }
-                        className="shrink-0 px-1 text-ink-faint"
-                        aria-label="Remove set"
+                        onClick={() => setSubstitutingSessionIndex(exIdx)}
+                        className="pl-2 text-ink-disabled"
+                        aria-label="Swap exercise"
+                      >
+                        ⇄
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSessionRows((rows) => rows.filter((_, ri) => ri !== exIdx))}
+                        className="pl-2 text-ink-faint"
+                        aria-label="Remove exercise from this session"
                       >
                         ✕
                       </button>
                     </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSessionRows((rows) =>
-                        rows.map((r, ri) => (ri === exIdx ? { ...r, sets: [...r.sets, { reps: '', weight: '' }] } : r)),
-                      )
-                    }
-                    className="ml-12 self-start text-xs font-semibold text-cat-rose-ink"
-                  >
-                    + Add set
-                  </button>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    {row.sets.map((set, setIdx) => (
+                      <div key={setIdx} className="flex items-center gap-2">
+                        <span className="w-12 shrink-0 text-xs text-ink-disabled">Set {setIdx + 1}</span>
+                        <input
+                          value={set.reps}
+                          onChange={(e) =>
+                            setSessionRows((rows) =>
+                              rows.map((r, ri) =>
+                                ri === exIdx
+                                  ? { ...r, sets: r.sets.map((s, si) => (si === setIdx ? { ...s, reps: e.target.value } : s)) }
+                                  : r,
+                              ),
+                            )
+                          }
+                          type="number"
+                          placeholder="Reps"
+                          className="min-w-0 flex-1 rounded-xl border border-line-strong bg-surface px-3 py-2 text-ink placeholder-ink-disabled outline-none focus:border-pine"
+                        />
+                        <input
+                          value={set.weight}
+                          onChange={(e) =>
+                            setSessionRows((rows) =>
+                              rows.map((r, ri) =>
+                                ri === exIdx
+                                  ? { ...r, sets: r.sets.map((s, si) => (si === setIdx ? { ...s, weight: e.target.value } : s)) }
+                                  : r,
+                              ),
+                            )
+                          }
+                          type="number"
+                          step="0.5"
+                          placeholder="kg"
+                          className="min-w-0 flex-1 rounded-xl border border-line-strong bg-surface px-3 py-2 text-ink placeholder-ink-disabled outline-none focus:border-pine"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSessionRows((rows) =>
+                              rows.map((r, ri) => (ri === exIdx ? { ...r, sets: r.sets.filter((_, si) => si !== setIdx) } : r)),
+                            )
+                          }
+                          className="shrink-0 px-1 text-ink-faint"
+                          aria-label="Remove set"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSessionRows((rows) =>
+                          rows.map((r, ri) => (ri === exIdx ? { ...r, sets: [...r.sets, { reps: '', weight: '' }] } : r)),
+                        )
+                      }
+                      className="ml-12 self-start text-xs font-semibold text-cat-rose-ink"
+                    >
+                      + Add set
+                    </button>
+                  </div>
                 </div>
-              </div>
               )
             })}
             <button
@@ -1102,74 +707,25 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
               + Add exercise
             </button>
             <button onClick={saveSession} className="mt-2 rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white">
-              {editingSession ? 'Save changes' : 'Save session'}
+              Save changes
             </button>
           </div>
 
           {substitutingSessionIndex !== null && (
-            <div className="fixed inset-0 z-[60] flex flex-col bg-page safe-top safe-bottom">
-              <div className="flex items-center justify-between px-4 pt-4">
-                <h2 className="text-lg font-bold text-ink">Swap exercise</h2>
-                <button
-                  onClick={() => setSubstitutingSessionIndex(null)}
-                  className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2"
-                >
-                  Close ✕
-                </button>
-              </div>
-              <div className="p-4">
-                <input
-                  autoFocus
-                  value={substituteSessionQuery}
-                  onChange={(e) => setSubstituteSessionQuery(e.target.value)}
-                  placeholder="Search exercises"
-                  className="w-full rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
-                />
-              </div>
-              <div className="flex-1 overflow-y-auto px-4 pb-4">
-                {(() => {
-                  const currentRow = sessionRows[substitutingSessionIndex]
-                  const currentEx = exerciseByName.get(currentRow.exerciseName.toLowerCase())
-                  const query = substituteSessionQuery.trim().toLowerCase()
-                  const candidates = exercises
-                    .filter((ex) => ex.name.toLowerCase() !== currentRow.exerciseName.trim().toLowerCase())
-                    .filter((ex) => !query || ex.name.toLowerCase().includes(query))
-                    .sort((a, b) => {
-                      const aMatches = currentEx?.primary_muscle && a.primary_muscle === currentEx.primary_muscle ? 0 : 1
-                      const bMatches = currentEx?.primary_muscle && b.primary_muscle === currentEx.primary_muscle ? 0 : 1
-                      return aMatches !== bMatches ? aMatches - bMatches : a.name.localeCompare(b.name)
-                    })
-                  if (candidates.length === 0) {
-                    return <p className="text-sm text-ink-disabled">No matches.</p>
-                  }
-                  return (
-                    <div className="flex flex-col gap-2">
-                      {candidates.map((ex) => (
-                        <button
-                          key={ex.id}
-                          type="button"
-                          onClick={() => pickSubstituteForSession(ex.name)}
-                          className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 text-left shadow-card"
-                        >
-                          <span className="font-medium text-ink">{ex.name}</span>
-                          <span className="text-xs text-ink-disabled">{ex.primary_muscle ?? 'Uncategorized'}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )
-                })()}
-              </div>
-            </div>
+            <SwapSheet
+              exercises={exercises}
+              currentName={sessionRows[substitutingSessionIndex].exerciseName}
+              primaryMuscle={exerciseByName.get(sessionRows[substitutingSessionIndex].exerciseName.toLowerCase())?.primary_muscle}
+              onClose={() => setSubstitutingSessionIndex(null)}
+              onPick={(ex) => pickSubstituteForSession(ex.name)}
+            />
           )}
 
           {addingExercise && (
-            <div className="fixed inset-0 z-[60] flex flex-col bg-page safe-top safe-bottom">
+            <div className={`${SHEET} z-[60]`}>
               <div className="flex items-center justify-between px-4 pt-4">
                 <h2 className="text-lg font-bold text-ink">Add exercise</h2>
-                <button
-                  onClick={() => setAddingExercise(false)}
-                  className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2"
-                >
+                <button onClick={() => setAddingExercise(false)} className={CLOSE_BTN}>
                   Close ✕
                 </button>
               </div>
@@ -1179,12 +735,12 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                   value={addExerciseQuery}
                   onChange={(e) => setAddExerciseQuery(e.target.value)}
                   placeholder="Search exercises or type a new name"
-                  className="w-full rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
+                  className={`w-full ${INPUT}`}
                 />
               </div>
-              {sessionProgram() && (
+              {sessionProgram && (
                 <div className="flex items-center justify-between px-4 pb-3">
-                  <span className="pr-3 text-sm text-ink-2">Also add to {sessionProgram()!.name} for next time</span>
+                  <span className="pr-3 text-sm text-ink-2">Also add to {sessionProgram.name} for next time</span>
                   <button
                     type="button"
                     onClick={() => setAddToProgramToo((v) => !v)}
@@ -1253,31 +809,16 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
         onCancel={() => setConfirmDeleteProgram(null)}
       />
 
-      <ConfirmDialog
-        open={confirmDeleteSession !== null}
-        title="Remove this session?"
-        message="This deletes the logged sets for this session. It can't be undone."
-        confirmLabel="Remove"
-        onConfirm={() => {
-          if (confirmDeleteSession) deleteSession(confirmDeleteSession)
-          setConfirmDeleteSession(null)
-        }}
-        onCancel={() => setConfirmDeleteSession(null)}
-      />
-
       {libraryOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
+        <div className={`${SHEET} z-[60]`}>
           <div className="flex items-center justify-between px-4 pt-4">
             <h2 className="text-lg font-bold text-ink">Exercise library</h2>
-            <button onClick={() => setLibraryOpen(false)} className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2">
+            <button onClick={() => setLibraryOpen(false)} className={CLOSE_BTN}>
               Close ✕
             </button>
           </div>
           <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-4">
-            <button
-              onClick={openNewExercise}
-              className="rounded-[20px] border border-line-strong bg-surface py-3 text-sm font-semibold text-pine"
-            >
+            <button onClick={openNewExercise} className="rounded-[20px] border border-line-strong bg-surface py-3 text-sm font-semibold text-pine">
               + New exercise
             </button>
             {exercises.length === 0 && <p className="text-sm text-ink-disabled">No exercises yet — add one above.</p>}
@@ -1306,13 +847,10 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
           </div>
 
           {exerciseFormOpen && (
-            <div className="fixed inset-0 z-[60] flex flex-col bg-page safe-top safe-bottom">
+            <div className={`${SHEET} z-[65]`}>
               <div className="flex items-center justify-between px-4 pt-4">
                 <h2 className="text-lg font-bold text-ink">{editingExercise ? 'Edit exercise' : 'New exercise'}</h2>
-                <button
-                  onClick={() => setExerciseFormOpen(false)}
-                  className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2"
-                >
+                <button onClick={() => setExerciseFormOpen(false)} className={CLOSE_BTN}>
                   Close ✕
                 </button>
               </div>
@@ -1322,13 +860,9 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                   value={exerciseFormName}
                   onChange={(e) => setExerciseFormName(e.target.value)}
                   placeholder="Exercise name, e.g. Hack Squat"
-                  className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
+                  className={INPUT}
                 />
-                <select
-                  value={exerciseFormPrimary}
-                  onChange={(e) => setExerciseFormPrimary(e.target.value)}
-                  className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink outline-none focus:border-pine"
-                >
+                <select value={exerciseFormPrimary} onChange={(e) => setExerciseFormPrimary(e.target.value)} className={INPUT}>
                   <option value="">Primary muscle</option>
                   {MUSCLE_GROUPS.map((m) => (
                     <option key={m} value={m}>
@@ -1336,11 +870,7 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
                     </option>
                   ))}
                 </select>
-                <select
-                  value={exerciseFormSecondary}
-                  onChange={(e) => setExerciseFormSecondary(e.target.value)}
-                  className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink outline-none focus:border-pine"
-                >
+                <select value={exerciseFormSecondary} onChange={(e) => setExerciseFormSecondary(e.target.value)} className={INPUT}>
                   <option value="">Secondary muscle (optional)</option>
                   {MUSCLE_GROUPS.map((m) => (
                     <option key={m} value={m}>
@@ -1368,6 +898,6 @@ export function GymPrograms({ strengthWorkouts }: { strengthWorkouts: Workout[] 
         }}
         onCancel={() => setConfirmDeleteExercise(null)}
       />
-    </div>
+    </>
   )
 }

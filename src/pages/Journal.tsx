@@ -15,7 +15,6 @@ import { format, parseISO } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { periodEndISO, todayISO, weekStartISO } from '../lib/dates'
 import {
-  byTotal,
   cardioDistanceWeeks,
   intakeKcalWeeks,
   journalWeeks,
@@ -32,10 +31,9 @@ import { ProgressRing } from '../components/ProgressRing'
 import { CATEGORY_STYLES } from '../lib/categories'
 import { THEME } from '../lib/theme'
 import { Screen, HeroSegments, HeroChip } from '../components/Screen'
-import { GymPrograms } from '../components/GymPrograms'
+import { Training } from '../components/Training'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
-import { formatWorkoutDuration, formatWorkoutDistance, isStrengthWorkout, getSportStyle } from '../lib/workouts'
 import { dailyKcalTotals, MIN_LOGGED_KCAL } from '../lib/food'
 import type {
   Category,
@@ -49,29 +47,24 @@ import type {
   Workout,
 } from '../lib/types'
 
-// steps/cardio/strength have no manual-entry form (synced from Garmin/Strava) but still
-// get a read-only tab for their chart. 'cardio'/'strength' aren't JournalEntryTypes — they
-// come from the workouts table, split by sport_type — so the tab union extends past that
-// type. cardio_minutes/strength_minutes (the derived daily totals journal_entries stores
-// purely for auto_metric matching, see src/lib/metrics.ts) are excluded here since Cardio/
-// Strength already cover that data with richer detail. Mood/Notes are dropped for now —
-// not deleted, just off the tab bar.
+// Steps has no manual-entry form (synced from Garmin) but still gets a read-only tab for
+// its chart. cardio_minutes/strength_minutes (the derived daily totals journal_entries
+// stores purely for auto_metric matching, see src/lib/metrics.ts) are excluded since
+// Training covers that data with richer detail. Mood/Notes are dropped for now — not
+// deleted, just off the tab bar.
 // 'review' is the cross-metric weekly view rather than one metric's tab — it's first in
 // the list because it's the one that answers "how did the week go" without picking a
 // metric first, which the per-metric tabs can't do.
-type JournalTab =
-  | Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes' | 'mood' | 'note'>
-  | 'cardio'
-  | 'strength'
-  | 'review'
-const TABS: JournalTab[] = ['review', 'weight', 'sleep_hours', 'steps', 'cardio', 'strength']
+// 'training' merges what used to be separate Cardio and Strength tabs; it renders its own
+// screen (src/components/Training.tsx) since it owns the gym data too.
+type JournalTab = Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes' | 'mood' | 'note'> | 'training' | 'review'
+const TABS: JournalTab[] = ['review', 'weight', 'sleep_hours', 'steps', 'training']
 const TAB_LABELS: Record<JournalTab, string> = {
   review: 'Week',
   weight: 'Weight',
   sleep_hours: 'Sleep',
   steps: 'Steps',
-  cardio: 'Cardio',
-  strength: 'Strength',
+  training: 'Training',
 }
 const ENTRY_TYPE_LABELS: Partial<Record<JournalEntryType, string>> = {
   weight: 'weight entry',
@@ -87,8 +80,7 @@ const METRIC_HUE: Record<JournalTab, (typeof CATEGORY_STYLES)[keyof typeof CATEG
   weight: CATEGORY_STYLES.violet,
   sleep_hours: CATEGORY_STYLES.sky,
   steps: CATEGORY_STYLES.emerald,
-  cardio: CATEGORY_STYLES.pink,
-  strength: CATEGORY_STYLES.amber,
+  training: CATEGORY_STYLES.amber,
 }
 
 // The Weekly review's six cards, in the order they're drawn. Each carries the same hue its
@@ -216,103 +208,6 @@ function StepsChart({ data, stepGoal, height }: { data: { date: string; value: n
   )
 }
 
-function WorkoutsChart({
-  data,
-  color,
-  height,
-  unit,
-  decimals = 0,
-}: {
-  data: { date: string; value: number }[]
-  color: string
-  height: number
-  unit: string
-  decimals?: number
-}) {
-  return (
-    <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
-        <XAxis dataKey="date" {...AXIS} />
-        <YAxis {...AXIS} />
-        <Tooltip
-          contentStyle={TOOLTIP_STYLE}
-          formatter={(value) => [`${Number(value).toFixed(decimals)} ${unit}`, 'Trained']}
-        />
-        <Bar dataKey="value" fill={color} radius={[4, 4, 0, 0]} isAnimationActive={false} />
-      </BarChart>
-    </ResponsiveContainer>
-  )
-}
-
-interface WeeklyCardioWeek {
-  weekStart: string
-  total: number
-  bySport: Record<string, number>
-}
-
-interface ChartRow {
-  date: string
-  [sportType: string]: number | string
-}
-
-interface WeeklyDistanceBySport {
-  chartData: ChartRow[]
-  sportTypes: string[]
-  weeks: WeeklyCardioWeek[] // ascending, same 12-week window as chartData
-}
-
-// Weekly km, broken down per Strava sport_type, for the stacked Cardio chart and stats.
-function weeklyDistanceBySport(workouts: Workout[]): WeeklyDistanceBySport {
-  const byWeek = new Map<string, Record<string, number>>()
-  const sportTypes = new Set<string>()
-  for (const w of workouts) {
-    const wk = weekStartISO(parseISO(w.date))
-    const bucket = byWeek.get(wk) ?? {}
-    bucket[w.sport_type] = (bucket[w.sport_type] ?? 0) + (w.distance_meters ?? 0) / 1000
-    byWeek.set(wk, bucket)
-    sportTypes.add(w.sport_type)
-  }
-  const weekStarts = [...byWeek.keys()].sort().slice(-12)
-  const weeks: WeeklyCardioWeek[] = weekStarts.map((weekStart) => {
-    const bySport = byWeek.get(weekStart)!
-    const total = Object.values(bySport).reduce((a, b) => a + b, 0)
-    return { weekStart, total, bySport }
-  })
-  const chartData: ChartRow[] = weeks.map(({ weekStart, bySport }) => {
-    const row: ChartRow = { date: weekStart.slice(5) }
-    for (const [sportType, km] of Object.entries(bySport)) row[sportType] = km
-    return row
-  })
-  return { chartData, sportTypes: [...sportTypes].sort(), weeks }
-}
-
-function CardioChart({ data, sportTypes, height }: { data: WeeklyDistanceBySport['chartData']; sportTypes: string[]; height: number }) {
-  return (
-    <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} margin={{ top: 16, right: 12, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
-        <XAxis dataKey="date" {...AXIS} />
-        <YAxis {...AXIS} />
-        <Tooltip
-          contentStyle={TOOLTIP_STYLE}
-          formatter={(value, name) => [`${Number(value).toFixed(1)} km`, getSportStyle(String(name)).label]}
-        />
-        {sportTypes.map((sportType, i) => (
-          <Bar
-            key={sportType}
-            dataKey={sportType}
-            stackId="cardio"
-            fill={getSportStyle(sportType).color}
-            radius={i === sportTypes.length - 1 ? [4, 4, 0, 0] : undefined}
-            isAnimationActive={false}
-          />
-        ))}
-      </BarChart>
-    </ResponsiveContainer>
-  )
-}
-
 export function Journal() {
   const [entries, setEntries] = useState<JournalEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -328,12 +223,8 @@ export function Journal() {
   const [weightExpanded, setWeightExpanded] = useState(false)
   const [stepsExpanded, setStepsExpanded] = useState(false)
   const [workouts, setWorkouts] = useState<Workout[]>([])
-  const [cardioExpanded, setCardioExpanded] = useState(false)
-  const [strengthExpanded, setStrengthExpanded] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
-  const [trainingTimeOpen, setTrainingTimeOpen] = useState(false)
   const [confirmDeleteEntry, setConfirmDeleteEntry] = useState<JournalEntry | null>(null)
-  const [confirmDeleteWorkout, setConfirmDeleteWorkout] = useState<Workout | null>(null)
   const [foodEntries, setFoodEntries] = useState<FoodLogEntry[]>([])
   const [recipes, setRecipes] = useState<Recipe[]>([])
   const [recipeLines, setRecipeLines] = useState<Map<string, RecipeIngredient[]>>(new Map())
@@ -501,11 +392,6 @@ export function Journal() {
     await supabase.from('journal_entries').delete().eq('id', entry.id)
   }
 
-  async function removeWorkout(workout: Workout) {
-    setWorkouts((ws) => ws.filter((w) => w.id !== workout.id))
-    await supabase.from('workouts').delete().eq('id', workout.id)
-  }
-
   const weightSeries = entries
     .filter((e) => e.type === 'weight' && e.value_numeric !== null)
     .map((e) => ({ date: e.date.slice(5), value: e.value_numeric as number }))
@@ -612,26 +498,9 @@ export function Journal() {
   const { current: currentStepsWeek, change: weekStepsChange } = weekOverWeek(weeklyStepsAsc)
   const stepsTrendPerWeek = trendPerWeek(weeklyStepsAsc)
 
-  const cardioWorkouts = workouts.filter((w) => !isStrengthWorkout(w.sport_type))
-  const strengthWorkouts = workouts.filter((w) => isStrengthWorkout(w.sport_type))
-  // The per-sport breakdown is its own shape (a stacked chart needs one key per sport),
-  // so it keeps its own pass; the totals and trends come off the shared buckets.
-  const weeklyCardioDistance = weeklyDistanceBySport(cardioWorkouts)
+  // Only the Weekly review reads workouts here now; the Training tab loads its own.
   const cardioWeeksAsc = cardioDistanceWeeks(workouts)
   const weeklyStrengthMinutes = strengthMinutesWeeks(workouts)
-  const recentCardioWorkouts = [...cardioWorkouts].reverse().slice(0, 20)
-  const recentStrengthWorkouts = [...strengthWorkouts].reverse().slice(0, 20)
-
-  const { current: currentCardioWeek, change: weekCardioChange } = weekOverWeek(cardioWeeksAsc, byTotal)
-  const cardioTrendPerWeek = trendPerWeek(cardioWeeksAsc, byTotal)
-  const cardioWeeksDesc = [...weeklyCardioDistance.weeks].reverse()
-
-  const { current: currentStrengthWeek, change: weekStrengthChange } = weekOverWeek(weeklyStrengthMinutes, byTotal)
-  const strengthTrendPerWeek = trendPerWeek(weeklyStrengthMinutes, byTotal)
-  // Same 12-week window the list and chart always showed.
-  const strengthWeeks12 = weeklyStrengthMinutes.slice(-12)
-  const strengthWeeksDesc = [...strengthWeeks12].reverse()
-  const strengthChartData = strengthWeeks12.map((w) => ({ date: w.weekStart.slice(5), value: Math.round(w.total) }))
 
   // --- Weekly review ---
   // Goal weight tells us which way is "good" for weight; without one, treat losing as the
@@ -719,33 +588,14 @@ export function Journal() {
                 </>
               ),
             }
-          : tab === 'cardio' && currentCardioWeek
-            ? {
-                value: currentCardioWeek.total.toFixed(1),
-                unit: 'km this week',
-                chips: weekCardioChange !== null && (
-                  <DeltaChip good={weekCardioChange >= 0}>
-                    {weekCardioChange > 0 ? '+' : ''}
-                    {weekCardioChange.toFixed(1)} km
-                  </DeltaChip>
-                ),
-              }
-            : tab === 'strength' && currentStrengthWeek
-              ? {
-                  value: formatWorkoutDuration(currentStrengthWeek.total * 60),
-                  unit: 'this week',
-                  chips: weekStrengthChange !== null && (
-                    <DeltaChip good={weekStrengthChange >= 0}>
-                      {weekStrengthChange > 0 ? '+' : ''}
-                      {Math.round(weekStrengthChange)} min
-                    </DeltaChip>
-                  ),
-                }
-              : null
+          : null
+
+  const segments = <HeroSegments options={TABS.map((t) => ({ id: t, label: TAB_LABELS[t] }))} value={tab} onChange={setTab} />
+  if (tab === 'training') return <Training segments={segments} />
 
   const hero = (
     <>
-      <HeroSegments options={TABS.map((t) => ({ id: t, label: TAB_LABELS[t] }))} value={tab} onChange={setTab} />
+      {segments}
       {tab === 'review' && (
         <>
           <div className="mt-[18px] flex items-center justify-between gap-2 rounded-[18px] bg-white/14 px-2.5 py-[7px]">
@@ -933,15 +783,6 @@ export function Journal() {
       )}
 
       {tab === 'steps' && <p className="text-sm text-ink-disabled">Synced automatically from Garmin — nothing to log here.</p>}
-
-      {tab === 'cardio' && <p className="text-sm text-ink-disabled">Synced automatically from Strava — nothing to log here.</p>}
-
-      {tab === 'strength' && (
-        <>
-          <GymPrograms strengthWorkouts={strengthWorkouts} />
-          <p className="text-sm text-ink-disabled">Total strength time below is synced automatically from Strava.</p>
-        </>
-      )}
 
       {/* Two identically styled cards rather than a filled-vs-white pair — see the
           handoff's "smoother transition" note. */}
@@ -1332,239 +1173,6 @@ export function Journal() {
         </div>
       )}
 
-      {tab === 'cardio' && weekCardioChange !== null && currentCardioWeek && (
-        <div className="grid grid-cols-2 gap-2">
-          <div className="rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
-            <p className="text-xs text-ink-disabled">This week</p>
-            <p className="text-lg font-bold text-ink">{currentCardioWeek.total.toFixed(1)} km</p>
-            <p
-              className={`text-sm font-semibold ${
-                weekCardioChange > 0 ? 'text-cat-emerald-ink' : weekCardioChange < 0 ? 'text-cat-rose-ink' : 'text-ink-disabled'
-              }`}
-            >
-              {weekCardioChange > 0 ? '+' : ''}
-              {weekCardioChange.toFixed(1)} km vs last week
-            </p>
-          </div>
-          <div className="rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
-            <p className="text-xs text-ink-disabled">Trend</p>
-            <p
-              className={`text-lg font-bold ${
-                cardioTrendPerWeek == null || Math.abs(cardioTrendPerWeek) < 0.05
-                  ? 'text-ink'
-                  : cardioTrendPerWeek > 0
-                    ? 'text-cat-emerald-ink'
-                    : 'text-cat-rose-ink'
-              }`}
-            >
-              {cardioTrendPerWeek == null ? (
-                '—'
-              ) : (
-                <>
-                  {cardioTrendPerWeek > 0 ? '↗' : cardioTrendPerWeek < 0 ? '↘' : '→'} {Math.abs(cardioTrendPerWeek).toFixed(1)} km/wk
-                </>
-              )}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {tab === 'cardio' && weeklyCardioDistance.chartData.length > 1 && (
-        <div className="rounded-3xl border border-line bg-surface p-2 shadow-card">
-          <button onClick={() => setCardioExpanded(true)} className="block w-full text-left">
-            <CardioChart data={weeklyCardioDistance.chartData} sportTypes={weeklyCardioDistance.sportTypes} height={192} />
-          </button>
-          <div className="flex flex-wrap gap-2 px-2 pb-1">
-            {weeklyCardioDistance.sportTypes.map((sportType) => {
-              const style = getSportStyle(sportType)
-              return (
-                <span key={sportType} className="flex items-center gap-1 rounded-full bg-track px-2 py-1 text-xs text-ink-2">
-                  <span aria-hidden>{style.icon}</span>
-                  {style.label}
-                </span>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {cardioExpanded && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
-          <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-ink">Cardio</h2>
-            <button onClick={() => setCardioExpanded(false)} className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2">
-              Close ✕
-            </button>
-          </div>
-          <div className="flex-1 px-2 pb-4">
-            <CardioChart data={weeklyCardioDistance.chartData} sportTypes={weeklyCardioDistance.sportTypes} height={window.innerHeight - 160} />
-            <div className="flex flex-wrap gap-2 px-2 pt-2">
-              {weeklyCardioDistance.sportTypes.map((sportType) => {
-                const style = getSportStyle(sportType)
-                return (
-                  <span key={sportType} className="flex items-center gap-1 rounded-full bg-track px-2 py-1 text-xs text-ink-2">
-                    <span aria-hidden>{style.icon}</span>
-                    {style.label}
-                  </span>
-                )
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {tab === 'cardio' && cardioWeeksDesc.length > 0 && (
-        <div>
-          <h2 className="mb-2 text-sm font-semibold text-ink-3">Weekly total</h2>
-          <ul className="flex flex-col gap-2">
-            {cardioWeeksDesc.map((week, i) => {
-              const prev = cardioWeeksDesc[i + 1]
-              const change = prev ? week.total - prev.total : null
-              return (
-                <li
-                  key={week.weekStart}
-                  className="rounded-[20px] border border-line border-l-[5px] bg-surface px-4 py-3 shadow-card"
-                  style={{ borderLeftColor: METRIC_HUE[tab].accent }}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-ink-3">Week of {week.weekStart}</span>
-                    <span className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-ink">{week.total.toFixed(1)} km</span>
-                      {change !== null && (
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                            change > 0 ? 'bg-cat-emerald-tint text-cat-emerald-ink' : change < 0 ? 'bg-cat-rose-tint text-cat-rose-ink' : 'bg-track text-ink-3'
-                          }`}
-                        >
-                          {change > 0 ? '+' : ''}
-                          {change.toFixed(1)} km
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                  <p className="mt-1 flex flex-wrap gap-x-3 text-sm text-ink-disabled">
-                    {Object.entries(week.bySport).map(([sportType, km]) => (
-                      <span key={sportType}>
-                        {getSportStyle(sportType).icon} {km.toFixed(1)} km
-                      </span>
-                    ))}
-                  </p>
-                </li>
-              )
-            })}
-          </ul>
-        </div>
-      )}
-
-      {tab === 'strength' && (weekStrengthChange !== null || weeklyStrengthMinutes.length > 1 || strengthWeeksDesc.length > 0) && (
-        <button
-          onClick={() => setTrainingTimeOpen((o) => !o)}
-          className="flex items-center justify-between text-sm font-semibold text-ink-3"
-        >
-          <span>Training time</span>
-          <span className="text-ink-disabled">{trainingTimeOpen ? 'Hide ▲' : 'Show ▼'}</span>
-        </button>
-      )}
-
-      {tab === 'strength' && trainingTimeOpen && weekStrengthChange !== null && currentStrengthWeek && (
-        <div className="grid grid-cols-2 gap-2">
-          <div className="rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
-            <p className="text-xs text-ink-disabled">This week</p>
-            <p className="text-lg font-bold text-ink">{formatWorkoutDuration(currentStrengthWeek.total * 60)}</p>
-            <p
-              className={`text-sm font-semibold ${
-                weekStrengthChange > 0 ? 'text-cat-emerald-ink' : weekStrengthChange < 0 ? 'text-cat-rose-ink' : 'text-ink-disabled'
-              }`}
-            >
-              {weekStrengthChange > 0 ? '+' : ''}
-              {Math.round(weekStrengthChange)} min vs last week
-            </p>
-          </div>
-          <div className="rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
-            <p className="text-xs text-ink-disabled">Trend</p>
-            <p
-              className={`text-lg font-bold ${
-                strengthTrendPerWeek == null || Math.round(strengthTrendPerWeek) === 0
-                  ? 'text-ink'
-                  : strengthTrendPerWeek > 0
-                    ? 'text-cat-emerald-ink'
-                    : 'text-cat-rose-ink'
-              }`}
-            >
-              {strengthTrendPerWeek == null ? (
-                '—'
-              ) : (
-                <>
-                  {strengthTrendPerWeek > 0 ? '↗' : strengthTrendPerWeek < 0 ? '↘' : '→'} {Math.round(Math.abs(strengthTrendPerWeek))} min/wk
-                </>
-              )}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {tab === 'strength' && trainingTimeOpen && weeklyStrengthMinutes.length > 1 && (
-        <button
-          onClick={() => setStrengthExpanded(true)}
-          className="block w-full rounded-3xl border border-line bg-surface p-2 text-left shadow-card"
-        >
-          <WorkoutsChart data={strengthChartData} color={METRIC_HUE.strength.accent} height={192} unit="min" />
-        </button>
-      )}
-
-      {strengthExpanded && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
-          <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-ink">Strength</h2>
-            <button
-              onClick={() => setStrengthExpanded(false)}
-              className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2"
-            >
-              Close ✕
-            </button>
-          </div>
-          <div className="flex-1 px-2 pb-4">
-            <WorkoutsChart data={strengthChartData} color={METRIC_HUE.strength.accent} height={window.innerHeight - 120} unit="min" />
-          </div>
-        </div>
-      )}
-
-      {tab === 'strength' && trainingTimeOpen && strengthWeeksDesc.length > 0 && (
-        <div>
-          <h2 className="mb-2 text-sm font-semibold text-ink-3">Weekly total</h2>
-          <ul className="flex flex-col gap-2">
-            {strengthWeeksDesc.map((week, i) => {
-              const prev = strengthWeeksDesc[i + 1]
-              const change = prev ? week.total - prev.total : null
-              return (
-                <li
-                  key={week.weekStart}
-                  className="rounded-[20px] border border-line border-l-[5px] bg-surface px-4 py-3 shadow-card"
-                  style={{ borderLeftColor: METRIC_HUE[tab].accent }}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-ink-3">Week of {week.weekStart}</span>
-                    <span className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-ink">{formatWorkoutDuration(week.total * 60)}</span>
-                      {change !== null && (
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                            change > 0 ? 'bg-cat-emerald-tint text-cat-emerald-ink' : change < 0 ? 'bg-cat-rose-tint text-cat-rose-ink' : 'bg-track text-ink-3'
-                          }`}
-                        >
-                          {change > 0 ? '+' : ''}
-                          {Math.round(change)} min
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-        </div>
-      )}
-
       {loading || tab === 'review' ? null : (
         <button
           onClick={() => setShowHistory((v) => !v)}
@@ -1575,44 +1183,7 @@ export function Journal() {
         </button>
       )}
 
-      {!loading && showHistory && tab !== 'review' && (tab === 'cardio' || tab === 'strength' ? (
-        <>
-          {(() => {
-            const list = tab === 'cardio' ? recentCardioWorkouts : recentStrengthWorkouts
-            const badgeStyle = tab === 'cardio' ? 'bg-cat-pink-tint text-cat-pink-ink' : 'bg-cat-amber-tint text-cat-amber-ink'
-            return (
-              <>
-                {list.length === 0 && <p className="text-sm text-ink-disabled">Nothing synced yet.</p>}
-                <ul className="flex flex-col gap-2 pb-4">
-                  {list.map((workout) => {
-                    const distance = formatWorkoutDistance(workout.distance_meters)
-                    return (
-                      <li
-                        key={workout.id}
-                        className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 text-sm shadow-card"
-                      >
-                        <span className="text-ink-disabled">{workout.date}</span>
-                        <span className="flex-1 px-3">
-                          <span className="font-medium text-ink">{workout.name}</span>
-                          <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-medium ${badgeStyle}`}>{workout.sport_type}</span>
-                          <span className="block text-[11px] text-ink-disabled">
-                            {formatWorkoutDuration(workout.duration_seconds)}
-                            {distance && ` · ${distance}`}
-                            {workout.calories != null && ` · ${workout.calories} cal`}
-                          </span>
-                        </span>
-                        <button onClick={() => setConfirmDeleteWorkout(workout)} className="text-ink-faint">
-                          ✕
-                        </button>
-                      </li>
-                    )
-                  })}
-                </ul>
-              </>
-            )
-          })()}
-        </>
-      ) : (
+      {!loading && showHistory && tab !== 'review' && (
         <>
           {recent.length === 0 && <p className="text-sm text-ink-disabled">Nothing logged yet.</p>}
           <ul className="flex flex-col gap-2 pb-4">
@@ -1634,7 +1205,7 @@ export function Journal() {
             ))}
           </ul>
         </>
-      ))}
+      )}
 
       <ConfirmDialog
         open={confirmResetMaintenance}
@@ -1656,17 +1227,6 @@ export function Journal() {
         onCancel={() => setConfirmDeleteEntry(null)}
       />
 
-      <ConfirmDialog
-        open={confirmDeleteWorkout !== null}
-        title={`Remove "${confirmDeleteWorkout?.name ?? ''}"?`}
-        message="This removes the synced Strava workout from your log."
-        confirmLabel="Remove"
-        onConfirm={() => {
-          if (confirmDeleteWorkout) removeWorkout(confirmDeleteWorkout)
-          setConfirmDeleteWorkout(null)
-        }}
-        onCancel={() => setConfirmDeleteWorkout(null)}
-      />
     </Screen>
   )
 }

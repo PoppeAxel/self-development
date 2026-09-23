@@ -16,12 +16,14 @@ import type { Goal, PeriodType } from './types'
 // from AUTO_METRICS in metrics.ts, which sums a daily journal_entries value. Kept separate
 // from that registry so Today.tsx's daily-task auto-complete (built around a single day's
 // journal value) doesn't have to account for a workouts-table, count-based metric.
-export const SESSION_METRICS = ['strength_sessions', 'cardio_sessions'] as const
+export const SESSION_METRICS = ['strength_sessions', 'cardio_sessions', 'cardio_km'] as const
 export type SessionMetric = (typeof SESSION_METRICS)[number]
 
 export const SESSION_METRIC_INFO: Record<SessionMetric, { label: string; icon: string; unit: string }> = {
   strength_sessions: { label: 'Gym sessions (Strava)', icon: '🏋️', unit: 'sessions' },
   cardio_sessions: { label: 'Cardio sessions (Strava)', icon: '🏃', unit: 'sessions' },
+  // Not a count like the other two — each cardio workout contributes its distance.
+  cardio_km: { label: 'Cardio distance (Strava)', icon: '🏃', unit: 'km' },
 }
 
 export function isSessionMetric(value: string | null): value is SessionMetric {
@@ -38,9 +40,16 @@ export function goalMetricInfo(metric: GoalMetric): { label: string; icon: strin
   return isAutoMetric(metric) ? METRIC_INFO[metric] : SESSION_METRIC_INFO[metric]
 }
 
+/** What one workout adds to a session metric: 1 for the counts, its km for cardio_km. */
+export function sessionMetricValue(metric: SessionMetric, w: { sport_type: string; distance_meters: number | null }): number {
+  if (metric === 'strength_sessions') return isStrengthWorkout(w.sport_type) ? 1 : 0
+  if (isStrengthWorkout(w.sport_type)) return 0
+  return metric === 'cardio_km' ? (w.distance_meters ?? 0) / 1000 : 1
+}
+
 async function countWorkoutSessions(metric: SessionMetric, startDate: string, endDate: string): Promise<number> {
-  const { data } = await supabase.from('workouts').select('sport_type').gte('date', startDate).lte('date', endDate)
-  return (data ?? []).filter((w) => isStrengthWorkout(w.sport_type) === (metric === 'strength_sessions')).length
+  const { data } = await supabase.from('workouts').select('sport_type, distance_meters').gte('date', startDate).lte('date', endDate)
+  return (data ?? []).reduce((sum, w) => sum + sessionMetricValue(metric, w), 0)
 }
 
 // Ensures every recurring goal series (of every period type) has a row for its current
@@ -290,14 +299,14 @@ export async function goalIntervalTotals(goal: Goal, today: Date = new Date()): 
   } else if (isSessionMetric(goal.auto_metric)) {
     const { data } = await supabase
       .from('workouts')
-      .select('date, sport_type')
+      .select('date, sport_type, distance_meters')
       .gte('date', goal.period_start)
       .lte('date', periodEnd)
-    const wantStrength = goal.auto_metric === 'strength_sessions'
     for (const row of data ?? []) {
-      if (isStrengthWorkout(row.sport_type) !== wantStrength) continue
+      const value = sessionMetricValue(goal.auto_metric, row)
+      if (!value) continue
       const key = bucketKeyFor(row.date, goal)
-      totals.set(key, (totals.get(key) ?? 0) + 1)
+      totals.set(key, (totals.get(key) ?? 0) + value)
     }
   } else {
     // A rollup: each child goal's own resolved progress, placed at its period start.

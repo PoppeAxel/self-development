@@ -367,7 +367,7 @@ export function Goals() {
               </option>
             ))}
           </optgroup>
-          <optgroup label="Track number of sessions">
+          <optgroup label="Track Strava workouts">
             {SESSION_METRICS.map((m) => (
               <option key={m} value={m}>
                 Auto-track {SESSION_METRIC_INFO[m].label}
