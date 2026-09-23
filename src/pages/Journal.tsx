@@ -567,6 +567,14 @@ export function Journal() {
   // training along with everything else, so it's the only "calories out" signal used.
   // 1 kg of body-mass change ≈ 7700 kcal (standard estimate for fat mass).
   const kcalByDate = dailyKcalTotals(foodEntries, recipes, recipeLines, ingredients)
+  // Moved here from the Food tab, which is now meal-first and carries only the day's own
+  // figure in its hero. Unlike the maintenance estimate above, this is the raw log: no
+  // MIN_LOGGED_KCAL floor, because a half-logged day is a real thing to SEE even though it
+  // must not be averaged in.
+  const dailyKcalSeries = [...kcalByDate.entries()]
+    .map(([date, kcal]) => ({ date: date.slice(5), fullDate: date, value: Math.round(kcal) }))
+    .sort((a, b) => a.fullDate.localeCompare(b.fullDate))
+    .slice(-14)
   const CALORIE_WINDOW_DAYS = 28
   const calorieWindowStart = new Date()
   calorieWindowStart.setDate(calorieWindowStart.getDate() - CALORIE_WINDOW_DAYS)
@@ -1035,6 +1043,23 @@ export function Journal() {
           >
             Undo reset
           </button>
+        </div>
+      )}
+
+      {tab === 'weight' && dailyKcalSeries.length > 1 && (
+        <div>
+          <h2 className="mb-2 text-sm font-semibold text-ink-3">Daily calories</h2>
+          <div className="h-40 rounded-3xl border border-line bg-surface p-2 shadow-card">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dailyKcalSeries} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
+                <XAxis dataKey="date" {...AXIS} />
+                <YAxis {...AXIS} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(value) => [`${value} kcal`, 'Logged']} />
+                <Bar dataKey="value" fill="#a8842f" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       )}
 

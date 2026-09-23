@@ -1,3 +1,5 @@
+import { differenceInCalendarDays, format, parseISO } from 'date-fns'
+import { CATEGORY_STYLES } from './categories'
 import type { FoodLogEntry, Ingredient, MealType, Recipe, RecipeIngredient } from './types'
 
 export const MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack']
@@ -7,6 +9,40 @@ export const MEAL_TYPE_INFO: Record<MealType, { label: string; icon: string }> =
   lunch: { label: 'Lunch', icon: '🥪' },
   dinner: { label: 'Dinner', icon: '🍽' },
   snack: { label: 'Snack', icon: '🍎' },
+}
+
+/**
+ * One identity per meal — accent, tint, ink and glyph — so the meal strip, the entries
+ * card, the usuals chips and the recipe cards all colour the same meal the same way.
+ * Before this there were two disagreeing maps in Food.tsx (MEAL_HUE gave dinner
+ * terracotta, RECIPE_MEAL_ACCENT gave it slate blue); terracotta won.
+ *
+ * The hues are the category palette's, not new values: breakfast ochre, lunch pine,
+ * dinner terracotta, snack plum.
+ */
+export const MEAL_LOOK: Record<MealType, { accent: string; tint: string; ink: string; icon: string }> = {
+  breakfast: { ...pick('amber'), icon: MEAL_TYPE_INFO.breakfast.icon },
+  lunch: { ...pick('emerald'), icon: MEAL_TYPE_INFO.lunch.icon },
+  dinner: { ...pick('pink'), icon: MEAL_TYPE_INFO.dinner.icon },
+  snack: { ...pick('violet'), icon: MEAL_TYPE_INFO.snack.icon },
+}
+
+function pick(color: keyof typeof CATEGORY_STYLES) {
+  const { accent, tint, ink } = CATEGORY_STYLES[color]
+  return { accent, tint, ink }
+}
+
+/**
+ * "yesterday" for the day before `reference`, the weekday name within the last week, and
+ * "d MMM" beyond that — the caption on a recent chip, which is there to tell you at a
+ * glance whether this was last night's dinner or one from a fortnight ago.
+ */
+export function relativeDayLabel(date: string, reference: string): string {
+  const days = differenceInCalendarDays(parseISO(reference), parseISO(date))
+  if (days === 0) return 'today'
+  if (days === 1) return 'yesterday'
+  if (days > 1 && days < 7) return format(parseISO(date), 'EEEE')
+  return format(parseISO(date), 'd MMM')
 }
 
 // Guess a reasonable default meal when logging food, based on time of day — just a
@@ -248,25 +284,25 @@ export async function fetchOpenFoodFactsProduct(barcode: string): Promise<OpenFo
 // candidates worth offering as a single tap, so logging a normal day doesn't mean
 // searching for things already logged dozens of times.
 
-export type QuickLogSuggestion =
-  | {
-      /** Everything logged for the same meal yesterday, re-logged in one go. */
-      kind: 'repeat-meal'
-      mealType: MealType
-      entries: FoodLogEntry[]
-      title: string
-      subtitle: string
-    }
-  | {
-      /** A single recipe or ingredient, at the quantity it was last logged at. */
-      kind: 'frequent'
-      ref: { kind: 'recipe' | 'ingredient'; id: string }
-      mealType: MealType | null
-      quantity: number
-      title: string
-      subtitle: string
-      icon: string
-    }
+export interface MealUsual {
+  ref: { kind: 'recipe' | 'ingredient'; id: string }
+  /** The quantity it was last logged at FOR THIS MEAL — servings or grams. */
+  quantity: number
+  name: string
+  /** kcal at that quantity, not per serving. */
+  kcal: number
+  /** How many times it has been logged for this meal. */
+  count: number
+  lastDate: string
+  icon: string
+}
+
+export interface MealUsuals {
+  /** Last few distinct things logged for this meal, newest first. */
+  recent: MealUsual[]
+  /** Most-logged for this meal, minus anything already in `recent`. */
+  frequent: MealUsual[]
+}
 
 function entryRefKey(entry: FoodLogEntry): string | null {
   if (entry.recipe_id) return `recipe:${entry.recipe_id}`
@@ -275,56 +311,29 @@ function entryRefKey(entry: FoodLogEntry): string | null {
 }
 
 /**
- * Up to `limit` one-tap rows: yesterday's version of the meal you're most likely logging
- * right now, then whatever you log most often (excluding anything already covered by that
- * first row, so the same recipe doesn't appear twice).
+ * What you usually eat for ONE meal, split into recent and frequent.
  *
- * `entries` is the full loaded history; `describe` turns a recipe/ingredient reference
- * into its name, kcal and icon, which only the page has the maps for.
+ * This replaced `quickLogSuggestions`, which tallied the whole day and anchored its rows
+ * to one clock-derived meal — so opening the page at 13:00 to log lunch could offer
+ * yesterday's dinner alongside two breakfast items. Everything here is filtered to
+ * `mealType` first, which is the actual fix.
+ *
+ * Entries with `meal_type: null` belong to no meal and appear in neither list.
+ *
+ * `describe` stays the page's callback — it owns the recipe/ingredient maps.
  */
-export function quickLogSuggestions(
+export function mealUsuals(
   entries: FoodLogEntry[],
-  yesterday: string,
-  nowMeal: MealType,
-  describe: (ref: { kind: 'recipe' | 'ingredient'; id: string }, quantity: number) => { name: string; kcal: number; icon: string } | null,
-  limit = 3,
-): QuickLogSuggestion[] {
-  const suggestions: QuickLogSuggestion[] = []
-  const coveredRefs = new Set<string>()
-
-  const yesterdaysMeal = entries.filter((e) => e.date === yesterday && e.meal_type === nowMeal)
-  if (yesterdaysMeal.length > 0) {
-    const names: string[] = []
-    let kcal = 0
-    for (const entry of yesterdaysMeal) {
-      const ref = entry.recipe_id
-        ? ({ kind: 'recipe', id: entry.recipe_id } as const)
-        : entry.ingredient_id
-          ? ({ kind: 'ingredient', id: entry.ingredient_id } as const)
-          : null
-      if (!ref) continue
-      const described = describe(ref, entry.recipe_id ? (entry.servings ?? 1) : (entry.grams ?? 0))
-      if (!described) continue
-      names.push(described.name)
-      kcal += described.kcal
-      const key = entryRefKey(entry)
-      if (key) coveredRefs.add(key)
-    }
-    if (names.length > 0) {
-      suggestions.push({
-        kind: 'repeat-meal',
-        mealType: nowMeal,
-        entries: yesterdaysMeal,
-        title: `Yesterday's ${MEAL_TYPE_INFO[nowMeal].label.toLowerCase()}`,
-        subtitle: `${names.join(', ')} · ${Math.round(kcal)} kcal`,
-      })
-    }
-  }
-
-  // Count how often each thing gets logged, remembering the most recent quantity and
-  // meal so the tap reproduces what you actually eat, not a default portion.
+  mealType: MealType,
+  describe: (
+    ref: { kind: 'recipe' | 'ingredient'; id: string },
+    quantity: number,
+  ) => { name: string; kcal: number; icon: string } | null,
+  limits: { recent: number; frequent: number } = { recent: 3, frequent: 5 },
+): MealUsuals {
   const tally = new Map<string, { ref: { kind: 'recipe' | 'ingredient'; id: string }; count: number; latest: FoodLogEntry }>()
   for (const entry of entries) {
+    if (entry.meal_type !== mealType) continue
     const key = entryRefKey(entry)
     if (!key) continue
     const ref = entry.recipe_id
@@ -339,28 +348,31 @@ export function quickLogSuggestions(
     }
   }
 
-  const frequent = [...tally.entries()]
-    .filter(([key]) => !coveredRefs.has(key))
-    .sort((a, b) => b[1].count - a[1].count)
-    .slice(0, limit - suggestions.length)
-
-  for (const [, { ref, count, latest }] of frequent) {
+  const build = ([, { ref, count, latest }]: [string, { ref: { kind: 'recipe' | 'ingredient'; id: string }; count: number; latest: FoodLogEntry }]): MealUsual | null => {
     const quantity = ref.kind === 'recipe' ? (latest.servings ?? 1) : (latest.grams ?? 0)
     const described = describe(ref, quantity)
-    if (!described) continue
-    const amount = ref.kind === 'recipe' ? `${quantity} serving${quantity === 1 ? '' : 's'}` : `${Math.round(quantity)} g`
-    suggestions.push({
-      kind: 'frequent',
-      ref,
-      mealType: latest.meal_type,
-      quantity,
-      title: described.name,
-      subtitle: `${amount} · ${Math.round(described.kcal)} kcal · logged ${count}×`,
-      icon: described.icon,
-    })
+    if (!described) return null
+    return { ref, quantity, name: described.name, kcal: described.kcal, count, lastDate: latest.date, icon: described.icon }
   }
 
-  return suggestions
+  const all = [...tally.entries()]
+  const recent = all
+    .sort((a, b) => b[1].latest.date.localeCompare(a[1].latest.date))
+    .map(build)
+    .filter((u): u is MealUsual => u !== null)
+    .slice(0, limits.recent)
+
+  const recentKeys = new Set(recent.map((u) => `${u.ref.kind}:${u.ref.id}`))
+  // Deduped: a ref in `recent` never repeats in `frequent`, so the two lists together read
+  // as one set of options rather than the same dinner twice.
+  const frequent = all
+    .filter(([key]) => !recentKeys.has(key))
+    .sort((a, b) => b[1].count - a[1].count)
+    .map(build)
+    .filter((u): u is MealUsual => u !== null)
+    .slice(0, limits.frequent)
+
+  return { recent, frequent }
 }
 
 // --- Recipe & Library browsing ---
