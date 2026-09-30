@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
 import { BALANCE_REGIONS, SET_TARGET, bestE1rm, formatSets, lastTime, regionBalance } from '../lib/training'
 import { ConfirmDialog } from './ConfirmDialog'
-import { SwapSheet } from './GymPrograms'
+import { CLOSE_BTN, SHEET, SwapSheet } from './GymPrograms'
 import type { Exercise, GymProgram, GymProgramExercise, GymSession, GymSessionSet } from '../lib/types'
 
 // Live workout mode: one exercise at a time, every set pre-filled from last time so a
@@ -108,14 +108,26 @@ function summarize(sets: { reps: number | null; weight: number | null }[]): stri
   return `${sets.map((s) => `${s.reps ?? '—'}×${s.weight != null ? fmtKg(s.weight) : '—'}`).join(', ')} kg`
 }
 
-function Stepper({ label, value, onChange, step, width }: { label: string; value: string; onChange: (v: string) => void; step: number; width: string }) {
-  const bump = (d: number) => onChange(fmtKg(Math.max(0, (Number(value) || 0) + d)))
+/** 1 kg steps up to 10 kg (dumbbells, cable stacks), 2.5 kg plates above that. */
+const kgStep = (v: number, dir: number) => ((dir > 0 ? v < 10 : v <= 10) ? 1 : 2.5)
+
+function Stepper({ label, value, onChange, step, width }: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  step: number | ((v: number, dir: number) => number)
+  width: string
+}) {
+  const bump = (dir: number) => {
+    const v = Number(value) || 0
+    onChange(fmtKg(Math.max(0, v + dir * (typeof step === 'number' ? step : step(v, dir)))))
+  }
   const btn = 'flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] border border-line bg-surface text-xl text-ink-2'
   return (
     <div className="flex flex-col items-center gap-1.5 rounded-2xl bg-page px-1.5 py-2.5">
       <span className="text-[10px] font-medium text-ink-muted">{label}</span>
       <div className="flex items-center gap-2">
-        <button type="button" onClick={() => bump(-step)} className={btn} aria-label={`Less ${label}`}>
+        <button type="button" onClick={() => bump(-1)} className={btn} aria-label={`Less ${label}`}>
           −
         </button>
         <input
@@ -126,7 +138,7 @@ function Stepper({ label, value, onChange, step, width }: { label: string; value
           aria-label={label}
           className={`${width} bg-transparent text-center text-[28px] font-semibold text-ink outline-none placeholder:text-ink-faint`}
         />
-        <button type="button" onClick={() => bump(step)} className={btn} aria-label={`More ${label}`}>
+        <button type="button" onClick={() => bump(1)} className={btn} aria-label={`More ${label}`}>
           +
         </button>
       </div>
@@ -159,10 +171,16 @@ export function LiveSession({
   const [confirmEnd, setConfirmEnd] = useState(false)
   const [swapIndex, setSwapIndex] = useState<number | null>(null)
   const [finishedAt, setFinishedAt] = useState<number | null>(null)
+  const [listOpen, setListOpen] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [addToProgram, setAddToProgram] = useState(false)
   const stateRef = useRef(state)
   stateRef.current = state
   const sessionRef = useRef<Promise<string | null> | null>(initial.sessionId ? Promise.resolve(initial.sessionId) : null)
   const inFlight = useRef(new Set<string>())
+  // flush() addresses sets by exercise index, so removing an exercise mid-flush would
+  // point its results at the wrong row. Removal waits while this is non-zero.
+  const flushing = useRef(0)
   const touchX = useRef<number | null>(null)
   const catalogByName = new Map(catalog.map((ex) => [ex.name.toLowerCase(), ex]))
 
@@ -219,6 +237,15 @@ export function LiveSession({
       ex.sets.map((set, setIdx) => ({ ex, set, exIdx, setIdx })).filter(({ set }) => set.done && !set.saved),
     )
     if (!pending.length) return
+    flushing.current++
+    try {
+      await writePending(pending)
+    } finally {
+      flushing.current--
+    }
+  }
+
+  async function writePending(pending: { ex: LiveExercise; set: LiveSet; exIdx: number; setIdx: number }[]) {
     const sessionId = await ensureSession()
     if (!sessionId) return
     await Promise.all(
@@ -266,6 +293,57 @@ export function LiveSession({
     if (index < 0 || index >= state.exercises.length) return
     setSelected(null)
     setState((s) => ({ ...s, index }))
+  }
+
+  function removeLastSet() {
+    setSelected(null)
+    setState((s) => ({
+      ...s,
+      exercises: s.exercises.map((e, i) => (i !== s.index || e.sets.length <= 1 || e.sets[e.sets.length - 1].done ? e : { ...e, sets: e.sets.slice(0, -1) })),
+    }))
+  }
+
+  // Only untouched exercises can go — a ticked set is already a database row.
+  function removeExercise(idx: number) {
+    if (flushing.current > 0) return
+    setSelected(null)
+    setState((s) => {
+      if (s.exercises[idx]?.sets.some((set) => set.done)) return s
+      const exercises = s.exercises.filter((_, i) => i !== idx)
+      const index = Math.max(0, Math.min(idx < s.index ? s.index - 1 : s.index, exercises.length - 1))
+      return { ...s, exercises, index }
+    })
+  }
+
+  async function addExercise(picked: Exercise, toProgram: boolean) {
+    const history = lastTime(picked.name, sessions, setsBySession)
+    const targetReps = history?.sets[0]?.reps ?? 10
+    const count = history?.sets.length ?? 3
+    setAdding(false)
+    setListOpen(false)
+    setSelected(null)
+    setState((s) => ({
+      ...s,
+      exercises: [...s.exercises, { name: picked.name, targetReps, sets: prefill(picked.name, count, targetReps, sessions, setsBySession) }],
+      index: s.exercises.length,
+    }))
+    const programId = state.programId
+    if (!toProgram || !programId) return
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    const { data: existing } = await supabase.from('gym_program_exercises').select('name, position').eq('program_id', programId)
+    if ((existing ?? []).some((e) => e.name.toLowerCase() === picked.name.toLowerCase())) return
+    await supabase.from('gym_program_exercises').insert({
+      program_id: programId,
+      user_id: user.id,
+      name: picked.name,
+      target_sets: count,
+      target_reps: targetReps,
+      position: Math.max(-1, ...(existing ?? []).map((e) => e.position as number)) + 1,
+      exercise_id: picked.id,
+    })
   }
 
   const anyDone = state.exercises.some((ex) => ex.sets.some((s) => s.done))
@@ -439,13 +517,15 @@ export function LiveSession({
       </div>
 
       {!ex ? (
-        <p className="p-5 text-sm text-ink-disabled">This program has no exercises yet.</p>
+        <button onClick={() => setAdding(true)} className="m-5 rounded-[18px] border-[1.5px] border-dashed border-[#d8d1c3] py-3.5 text-sm font-medium text-pine">
+          + Add exercise
+        </button>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-5 pt-[18px] pb-6">
           <div className="flex flex-col gap-0.5">
-            <span className="text-[11px] font-semibold tracking-[0.07em] text-[#8a6321]">
-              EXERCISE {state.index + 1} OF {state.exercises.length}
-            </span>
+            <button onClick={() => setListOpen(true)} className="self-start text-[11px] font-semibold tracking-[0.07em] text-[#8a6321]">
+              EXERCISE {state.index + 1} OF {state.exercises.length} ⌄
+            </button>
             <div className="flex items-end justify-between gap-3">
               <h2 className="text-[26px] font-semibold leading-tight text-ink">{ex.name}</h2>
               {ex.sets.every((s) => !s.done) && (
@@ -479,7 +559,7 @@ export function LiveSession({
                     </div>
                     <div className="grid grid-cols-2 gap-2.5">
                       <Stepper label="REPS" value={set.reps} step={1} width="w-9" onChange={(v) => editSet(state.index, i, { reps: v })} />
-                      <Stepper label="KG" value={set.weight} step={2.5} width="w-14" onChange={(v) => editSet(state.index, i, { weight: v })} />
+                      <Stepper label="KG" value={set.weight} step={kgStep} width="w-14" onChange={(v) => editSet(state.index, i, { weight: v })} />
                     </div>
                     <button onClick={() => tick(state.index, i)} className="rounded-2xl bg-[#8a6321] py-3.5 text-[15px] font-semibold text-white">
                       ✓ Log set
@@ -512,6 +592,7 @@ export function LiveSession({
                 </button>
               )
             })}
+            <div className="flex gap-5">
             <button
               onClick={() =>
                 setState((s) => ({
@@ -523,10 +604,16 @@ export function LiveSession({
                   }),
                 }))
               }
-              className="self-start text-xs font-medium text-pine"
+              className="text-xs font-medium text-pine"
             >
               + Add set
             </button>
+            {ex.sets.length > 1 && !ex.sets[ex.sets.length - 1].done && (
+              <button onClick={removeLastSet} className="text-xs font-medium text-ink-3">
+                − Remove set
+              </button>
+            )}
+            </div>
           </div>
 
           {restLeft != null && (
@@ -565,6 +652,69 @@ export function LiveSession({
             </button>
           )}
         </div>
+      )}
+
+      {listOpen && (
+        <div className={`${SHEET} z-[60]`}>
+          <div className="flex items-center justify-between px-4 pt-4">
+            <h2 className="text-lg font-bold text-ink">{state.programName}</h2>
+            <button onClick={() => setListOpen(false)} className={CLOSE_BTN}>
+              Close ✕
+            </button>
+          </div>
+          <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-4">
+            {state.exercises.map((e, i) => {
+              const done = e.sets.filter((s) => s.done).length
+              return (
+                <div
+                  key={i}
+                  className={`flex items-center gap-3 rounded-[20px] border bg-surface px-4 py-3 shadow-card ${i === state.index ? 'border-[#8a6321]' : 'border-line'}`}
+                >
+                  <button
+                    onClick={() => {
+                      goTo(i)
+                      setListOpen(false)
+                    }}
+                    className="flex min-w-0 flex-1 flex-col text-left"
+                  >
+                    <span className="truncate font-medium text-ink">{e.name}</span>
+                    <span className="text-xs text-ink-muted">
+                      {done} of {e.sets.length} sets done
+                    </span>
+                  </button>
+                  {done === 0 && (
+                    <button onClick={() => removeExercise(i)} className="text-xs font-medium text-ink-3">
+                      Remove
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+            <button onClick={() => setAdding(true)} className="rounded-[20px] border-[1.5px] border-dashed border-[#d8d1c3] py-3 text-sm font-medium text-pine">
+              + Add exercise
+            </button>
+          </div>
+        </div>
+      )}
+
+      {adding && (
+        <SwapSheet
+          z="z-[70]"
+          title="Add exercise"
+          exercises={catalog}
+          currentName=""
+          primaryMuscle={undefined}
+          onClose={() => setAdding(false)}
+          onPick={(picked) => addExercise(picked, addToProgram)}
+          footer={
+            state.programId && (
+              <label className="flex items-center gap-2 text-sm text-ink-2">
+                <input type="checkbox" checked={addToProgram} onChange={(e) => setAddToProgram(e.target.checked)} className="h-4 w-4 accent-pine" />
+                Also add to {state.programName} for next time
+              </label>
+            )
+          }
+        />
       )}
 
       {swapIndex !== null && (

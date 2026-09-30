@@ -31,7 +31,6 @@ import { ProgressRing } from '../components/ProgressRing'
 import { CATEGORY_STYLES } from '../lib/categories'
 import { THEME } from '../lib/theme'
 import { Screen, HeroSegments, HeroChip } from '../components/Screen'
-import { Training } from '../components/Training'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
 import { dailyKcalTotals, MIN_LOGGED_KCAL } from '../lib/food'
@@ -55,16 +54,14 @@ import type {
 // 'review' is the cross-metric weekly view rather than one metric's tab — it's first in
 // the list because it's the one that answers "how did the week go" without picking a
 // metric first, which the per-metric tabs can't do.
-// 'training' merges what used to be separate Cardio and Strength tabs; it renders its own
-// screen (src/components/Training.tsx) since it owns the gym data too.
-type JournalTab = Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes' | 'mood' | 'note'> | 'training' | 'review'
-const TABS: JournalTab[] = ['review', 'weight', 'sleep_hours', 'steps', 'training']
+// Cardio and Strength live in their own bottom tab, Training (src/components/Training.tsx).
+type JournalTab = Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes' | 'mood' | 'note'> | 'review'
+const TABS: JournalTab[] = ['review', 'weight', 'sleep_hours', 'steps']
 const TAB_LABELS: Record<JournalTab, string> = {
   review: 'Week',
   weight: 'Weight',
   sleep_hours: 'Sleep',
   steps: 'Steps',
-  training: 'Training',
 }
 const ENTRY_TYPE_LABELS: Partial<Record<JournalEntryType, string>> = {
   weight: 'weight entry',
@@ -80,7 +77,6 @@ const METRIC_HUE: Record<JournalTab, (typeof CATEGORY_STYLES)[keyof typeof CATEG
   weight: CATEGORY_STYLES.violet,
   sleep_hours: CATEGORY_STYLES.sky,
   steps: CATEGORY_STYLES.emerald,
-  training: CATEGORY_STYLES.amber,
 }
 
 // The Weekly review's six cards, in the order they're drawn. Each carries the same hue its
@@ -590,12 +586,9 @@ export function Journal() {
             }
           : null
 
-  const segments = <HeroSegments options={TABS.map((t) => ({ id: t, label: TAB_LABELS[t] }))} value={tab} onChange={setTab} />
-  if (tab === 'training') return <Training segments={segments} />
-
   const hero = (
     <>
-      {segments}
+      <HeroSegments options={TABS.map((t) => ({ id: t, label: TAB_LABELS[t] }))} value={tab} onChange={setTab} />
       {tab === 'review' && (
         <>
           <div className="mt-[18px] flex items-center justify-between gap-2 rounded-[18px] bg-white/14 px-2.5 py-[7px]">

@@ -21,13 +21,13 @@ import {
 } from '../lib/training'
 import { THEME } from '../lib/theme'
 import { Screen, HeroChip } from './Screen'
-import { GymPrograms, type GymProgramsHandle } from './GymPrograms'
+import { CLOSE_BTN, GymPrograms, INPUT, SHEET, type GymProgramsHandle } from './GymPrograms'
 import { LiveSession, newLiveState, savedLiveState, SectionLabel, type LiveState } from './LiveSession'
 import { ConfirmDialog } from './ConfirmDialog'
 import type { Exercise, Goal, GymProgram, GymProgramExercise, GymSession, GymSessionSet, Workout } from '../lib/types'
 
-// Journal's Training tab: Cardio + Strength merged (design 1b). Renders its own Screen so
-// it can own its data; Journal hands over its segment pills for the hero.
+// The Training bottom tab: Cardio + Strength merged (design 1b). Took Finance's slot on
+// 2026-09-24 so training has room to grow beyond a Journal pill.
 
 const STRENGTH = { ink: '#8a6321', light: '#c9a55a', tint: '#f3ead6', bar: '#e0cf9a' }
 const CARDIO = { run: '#a8563f', light: '#e6b39f', tint: '#f6ebe4', ink: '#8a4630' }
@@ -51,6 +51,67 @@ function Sparkline({ values }: { values: number[] }) {
     <svg viewBox="0 0 100 32" preserveAspectRatio="none" className="h-[26px] w-[84px] shrink-0">
       <polyline points={points} fill="none" stroke={STRENGTH.ink} strokeWidth={2} vectorEffect="non-scaling-stroke" />
     </svg>
+  )
+}
+
+/**
+ * Full-screen program list: searchable, and ordered longest-since-last-done first, so
+ * with 15–20 programs the one you're due for is near the top.
+ */
+function ProgramPicker({ programs, sessions, exercisesByProgram, today, onStart, onClose, onNew, onEdit }: {
+  programs: GymProgram[]
+  /** Newest first. */
+  sessions: GymSession[]
+  exercisesByProgram: Map<string, GymProgramExercise[]>
+  today: string
+  onStart: (p: GymProgram) => void
+  onClose: () => void
+  onNew: () => void
+  onEdit: () => void
+}) {
+  const [query, setQuery] = useState('')
+  const q = query.trim().toLowerCase()
+  const lastDone = (p: GymProgram) => sessions.find((s) => s.program_id === p.id)?.date ?? ''
+  const shown = programs.filter((p) => !q || p.name.toLowerCase().includes(q)).sort((a, b) => lastDone(a).localeCompare(lastDone(b)))
+  return (
+    <div className={`${SHEET} z-50`}>
+      <div className="flex items-center justify-between px-4 pt-4">
+        <h2 className="text-lg font-bold text-ink">Start a program</h2>
+        <button onClick={onClose} className={CLOSE_BTN}>
+          Close ✕
+        </button>
+      </div>
+      <div className="p-4">
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search programs" className={`w-full ${INPUT}`} />
+      </div>
+      <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-4 pb-4">
+        {shown.length === 0 && <p className="text-sm text-ink-disabled">No matches.</p>}
+        {shown.map((p) => {
+          const last = lastDone(p)
+          const days = last ? differenceInCalendarDays(parseISO(today), parseISO(last)) : null
+          const count = exercisesByProgram.get(p.id)?.length ?? 0
+          return (
+            <button key={p.id} onClick={() => onStart(p)} className="flex items-center gap-3 rounded-[20px] border border-line bg-surface px-4 py-3 text-left shadow-card">
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate font-medium text-ink">{p.name}</span>
+                <span className="text-xs text-ink-muted">
+                  {count} exercise{count === 1 ? '' : 's'} · {days == null ? 'never done' : days === 0 ? 'done today' : `${days} d ago`}
+                </span>
+              </span>
+              <span className="text-pine">▶</span>
+            </button>
+          )
+        })}
+        <div className="mt-2 flex gap-2">
+          <button onClick={onNew} className="flex-1 rounded-[18px] border border-line bg-surface py-3 text-sm font-medium text-pine">
+            + New program
+          </button>
+          <button onClick={onEdit} className="flex-1 rounded-[18px] border border-line bg-surface py-3 text-sm text-ink-2">
+            Edit programs
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -94,7 +155,7 @@ function PlanRow({ title, actual, target, unit, fill, caption, dayFraction }: {
   )
 }
 
-export function Training({ segments }: { segments: React.ReactNode }) {
+export function Training() {
   const [programs, setPrograms] = useState<GymProgram[]>([])
   const [exercisesByProgram, setExercisesByProgram] = useState<Map<string, GymProgramExercise[]>>(new Map())
   const [exercises, setExercises] = useState<Exercise[]>([])
@@ -237,7 +298,6 @@ export function Training({ segments }: { segments: React.ReactNode }) {
 
   const hero = (
     <>
-      {segments}
       <div className="mt-4 flex items-center justify-between">
         <span className="text-[11px] font-semibold tracking-[0.07em] text-white/72">
           WEEK {getISOWeek(parseISO(today))} · DAY {dayN} OF 7
@@ -266,7 +326,7 @@ export function Training({ segments }: { segments: React.ReactNode }) {
   const liftForSheet = lifts.find((l) => l.name === liftOpen)
 
   return (
-    <Screen title="Journal" onRefresh={load} hero={hero}>
+    <Screen title="Training" onRefresh={load} hero={hero}>
       {/* 1 · week strip */}
       <div className="grid grid-cols-7 gap-[5px]">
         {strip.map((d) => (
@@ -328,38 +388,25 @@ export function Training({ segments }: { segments: React.ReactNode }) {
           onClick={() => setOtherOpen((o) => !o)}
           className="rounded-[18px] border border-line bg-surface px-3.5 py-3 text-xs font-medium text-ink-2"
         >
-          Other ⌄
+          All programs
         </button>
         {otherOpen && (
-          <>
-            <button className="fixed inset-0 z-10 cursor-default" aria-label="Close menu" onClick={() => setOtherOpen(false)} />
-            <div className="absolute top-full right-0 z-20 mt-1.5 flex w-56 flex-col rounded-[18px] border border-line bg-surface py-1.5 shadow-card">
-              {programs.map((p) => (
-                <button key={p.id} onClick={() => start(p)} className="px-4 py-2.5 text-left text-sm text-ink">
-                  ▶ {p.name}
-                </button>
-              ))}
-              {programs.length > 0 && <span className="my-1 h-px bg-line" />}
-              <button
-                onClick={() => {
-                  setOtherOpen(false)
-                  gymRef.current?.newProgram()
-                }}
-                className="px-4 py-2.5 text-left text-sm font-medium text-pine"
-              >
-                + New program
-              </button>
-              <button
-                onClick={() => {
-                  setOtherOpen(false)
-                  gymRef.current?.editPrograms()
-                }}
-                className="px-4 py-2.5 text-left text-sm text-ink-2"
-              >
-                Edit programs
-              </button>
-            </div>
-          </>
+          <ProgramPicker
+            programs={programs}
+            sessions={sessions}
+            exercisesByProgram={exercisesByProgram}
+            today={today}
+            onStart={start}
+            onClose={() => setOtherOpen(false)}
+            onNew={() => {
+              setOtherOpen(false)
+              gymRef.current?.newProgram()
+            }}
+            onEdit={() => {
+              setOtherOpen(false)
+              gymRef.current?.editPrograms()
+            }}
+          />
         )}
       </div>
 
@@ -417,6 +464,9 @@ export function Training({ segments }: { segments: React.ReactNode }) {
                   </span>
                   <span className="text-lg font-semibold" style={{ color: inRange ? '#1f4f43' : '#5c4216' }}>
                     {formatSets(r.perWeek)}
+                  </span>
+                  <span className="-mt-1 text-[10px] font-medium opacity-70" style={{ color: inRange ? '#1f4f43' : '#5c4216' }}>
+                    {formatSets(r.direct)} direct
                   </span>
                   <span className="text-[9px] font-semibold" style={{ color: inRange ? THEME.pine : STRENGTH.ink }}>
                     {inRange

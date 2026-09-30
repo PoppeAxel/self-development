@@ -27,6 +27,8 @@ export type BalanceStatus = 'under' | 'in' | 'over'
 export interface RegionBalance {
   region: string
   perWeek: number
+  /** Sets/week where this region was the primary muscle — perWeek minus the 0.5s. */
+  direct: number
   status: BalanceStatus
 }
 
@@ -55,20 +57,24 @@ export function regionBalance(
   const from = shiftDate(today, -(weeks * 7 - 1))
   const inWindow = new Set(sessions.filter((s) => s.date >= from && s.date <= today).map((s) => s.id))
   const totals = new Map<string, number>()
+  const direct = new Map<string, number>()
   const add = (region: string, n: number) => totals.set(region, (totals.get(region) ?? 0) + n)
   for (const set of sets) {
     if (!inWindow.has(set.session_id)) continue
     const ex = exercisesByName.get(set.exercise_name.toLowerCase())
     const primary = ex?.primary_muscle ? REGION_OF.get(ex.primary_muscle) : undefined
     const secondary = ex?.secondary_muscle ? REGION_OF.get(ex.secondary_muscle) : undefined
-    if (primary) add(primary, 1)
+    if (primary) {
+      add(primary, 1)
+      direct.set(primary, (direct.get(primary) ?? 0) + 1)
+    }
     if (secondary && secondary !== primary) add(secondary, 0.5)
   }
   return Object.keys(BALANCE_REGIONS).map((region) => {
     // Rounded here so the shown number and its "N under" always add up to the target.
     const perWeek = Math.round(((totals.get(region) ?? 0) / weeks) * 10) / 10
     const status: BalanceStatus = perWeek < SET_TARGET.min ? 'under' : perWeek > SET_TARGET.max ? 'over' : 'in'
-    return { region, perWeek, status }
+    return { region, perWeek, direct: Math.round(((direct.get(region) ?? 0) / weeks) * 10) / 10, status }
   })
 }
 

@@ -9,7 +9,7 @@ import { Goals } from './pages/Goals'
 import { GoalDetail } from './pages/GoalDetail'
 import { Journal } from './pages/Journal'
 import { Food } from './pages/Food'
-import { Finance } from './pages/Finance'
+import { Training } from './components/Training'
 import { Settings } from './pages/Settings'
 
 function Shell() {
@@ -49,7 +49,7 @@ function Shell() {
             ))}
           {tab === 'journal' && <Journal />}
           {tab === 'food' && <Food />}
-          {tab === 'finance' && <Finance />}
+          {tab === 'training' && <Training />}
           {tab === 'settings' && <Settings />}
         </div>
         <TabBar active={tab} onChange={setTab} />

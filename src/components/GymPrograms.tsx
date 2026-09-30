@@ -33,9 +33,9 @@ function emptyExerciseRow(): ExerciseRow {
   return { name: '', sets: '3', reps: '10', primaryMuscle: '', secondaryMuscle: '' }
 }
 
-const SHEET = 'fixed inset-0 flex flex-col bg-page safe-top safe-bottom'
-const CLOSE_BTN = 'rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2'
-const INPUT =
+export const SHEET = 'fixed inset-0 flex flex-col bg-page safe-top safe-bottom'
+export const CLOSE_BTN = 'rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2'
+export const INPUT =
   'rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine'
 
 /**
@@ -50,6 +50,8 @@ export function SwapSheet({
   onPick,
   onClose,
   z = 'z-[60]',
+  title = 'Swap exercise',
+  footer,
 }: {
   exercises: Exercise[]
   currentName: string
@@ -57,6 +59,8 @@ export function SwapSheet({
   onPick: (ex: Exercise) => void
   onClose: () => void
   z?: string
+  title?: string
+  footer?: React.ReactNode
 }) {
   const [query, setQuery] = useState('')
   const q = query.trim().toLowerCase()
@@ -71,13 +75,14 @@ export function SwapSheet({
   return (
     <div className={`${SHEET} ${z}`}>
       <div className="flex items-center justify-between px-4 pt-4">
-        <h2 className="text-lg font-bold text-ink">Swap exercise</h2>
+        <h2 className="text-lg font-bold text-ink">{title}</h2>
         <button onClick={onClose} className={CLOSE_BTN}>
           Close ✕
         </button>
       </div>
-      <div className="p-4">
+      <div className="flex flex-col gap-3 p-4">
         <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search exercises" className={`w-full ${INPUT}`} />
+        {footer}
       </div>
       <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-4 pb-4">
         {candidates.length === 0 && <p className="text-sm text-ink-disabled">No matches.</p>}

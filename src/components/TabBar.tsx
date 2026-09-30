@@ -1,12 +1,13 @@
-export type Tab = 'today' | 'calendar' | 'goals' | 'journal' | 'food' | 'finance' | 'settings'
+export type Tab = 'today' | 'calendar' | 'goals' | 'journal' | 'food' | 'training' | 'settings'
 
 // Calendar and Settings are reachable from TopIcons instead of a bottom-bar slot — see there.
 const TABS: { id: Tab; label: string; icon: string }[] = [
-  { id: 'today', label: 'Today', icon: '✓' },
-  { id: 'goals', label: 'Goals', icon: '◎' },
-  { id: 'journal', label: 'Journal', icon: '✎' },
-  { id: 'food', label: 'Food', icon: '🍽' },
-  { id: 'finance', label: 'Finance', icon: '💰' },
+  // Colour emoji throughout; ️ forces emoji presentation where iOS would otherwise draw text.
+  { id: 'today', label: 'Today', icon: '☀️' },
+  { id: 'goals', label: 'Goals', icon: '🎯' },
+  { id: 'journal', label: 'Journal', icon: '📝' },
+  { id: 'food', label: 'Food', icon: '🥗' },
+  { id: 'training', label: 'Training', icon: '🏋️' },
 ]
 
 // A floating pine bar rather than a white one flush to the screen edge. All five tabs keep

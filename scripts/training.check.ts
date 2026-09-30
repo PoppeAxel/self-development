@@ -14,6 +14,8 @@ const set = (session_id: string, exercise_name: string) => ({ id: '', user_id: '
 const bal = regionBalance([session('a', '2026-09-20')], [set('a', 'Bench'), set('a', 'Row')], byName, '2026-09-23', 1)
 assert.equal(bal.find((r) => r.region === 'Chest')!.perWeek, 1)
 assert.equal(bal.find((r) => r.region === 'Arms')!.perWeek, 0.5)
+assert.equal(bal.find((r) => r.region === 'Arms')!.direct, 0)
+assert.equal(bal.find((r) => r.region === 'Chest')!.direct, 1)
 assert.equal(bal.find((r) => r.region === 'Back')!.perWeek, 1)
 // Outside the 4-week window → ignored; empty weeks still divide.
 assert.equal(regionBalance([session('b', '2026-08-01')], [set('b', 'Bench')], byName, '2026-09-23')[1].perWeek, 0)
