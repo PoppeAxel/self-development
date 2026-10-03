@@ -142,6 +142,14 @@ export function formatPace(trend: PaceTrend): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} /km`
 }
 
+/** One workout's pace, same units as paceTrend: "5:30 /km", rides "17.5 km/h". */
+export function workoutPace(w: Workout): string | null {
+  const km = (w.distance_meters ?? 0) / 1000
+  if (!km || !w.duration_seconds) return null
+  const ride = w.sport_type.includes('Ride')
+  return formatPace({ unit: ride ? 'km/h' : 'min/km', current: ride ? km / (w.duration_seconds / 3600) : w.duration_seconds / km, deltaVs8wAgo: null })
+}
+
 /** "↗ 9 s faster" / "→ steady" / "↘ 0.4 km/h slower". Runs: lower is better. */
 export function paceTrendLabel(trend: PaceTrend): { text: string; tone: 'good' | 'bad' | 'flat' } | null {
   const d = trend.deltaVs8wAgo

@@ -14,6 +14,7 @@ import {
   nextProgram,
   paceTrend,
   paceTrendLabel,
+  workoutPace,
   planCaption,
   regionBalance,
   weekStrip,
@@ -548,6 +549,29 @@ export function Training() {
                 <span className="-mt-1 text-[10px] text-ink-muted">Pace trend over 8 weeks · per sport</span>
               </>
             )}
+          </div>
+
+          <SectionLabel>RECENT</SectionLabel>
+          <div className="-mt-1 flex flex-col rounded-[20px] border border-line bg-surface">
+            {cardioWindow.slice(0, 8).map((w, i) => {
+              const distance = formatWorkoutDistance(w.distance_meters)
+              const pace = workoutPace(w)
+              return (
+                <div key={w.id} className={`flex items-center gap-3 px-3.5 py-3 ${i > 0 ? 'border-t border-[#efe9dd]' : ''}`}>
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ background: sportColor(w.sport_type) }} />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate text-[13px] font-semibold text-ink">{w.name}</span>
+                    <span className="text-[11px] text-ink-muted">
+                      {format(parseISO(w.date), 'EEE d MMM')} · {formatWorkoutDuration(w.duration_seconds)}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 flex-col items-end">
+                    {distance && <span className="text-[13px] font-semibold text-ink">{distance}</span>}
+                    {pace && <span className="text-[11px] text-ink-muted">{pace}</span>}
+                  </span>
+                </div>
+              )
+            })}
           </div>
         </>
       )}

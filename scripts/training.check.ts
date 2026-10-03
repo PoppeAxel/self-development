@@ -1,8 +1,9 @@
 // Self-check for the pure Training functions. Run:
 //   npx rolldown scripts/training.check.ts --platform node -f esm -o $TMP/tc.mjs && node $TMP/tc.mjs
 import assert from 'node:assert/strict'
-import { autoLinks, nextProgram, paceTrend, paceTrendLabel, planCaption, regionBalance, weekStrip } from '../src/lib/training'
+import { autoLinks, nextProgram, paceTrend, paceTrendLabel, planCaption, workoutPace, regionBalance, weekStrip } from '../src/lib/training'
 import type { GoalPace } from '../src/lib/goals'
+import type { Workout } from '../src/lib/types'
 
 const ex = (name: string, primary: string | null, secondary: string | null = null) =>
   [name.toLowerCase(), { id: name, user_id: '', name, primary_muscle: primary, secondary_muscle: secondary, created_at: '' }] as const
@@ -33,6 +34,9 @@ const run = paceTrend(runs, 'Run', '2026-09-23')!
 assert.equal(run.unit, 'min/km')
 assert.equal(paceTrendLabel(run)!.text, '→ steady') // 2.5 s change < 5 s
 assert.equal(paceTrend(runs.slice(0, 2), 'Run', '2026-09-23'), null)
+assert.equal(workoutPace({ sport_type: 'Run', distance_meters: 10000, duration_seconds: 3300 } as Workout), '5:30 /km')
+assert.equal(workoutPace({ sport_type: 'Ride', distance_meters: 35000, duration_seconds: 7200 } as Workout), '17.5 km/h')
+assert.equal(workoutPace({ sport_type: 'Swim', distance_meters: null, duration_seconds: 1800 } as Workout), null)
 assert.equal(paceTrendLabel({ current: 324, deltaVs8wAgo: -9, unit: 'min/km' })!.text, '↗ 9 s faster')
 
 // Auto-link only when unambiguous.
