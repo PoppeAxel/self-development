@@ -10,7 +10,9 @@ import { supabase } from './supabase'
 import { PERIOD_TYPES, periodEndISO, periodStartISO, weekStartISO } from './dates'
 import { isAutoMetric, METRIC_INFO, type AutoMetric } from './metrics'
 import { isStrengthWorkout } from './workouts'
-import type { Goal, PeriodType } from './types'
+import { CATEGORY_STYLES } from './categories'
+import type { MilestoneResult } from './checkins'
+import type { Category, Goal, PeriodType } from './types'
 
 // Counts workouts (not minutes) synced from Strava, e.g. "2x gym sessions/week" — distinct
 // from AUTO_METRICS in metrics.ts, which sums a daily journal_entries value. Kept separate
@@ -82,8 +84,53 @@ export async function rolloverRecurringGoals() {
       recurring: true,
       auto_metric: g.auto_metric,
       parent_series_id: g.parent_series_id,
+      category_id: g.category_id,
+      kind: g.kind,
+      start_value: g.start_value,
+      lower_is_better: g.lower_is_better,
+      source_exercise: g.source_exercise,
     })),
   )
+}
+
+// --- Labels + milestones (Goals round 8) -------------------------------------------------
+
+/** A goal's colours come from its label; no label reads as General plum. */
+export function goalStyle(goal: Pick<Goal, 'category_id'>, categories: Map<string, Category>) {
+  const c = goal.category_id ? categories.get(goal.category_id) : undefined
+  return CATEGORY_STYLES[c?.color ?? 'violet']
+}
+
+/** Where a goal's number comes from, for the small caption on cards and check-ups. */
+export function goalSource(goal: Goal): string {
+  if (goal.kind === 'milestone') return goal.source_exercise ? '🏋️ Gym log' : 'by hand'
+  if (isSessionMetric(goal.auto_metric)) return `${SESSION_METRIC_INFO[goal.auto_metric].icon} Strava`
+  if (isAutoMetric(goal.auto_metric)) return `${METRIC_INFO[goal.auto_metric].icon} auto`
+  return 'manual'
+}
+
+/**
+ * Every result a milestone goal has: the best set weight per gym session for its exercise,
+ * or the results logged by hand. Unsorted; milestoneState() picks the best.
+ */
+export async function loadMilestoneResults(goal: Goal): Promise<MilestoneResult[]> {
+  if (goal.source_exercise) {
+    const { data } = await supabase
+      .from('gym_session_sets')
+      .select('weight, reps, gym_sessions!inner(date)')
+      .ilike('exercise_name', goal.source_exercise)
+      .not('weight', 'is', null)
+    // One result per day — the heaviest set (most reps on a tie) — so it reads as sessions.
+    const byDate = new Map<string, MilestoneResult>()
+    for (const r of data ?? []) {
+      const set = { date: (r.gym_sessions as unknown as { date: string }).date, value: Number(r.weight), reps: r.reps }
+      const prev = byDate.get(set.date)
+      if (!prev || set.value > prev.value || (set.value === prev.value && (set.reps ?? 0) > (prev.reps ?? 0))) byDate.set(set.date, set)
+    }
+    return [...byDate.values()]
+  }
+  const { data } = await supabase.from('goal_results').select('date, value').eq('goal_id', goal.id)
+  return (data ?? []).map((r) => ({ date: r.date, value: Number(r.value) }))
 }
 
 // Live progress for a metric-linked goal: sum (journal metrics) or count (session metrics)

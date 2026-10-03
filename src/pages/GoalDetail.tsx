@@ -6,8 +6,11 @@ import {
   goalIntervalTotals,
   goalMetricInfo,
   goalPace,
+  goalSource,
+  goalStyle,
   isGoalDone,
   isGoalMetric,
+  loadMilestoneResults,
   paceVerdict,
   resolveGoalProgress,
   SUB_INTERVAL_HEADING,
@@ -15,18 +18,22 @@ import {
   type IntervalBucket,
 } from '../lib/goals'
 import { CATEGORY_STYLES } from '../lib/categories'
+import { formatGoalValue, milestoneState, parseGoalValue, type MilestoneResult } from '../lib/checkins'
 import { useNav } from '../contexts/NavContext'
 import { Screen } from '../components/Screen'
 import { DaysRing, PaceBars } from '../components/Pace'
 import { ConfirmDialog } from '../components/ConfirmDialog'
-import type { DailyTask, Goal } from '../lib/types'
+import type { Category, CheckinRating, DailyTask, Goal, GoalCheckin } from '../lib/types'
 
-function goalHue(goal: Goal, done: boolean, isRollup: boolean) {
-  if (done || goal.auto_metric === 'sleep_hours') return CATEGORY_STYLES.emerald
-  if (isGoalMetric(goal.auto_metric)) return CATEGORY_STYLES.pink
-  if (isRollup) return CATEGORY_STYLES.sky
-  return CATEGORY_STYLES.violet
+const RATING_LABEL: Record<CheckinRating, string> = {
+  on_track: 'On track',
+  slipping: 'Slipping',
+  stuck: 'Stuck',
+  done: 'Done',
+  partly: 'Partly',
+  missed: 'Missed',
 }
+const RATING_FILL: Partial<Record<CheckinRating, string>> = { on_track: '#1f6b5c', slipping: '#8a6321', stuck: '#a33327' }
 
 /**
  * The nudge after the projection sentence. Deliberately a lookup, not generated prose:
@@ -61,6 +68,11 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [addingTask, setAddingTask] = useState(false)
   const [newTaskTitle, setNewTaskTitle] = useState('')
+  const [categories, setCategories] = useState<Map<string, Category>>(new Map())
+  const [checkinList, setCheckinList] = useState<GoalCheckin[]>([])
+  const [results, setResults] = useState<MilestoneResult[]>([])
+  const [resultDate, setResultDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+  const [resultValue, setResultValue] = useState('')
 
   async function load() {
     setLoading(true)
@@ -74,15 +86,25 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
 
     const weekStart = weekStartISO()
     const weekEnd = periodEndISO('week', weekStart)
-    const [resolved, intervals, { data: taskRows }, { data: parentRows }] = await Promise.all([
+    const milestone = loaded.kind === 'milestone'
+    const [resolved, intervals, { data: taskRows }, { data: parentRows }, { data: catRows }, milestoneResults] = await Promise.all([
       resolveGoalProgress(loaded),
-      goalIntervalTotals(loaded),
+      // Milestone and do-it goals have nothing to split into sub-intervals.
+      loaded.kind === 'number' ? goalIntervalTotals(loaded) : Promise.resolve([]),
       supabase.from('daily_tasks').select('*').eq('active', true).eq('goal_series_id', loaded.series_id).order('created_at'),
       supabase.from('goals').select('*'),
+      supabase.from('categories').select('*').order('name'),
+      milestone ? loadMilestoneResults(loaded) : Promise.resolve([]),
     ])
     setProgress(resolved.progress)
     setIsRollup(resolved.isRollup)
     setBuckets(intervals)
+    setCategories(new Map(((catRows ?? []) as Category[]).map((c) => [c.id, c])))
+    setResults(milestoneResults.filter((r) => r.date >= loaded.period_start).sort((a, b) => b.date.localeCompare(a.date)))
+    // Check-ins for every instance of this series (a year goal is one row; a weekly one many).
+    const seriesIds = ((parentRows ?? []) as Goal[]).filter((g) => g.series_id === loaded.series_id).map((g) => g.id)
+    const { data: checkinRows } = await supabase.from('goal_checkins').select('*').in('goal_id', seriesIds).order('period_start', { ascending: false })
+    setCheckinList((checkinRows ?? []) as GoalCheckin[])
 
     // The rollup chain upward. Walks parent_series_id, taking whichever instance of that
     // series contains this goal's period — the same containment rule the progress rollup
@@ -180,6 +202,23 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
     await supabase.from('goals').update({ progress: next, status }).eq('id', goal.id)
   }
 
+  async function setLabel(categoryId: string | null) {
+    if (!goal) return
+    setMenuOpen(false)
+    setGoal({ ...goal, category_id: categoryId })
+    await supabase.from('goals').update({ category_id: categoryId }).eq('id', goal.id)
+  }
+
+  async function logResult(e: React.FormEvent) {
+    e.preventDefault()
+    if (!goal) return
+    const value = parseGoalValue(resultValue, goal.lower_is_better)
+    if (value == null) return
+    await supabase.from('goal_results').insert({ goal_id: goal.id, date: resultDate, value })
+    setResultValue('')
+    load()
+  }
+
   async function remove() {
     if (!goal) return
     setConfirmDelete(false)
@@ -204,23 +243,55 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
   }
 
   const pace = goalPace(goal, progress)
-  const done = isGoalDone(goal, progress, isRollup)
-  const style = goalHue(goal, done, isRollup)
+  const milestone = goal.kind === 'milestone' ? milestoneState(goal, results, goal.period_start) : null
+  const isNumber = goal.kind === 'number'
+  const done = goal.kind === 'done' ? goal.status === 'done' : milestone ? milestone.toGo === 0 : isGoalDone(goal, progress, isRollup)
+  const style = goalStyle(goal, categories)
   const metricInfo = isGoalMetric(goal.auto_metric) ? goalMetricInfo(goal.auto_metric) : null
   const unit = metricInfo ? ` ${metricInfo.unit}` : ''
   const pct = goal.target_value ? Math.min(100, (progress / goal.target_value) * 100) : 0
   const verdict = paceVerdict(goal, pace)
   const ahead = (pace.delta ?? 0) >= 0
   const periodLabel = PERIOD_LABELS[goal.period_type].replace('ly', '')
-  const isManualBumpable = !metricInfo && !isRollup
+  const isManualBumpable = isNumber && !metricInfo && !isRollup
+  const isLongTerm = goal.period_type === 'year' || goal.period_type === 'quarter'
+  const labelName = goal.category_id ? categories.get(goal.category_id)?.name : null
+  const v = (n: number) => formatGoalValue(goal, n)
 
   const hero = (
     <>
       <span className="mt-3.5 inline-block rounded-full bg-white/16 px-[11px] py-[5px] text-[11px] font-semibold text-white">
-        {metricInfo ? `${metricInfo.icon} auto` : isRollup ? '🔗 from sub-goals' : 'manual'} · {periodLabel}
+        {labelName ? `${labelName} · ` : ''}
+        {goal.kind === 'done' ? 'do it' : isRollup && isNumber ? '🔗 from sub-goals' : goalSource(goal)} · {periodLabel}
         {goal.recurring ? ' · recurring' : ''}
       </span>
-      {goal.target_value != null && (
+      {milestone && (
+        <div className="mt-4 flex flex-col gap-1.5">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-[17px] font-semibold text-white">{milestone.best ? `Best ${v(milestone.best.value)}` : 'No result yet'}</span>
+            {goal.target_value != null && <span className="text-[11px] font-medium text-white/70">target {v(goal.target_value)}</span>}
+          </div>
+          {milestone.basePct + milestone.gainPct > 0 && (
+            <span className="relative block h-2 overflow-hidden rounded-full bg-white/20">
+              <span className="absolute inset-y-0 left-0 rounded-full bg-white" style={{ width: `${milestone.basePct + milestone.gainPct}%` }} />
+            </span>
+          )}
+          <span className="text-[11px] font-medium text-white/80">
+            {[goal.start_value != null ? `From ${v(goal.start_value)}` : null, milestone.toGo != null ? (milestone.toGo ? `${v(milestone.toGo)} to go` : 'Target hit') : null]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+        </div>
+      )}
+      {goal.kind === 'done' && (
+        <button
+          onClick={toggleDone}
+          className={`mt-4 rounded-2xl px-4 py-2.5 text-sm font-semibold ${done ? 'bg-white/16 text-white' : 'bg-surface text-pine-dark'}`}
+        >
+          {done ? 'Done ✓ · tap to undo' : 'Mark as done'}
+        </button>
+      )}
+      {isNumber && goal.target_value != null && (
         <div className="mt-4 flex items-center gap-4">
           <DaysRing pace={pace} variant="hero" />
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
@@ -280,7 +351,19 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
 
       {menuOpen && (
         <div className="flex flex-col gap-1 rounded-[18px] border border-line bg-surface p-1.5 shadow-card">
-          {goal.target_value == null && (
+          <div className="flex flex-wrap gap-1.5 px-2 py-2">
+            {[{ id: null as string | null, name: 'No label', color: 'violet' as const }, ...categories.values()].map((c) => (
+              <button
+                key={c.id ?? 'none'}
+                onClick={() => setLabel(c.id)}
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs ${goal.category_id === c.id ? 'bg-pine font-semibold text-white' : 'border border-line font-medium text-ink-2'}`}
+              >
+                {c.id && <span className="h-2 w-2 rounded-full" style={{ background: CATEGORY_STYLES[c.color].accent }} />}
+                {c.name}
+              </button>
+            ))}
+          </div>
+          {isNumber && goal.target_value == null && (
             <button onClick={toggleDone} className="rounded-[14px] px-3 py-2.5 text-left text-sm font-medium text-ink-2">
               {goal.status === 'done' ? 'Mark as active' : 'Mark as done'}
             </button>
@@ -297,8 +380,77 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
         </div>
       )}
 
+      {/* Milestone results: read from the gym log, or logged here by hand. */}
+      {milestone && (
+        <div className="flex flex-col gap-[9px]">
+          <p className="text-[11px] font-semibold tracking-[0.1em] text-ink-3">RESULTS</p>
+          {!goal.source_exercise && (
+            <form onSubmit={logResult} className="flex gap-2">
+              <input
+                type="date"
+                value={resultDate}
+                onChange={(e) => setResultDate(e.target.value)}
+                className="rounded-[18px] border border-line bg-surface px-3 py-2.5 text-sm text-ink outline-none focus:border-pine"
+              />
+              <input
+                value={resultValue}
+                onChange={(e) => setResultValue(e.target.value)}
+                inputMode={goal.lower_is_better ? 'text' : 'decimal'}
+                placeholder={goal.lower_is_better ? '3:14:20' : 'Result'}
+                className="min-w-0 flex-1 rounded-[18px] border border-line bg-surface px-4 py-2.5 text-sm text-ink placeholder-ink-disabled outline-none focus:border-pine"
+              />
+              <button type="submit" className="shrink-0 rounded-[18px] bg-pine px-4 py-2.5 text-sm font-semibold text-white">
+                Log
+              </button>
+            </form>
+          )}
+          <div className="overflow-hidden rounded-[18px] border border-line bg-surface">
+            {results.length === 0 ? (
+              <p className="px-[15px] py-3 text-[13px] text-ink-disabled">
+                {goal.source_exercise ? `No ${goal.source_exercise} sets with a weight logged this ${periodLabel.toLowerCase()} yet.` : 'Nothing logged yet.'}
+              </p>
+            ) : (
+              results.slice(0, 12).map((r, i) => (
+                <div key={`${r.date}-${i}`} className={`flex items-center justify-between px-[15px] py-2.5 text-[13px] ${i > 0 ? 'border-t border-line' : ''}`}>
+                  <span className="text-ink-3">{format(new Date(r.date + 'T00:00:00'), 'd MMM')}</span>
+                  <span className="font-semibold" style={{ color: r === milestone.best ? style.ink : undefined }}>
+                    {v(r.value)}
+                    {r.reps ? ` × ${r.reps}` : ''}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Long-term check-ins, newest first. */}
+      {isLongTerm && checkinList.length > 0 && (
+        <div className="flex flex-col gap-[9px]">
+          <p className="text-[11px] font-semibold tracking-[0.1em] text-ink-3">CHECK-INS</p>
+          <div className="overflow-hidden rounded-[18px] border border-line bg-surface">
+            {checkinList.map((c, i) => (
+              <div key={c.id} className={`flex flex-col gap-1 px-[15px] py-3 ${i > 0 ? 'border-t border-line' : ''}`}>
+                <div className="flex items-center gap-2">
+                  <span className="text-[13px] font-semibold text-ink">{format(new Date(c.period_start + 'T00:00:00'), 'MMMM')}</span>
+                  {c.rating ? (
+                    <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-white" style={{ background: RATING_FILL[c.rating] ?? style.ink }}>
+                      {RATING_LABEL[c.rating]}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-medium text-ink-muted">skipped</span>
+                  )}
+                </div>
+                {c.note && <p className="text-xs leading-relaxed text-ink-2">{c.note}</p>}
+                {c.focus && <p className="text-[11px] font-medium text-ink-muted">Focus: {c.focus}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* 1 · TO FINISH ON TIME */}
-      {goal.target_value != null && pace.perDayNeeded != null && (
+      {isNumber && goal.target_value != null && pace.perDayNeeded != null && (
         <div className="flex flex-col gap-2.5 rounded-[20px] border border-line bg-surface px-4 py-[15px] shadow-card">
           <p className="text-xs font-semibold tracking-[0.06em] text-ink-3">TO FINISH ON TIME</p>
           <div className="flex gap-2.5">
@@ -349,7 +501,7 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
           <p className="text-[11px] font-semibold tracking-[0.1em] text-ink-3">ROLLS UP INTO</p>
           {ancestors.map(({ goal: parent, progress: parentProgress, pace: parentPace }) => {
             const parentVerdict = paceVerdict(parent, parentPace)
-            const parentStyle = goalHue(parent, isGoalDone(parent, parentProgress, true), true)
+            const parentStyle = goalStyle(parent, categories)
             const parentPct = parent.target_value ? Math.min(100, (parentProgress / parent.target_value) * 100) : 0
             const parentUnit = isGoalMetric(parent.auto_metric) ? ` ${goalMetricInfo(parent.auto_metric).unit}` : ''
             return (

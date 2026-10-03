@@ -45,6 +45,38 @@ export interface Goal {
   recurring: boolean
   auto_metric: string | null
   parent_series_id: string | null
+  created_at: string
+  category_id: string | null
+  /** Only meaningful on year/quarter goals; week/month goals stay 'number'. */
+  kind: GoalKind
+  start_value: number | null
+  lower_is_better: boolean
+  /** Milestone source: best gym_session_sets.weight for this exercise name. */
+  source_exercise: string | null
+}
+
+export type GoalKind = 'number' | 'milestone' | 'done'
+
+export type CheckinRating = 'done' | 'partly' | 'missed' | 'on_track' | 'slipping' | 'stuck'
+
+export interface GoalCheckin {
+  id: string
+  user_id: string
+  goal_id: string
+  period_start: string
+  rating: CheckinRating | null
+  note: string | null
+  focus: string | null
+  created_at: string
+}
+
+export interface GoalResult {
+  id: string
+  user_id: string
+  goal_id: string
+  date: string
+  value: number
+  note: string | null
 }
 
 export type JournalEntryType = 'weight' | 'mood' | 'note' | 'steps' | 'sleep_hours' | 'cardio_minutes' | 'strength_minutes'

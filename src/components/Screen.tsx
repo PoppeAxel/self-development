@@ -141,7 +141,8 @@ export function ChipRail<T extends string>({
   onChange,
   tone = 'body',
 }: {
-  options: { id: T; label: string }[]
+  /** `dot` draws an 8px colour dot before the label (the Goals label chips). */
+  options: { id: T; label: string; dot?: string }[]
   value: T
   onChange: (id: T) => void
   tone?: 'body' | 'hero'
@@ -162,8 +163,9 @@ export function ChipRail<T extends string>({
           <button
             key={option.id}
             onClick={() => onChange(option.id)}
-            className={`shrink-0 whitespace-nowrap rounded-full px-3.5 py-2 text-xs transition ${className}`}
+            className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-2 text-xs transition ${className}`}
           >
+            {option.dot && <span className="h-2 w-2 rounded-full" style={{ background: option.dot }} />}
             {option.label}
           </button>
         )
