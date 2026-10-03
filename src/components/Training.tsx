@@ -20,7 +20,7 @@ import {
   SET_TARGET,
 } from '../lib/training'
 import { THEME } from '../lib/theme'
-import { Screen, HeroChip } from './Screen'
+import { Screen, HeroChip, HeroSegments } from './Screen'
 import { CLOSE_BTN, GymPrograms, INPUT, SHEET, type GymProgramsHandle } from './GymPrograms'
 import { LiveSession, newLiveState, savedLiveState, SectionLabel, type LiveState } from './LiveSession'
 import { ConfirmDialog } from './ConfirmDialog'
@@ -165,6 +165,7 @@ export function Training() {
   const [goals, setGoals] = useState<Goal[]>([])
   const [loading, setLoading] = useState(true)
   const [live, setLive] = useState<LiveState | null>(() => savedLiveState())
+  const [view, setView] = useState<'strength' | 'cardio'>('strength')
   const [otherOpen, setOtherOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [liftOpen, setLiftOpen] = useState<string | null>(null)
@@ -276,8 +277,11 @@ export function Training() {
 
   // --- history
   const history = [
-    ...sessions.map((s) => ({ kind: 'session' as const, date: s.date, session: s })),
-    ...workouts.filter((w) => !linkedWorkoutIds.has(w.id)).map((w) => ({ kind: 'workout' as const, date: w.date, workout: w })),
+    // History follows the tab: gym sessions + unlinked Strava strength, or cardio workouts only.
+    ...(view === 'strength' ? sessions : []).map((s) => ({ kind: 'session' as const, date: s.date, session: s })),
+    ...workouts
+      .filter((w) => !linkedWorkoutIds.has(w.id) && isStrengthWorkout(w.sport_type) === (view === 'strength'))
+      .map((w) => ({ kind: 'workout' as const, date: w.date, workout: w })),
   ].sort((a, b) => b.date.localeCompare(a.date))
 
   async function deleteSession(session: GymSession) {
@@ -320,6 +324,14 @@ export function Training() {
           />
         ))}
       </div>
+      <HeroSegments
+        options={[
+          { id: 'strength', label: 'Strength' },
+          { id: 'cardio', label: 'Cardio' },
+        ]}
+        value={view}
+        onChange={setView}
+      />
     </>
   )
 
@@ -366,6 +378,8 @@ export function Training() {
         </span>
       </div>
 
+      {view === 'strength' && (
+      <>
       {/* 2 · start row */}
       <div className="relative flex gap-2">
         {next ? (
@@ -483,8 +497,12 @@ export function Training() {
         </>
       )}
 
+      </>
+      )}
+
       {/* 5 · cardio */}
-      {cardioWindow.length > 0 && (
+      {view === 'cardio' && cardioWindow.length === 0 && <p className="text-sm text-ink-disabled">No cardio synced from Strava in the last 8 weeks.</p>}
+      {view === 'cardio' && cardioWindow.length > 0 && (
         <>
           <SectionLabel>CARDIO</SectionLabel>
           <div className="-mt-1 flex flex-col gap-3 rounded-[20px] border border-line bg-surface p-3.5">
@@ -536,7 +554,7 @@ export function Training() {
 
       {/* 6 · history */}
       <button onClick={() => setHistoryOpen(true)} className="self-center pb-4 text-xs font-medium text-pine">
-        History · all sessions ›
+        {view === 'strength' ? 'History · all sessions ›' : 'History · all cardio ›'}
       </button>
 
       {liftForSheet && (
