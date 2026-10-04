@@ -1,7 +1,7 @@
 // Asserts src/lib/finance.ts. Run:
 //   npx rolldown scripts/finance.check.ts --platform node -f esm -o <tmp>/fc.mjs && node <tmp>/fc.mjs
 import assert from 'node:assert/strict'
-import { periodTotals, potProgress } from '../src/lib/finance'
+import { periodTotals, potProgress, swapNeighbour } from '../src/lib/finance'
 
 const entries = [
   { date: '2026-09-25', account: 'buffer' as const, amount: 5000 },
@@ -37,5 +37,12 @@ assert.equal(p.perMonth, 3667) // ceil(33000 / 9)
 assert.equal(potProgress({ ...ring, target_date: null }, potEntries, '2026-10-04').perMonth, null)
 assert.equal(potProgress({ ...ring, target_date: '2026-08-01' }, potEntries, '2026-10-04').monthsLeft, 1) // overdue → due now
 assert.equal(potProgress({ ...ring, target_amount: 12000 }, potEntries, '2026-10-04').perMonth, null) // reached
+
+// Shopping list order: move within what's shown, null at the ends.
+const shown = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+assert.equal(swapNeighbour(shown, 'b', -1)?.id, 'a')
+assert.equal(swapNeighbour(shown, 'b', 1)?.id, 'c')
+assert.equal(swapNeighbour(shown, 'a', -1), null)
+assert.equal(swapNeighbour(shown, 'c', 1), null)
 
 console.log('finance.check: ok')
