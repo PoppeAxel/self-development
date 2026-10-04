@@ -108,7 +108,7 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
     setIsRollup(resolved.isRollup)
     setBuckets(intervals)
     setCategories(new Map(((catRows ?? []) as Category[]).map((c) => [c.id, c])))
-    setResults(milestoneResults.filter((r) => loaded.auto_metric === 'weight' || r.date >= loaded.period_start).sort((a, b) => b.date.localeCompare(a.date)))
+    setResults(milestoneResults.filter((r) => (loaded.auto_metric === 'weight' ? r.date <= periodEndISO(loaded.period_type, loaded.period_start) : r.date >= loaded.period_start)).sort((a, b) => b.date.localeCompare(a.date)))
     // Check-ins for every instance of this series (a year goal is one row; a weekly one many).
     const seriesIds = ((parentRows ?? []) as Goal[]).filter((g) => g.series_id === loaded.series_id).map((g) => g.id)
     const { data: checkinRows } = await supabase.from('goal_checkins').select('*').in('goal_id', seriesIds).order('period_start', { ascending: false })

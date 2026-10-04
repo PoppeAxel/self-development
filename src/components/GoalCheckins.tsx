@@ -327,7 +327,12 @@ export function PeriodCheckup({ periodType, title, rows, suggested, reviewStart,
         {rows.map((r) => {
           const style = goalStyle(r.goal, categories)
           const source = r.goal.auto_metric ? ` · ${goalSource(r.goal).split(' ').slice(1).join(' ')}` : ''
-          const caption = r.goal.target_value != null ? `${fmt(r.progress)} of ${fmt(r.goal.target_value)}${source}` : null
+          const caption =
+            r.goal.target_value == null
+              ? null
+              : r.goal.kind === 'milestone'
+                ? `${r.results.length ? `Now ${formatGoalValue(r.goal, r.progress)}` : 'No weigh-in'} · target ${formatGoalValue(r.goal, r.goal.target_value)}`
+                : `${fmt(r.progress)} of ${fmt(r.goal.target_value)}${source}`
           const header = (
             <>
               <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: style.accent }} />

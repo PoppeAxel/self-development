@@ -8,7 +8,7 @@ import { useNav } from '../contexts/NavContext'
 import { ChipRail, HeroSegments, Screen } from '../components/Screen'
 import { GoalForm, type GoalTab } from '../components/GoalForm'
 import { LongTermCheckin, PeriodCheckup, type GoalRow } from '../components/GoalCheckins'
-import type { Category, Goal, GoalCheckin, PeriodType } from '../lib/types'
+import type { Category, CheckinRating, Goal, GoalCheckin, PeriodType } from '../lib/types'
 
 // Goals round 8 (design_handoff_goals, frames 3a/3b/3c): three tabs instead of four stacked
 // horizons. Long-term = year + quarter goals of three kinds (number / milestone / do it)
@@ -20,6 +20,18 @@ const fmt = (n: number) => Math.round(n).toLocaleString('sv-SE')
 const KIND_LABEL = { number: 'number', milestone: 'milestone', done: 'do it' } as const
 const DOT = { done: 1, partly: 0.35 } as const
 const MISSED = '#ece5d7'
+
+/**
+ * The check-up's pre-selected answer. Sums use suggestRating (≥ target = done); a weight
+ * goal is done when the latest weigh-in hits the target, partly when it moved the right way
+ * during the period — "progress ≥ target" would call being heavier a success.
+ */
+function suggestCheckup(row: GoalRow, periodStart: string): CheckinRating | null {
+  if (row.goal.kind !== 'milestone') return suggestRating(row.goal, row.progress)
+  if (!row.results.length) return null
+  if (row.done) return 'done'
+  return (milestoneState(row.goal, row.results, periodStart).gain ?? 0) > 0 ? 'partly' : 'missed'
+}
 
 function daysLeft(periodType: PeriodType, start: string): number {
   const end = new Date(periodEndISO(periodType, start) + 'T00:00:00')
@@ -83,9 +95,13 @@ export function Goals() {
     )
     const resolved = await Promise.all(
       needed.map(async (goal): Promise<GoalRow> => {
-        if (goal.kind === 'milestone' && (goal.period_type === 'year' || goal.period_type === 'quarter')) {
-          // A weight goal's "now" can predate the period (last weigh-in was last month); keep them all.
-          const results = (await loadMilestoneResults(goal)).filter((r) => goal.auto_metric === 'weight' || r.date >= goal.period_start)
+        // Milestones (incl. weight goals, which can be weekly/monthly too) read their results.
+        if (goal.kind === 'milestone') {
+          // A weight goal's "now" can predate the period (last weigh-in was last month), but a
+          // past week is judged as of its own end, not by today's weight.
+          const results = (await loadMilestoneResults(goal)).filter((r) =>
+            goal.auto_metric === 'weight' ? r.date <= periodEndISO(goal.period_type, goal.period_start) : r.date >= goal.period_start,
+          )
           const state = milestoneState(goal, results, goal.period_start)
           return { goal, progress: state.best?.value ?? 0, pace: goalPace(goal, 0), done: state.toGo === 0, results }
         }
@@ -304,7 +320,9 @@ export function Goals() {
       control = (
         <span className="shrink-0 text-right">
           <span className="block text-sm font-semibold" style={{ color: style.ink }}>
-            {fmt(progress)} / {fmt(goal.target_value)}
+            {goal.kind === 'milestone'
+              ? `${row.results.length ? formatGoalValue(goal, progress) : '—'} / ${formatGoalValue(goal, goal.target_value)}`
+              : `${fmt(progress)} / ${fmt(goal.target_value)}`}
           </span>
           <span className="block text-[9px] font-medium text-ink-muted">{goalSource(goal)}</span>
         </span>
@@ -433,7 +451,7 @@ export function Goals() {
         title={checkingIn === 'week' ? `Week ${getISOWeek(startDate)} check-up` : `${format(startDate, 'MMMM')} check-up`}
         rows={rows}
         // An earlier answer wins over the guess, so re-opening shows what was saved.
-        suggested={new Map(rows.map((r) => [r.goal.id, checkins.get(r.goal.id)?.rating ?? suggestRating(r.goal, r.progress)]))}
+        suggested={new Map(rows.map((r) => [r.goal.id, checkins.get(r.goal.id)?.rating ?? suggestCheckup(r, review.start)]))}
         reviewStart={review.start}
         nextLabel={checkingIn === 'week' ? `week ${getISOWeek(addDays(startDate, 7))}` : format(addMonths(startDate, 1), 'MMMM')}
         categories={categoryById}

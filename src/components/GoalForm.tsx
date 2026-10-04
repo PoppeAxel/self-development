@@ -101,14 +101,16 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
   }, [exercise])
 
   const milestone = long && kind === 'milestone'
-  const weight = milestone && exercise === WEIGHT
-  const gym = milestone && !!exercise && !weight
+  // Week/month goals have no kind picker: "Track from → Weight" alone makes it a weight milestone.
+  const periodWeight = !long && metric === 'weight'
+  const weight = (milestone && exercise === WEIGHT) || periodWeight
+  const gym = milestone && !!exercise && exercise !== WEIGHT
   // Direction is a choice for hand-logged results and weight; a lift is always "higher is better".
-  const lower = milestone && !gym && lowerIsBetter
+  const lower = (milestone ? !gym : periodWeight) && lowerIsBetter
   // Only hand-logged lower-is-better results are times (h:mm:ss); a weight is plain kg.
   const timeInput = lower && !weight
   const targetValue = parseGoalValue(target, timeInput)
-  const valid = title.trim() !== '' && (kind === 'done' || !milestone || targetValue != null)
+  const valid = title.trim() !== '' && (kind === 'done' || !(milestone || periodWeight) || targetValue != null)
 
   async function save() {
     if (!valid || saving) return
@@ -117,16 +119,16 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
       data: { user },
     } = await supabase.auth.getUser()
     if (!user) return
-    const isLongKind = long ? kind : 'number'
+    const savedKind = long ? kind : periodWeight ? 'milestone' : 'number'
     await supabase.from('goals').insert({
       user_id: user.id,
       title: title.trim(),
       period_type: period,
       period_start: periodStartISO(period),
       category_id: categoryId,
-      kind: isLongKind,
-      target_value: isLongKind === 'done' ? null : targetValue,
-      auto_metric: isLongKind === 'number' ? metric || null : weight ? 'weight' : null,
+      kind: savedKind,
+      target_value: savedKind === 'done' ? null : targetValue,
+      auto_metric: weight ? 'weight' : savedKind === 'number' ? metric || null : null,
       source_exercise: gym ? exercise : null,
       lower_is_better: lower,
       start_value: milestone ? parseGoalValue(start, timeInput) : null,
@@ -254,7 +256,7 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
         {!(long && kind === 'done') && (
           <div className="flex shrink-0 flex-col overflow-hidden rounded-[18px] border border-line bg-surface">
             <label className={ROW}>
-              <span className="shrink-0 text-[13px] font-medium text-ink-3">{milestone ? 'Target' : long ? 'Target' : 'Target (optional)'}</span>
+              <span className="shrink-0 text-[13px] font-medium text-ink-3">{milestone || periodWeight || long ? 'Target' : 'Target (optional)'}</span>
               <input
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
@@ -285,8 +287,16 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
                   ))}
                 </select>
               ) : (
-                <select value={metric} onChange={(e) => setMetric(e.target.value)} className={`${FIELD} appearance-none`}>
+                <select
+                  value={metric}
+                  onChange={(e) => {
+                    setMetric(e.target.value)
+                    if (e.target.value === 'weight') setLowerIsBetter(true)
+                  }}
+                  className={`${FIELD} appearance-none`}
+                >
                   <option value="">Manual</option>
+                  {!long && <option value="weight">⚖️ Weight (latest weigh-in)</option>}
                   {AUTO_METRICS.map((m) => (
                     <option key={m} value={m}>
                       {METRIC_INFO[m].icon} {METRIC_INFO[m].label}
@@ -318,6 +328,15 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
                 <label className={ROW}>
                   <span className="shrink-0 text-[13px] font-medium text-ink-3">Starting point</span>
                   <input value={start} onChange={(e) => setStart(e.target.value)} inputMode={timeInput ? 'text' : 'decimal'} placeholder={timeInput ? '3:30:00' : '80'} className={FIELD} />
+                </label>
+              </>
+            )}
+            {periodWeight && (
+              <>
+                <span className="block h-px bg-line" />
+                <label className={ROW}>
+                  <span className="text-[13px] font-medium text-ink-3">Lower is better</span>
+                  <input type="checkbox" checked={lowerIsBetter} onChange={(e) => setLowerIsBetter(e.target.checked)} className="h-4 w-4 accent-pine" />
                 </label>
               </>
             )}
