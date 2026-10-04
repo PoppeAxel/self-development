@@ -49,25 +49,7 @@ export interface SavingsPot {
   emoji: string | null
   target_amount: number
   target_date: string | null
-  /** 'done' = bought. */
   status: 'active' | 'done'
-  category_id: string | null
-  /** Lower = higher priority. */
-  rank: number
-}
-
-export interface PotCategory {
-  id: string
-  name: string
-}
-
-/**
- * Moving an item up/down swaps its rank with the neighbour in the list as shown (so it works
- * inside a category filter too). Null at either end. `shown` must be in rank order.
- */
-export function swapNeighbour<T extends { id: string }>(shown: T[], id: string, dir: -1 | 1): T | null {
-  const i = shown.findIndex((x) => x.id === id)
-  return i < 0 ? null : (shown[i + dir] ?? null)
 }
 
 export interface PotEntry {

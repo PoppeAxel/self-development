@@ -32,7 +32,7 @@ export function Finance({ segments }: { segments: React.ReactNode }) {
   const [period, setPeriod] = useState<Exclude<PeriodType, 'week'>>('month')
   const [showAll, setShowAll] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<SavingsEntry | null>(null)
-  // Long-term savings (counts toward totals/goals) vs the shopping list (kept apart).
+  // Long-term savings (counts toward totals/goals) vs short-term pots (kept apart).
   const [view, setView] = useState<'long' | 'pots'>('long')
 
   async function load() {
@@ -99,7 +99,7 @@ export function Finance({ segments }: { segments: React.ReactNode }) {
         </span>
       </div>
       )}
-      {view === 'pots' && <p className="mt-4 text-sm font-medium leading-snug text-white">Things you want to buy, in the order you want them.</p>}
+      {view === 'pots' && <p className="mt-4 text-sm font-medium leading-snug text-white">Short-term saving for one thing at a time — a ring, a watch, a trip.</p>}
     </>
   )
 
@@ -108,7 +108,7 @@ export function Finance({ segments }: { segments: React.ReactNode }) {
       <ChipRail
         options={[
           { id: 'long', label: 'Long-term savings' },
-          { id: 'pots', label: 'Shopping list' },
+          { id: 'pots', label: 'Pots' },
         ]}
         value={view}
         onChange={setView}
