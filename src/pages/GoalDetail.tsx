@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { format } from 'date-fns'
+import { eachMonthOfInterval, format } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { PERIOD_LABELS, periodEndISO, weekStartISO } from '../lib/dates'
 import {
   FINANCE_METRICS,
+  isFinanceMetric,
   SESSION_METRICS,
   goalIntervalTotals,
   goalMetricInfo,
@@ -21,6 +22,7 @@ import {
 } from '../lib/goals'
 import { CATEGORY_STYLES } from '../lib/categories'
 import { AUTO_METRICS } from '../lib/metrics'
+import { formatKr, periodTotals, type SavingsEntry } from '../lib/finance'
 import { formatGoalValue, milestoneState, parseGoalValue, type MilestoneResult } from '../lib/checkins'
 import { useNav } from '../contexts/NavContext'
 import { Screen } from '../components/Screen'
@@ -78,6 +80,7 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
   const [resultValue, setResultValue] = useState('')
   const [editTarget, setEditTarget] = useState('')
   const [editMetric, setEditMetric] = useState('')
+  const [savings, setSavings] = useState<Pick<SavingsEntry, 'date' | 'account' | 'amount'>[]>([])
 
   async function load() {
     setLoading(true)
@@ -110,6 +113,14 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
     const seriesIds = ((parentRows ?? []) as Goal[]).filter((g) => g.series_id === loaded.series_id).map((g) => g.id)
     const { data: checkinRows } = await supabase.from('goal_checkins').select('*').in('goal_id', seriesIds).order('period_start', { ascending: false })
     setCheckinList((checkinRows ?? []) as GoalCheckin[])
+    if (isFinanceMetric(loaded.auto_metric)) {
+      const { data: savingRows } = await supabase
+        .from('savings_entries')
+        .select('date, account, amount')
+        .gte('date', loaded.period_start)
+        .lte('date', periodEndISO(loaded.period_type, loaded.period_start))
+      setSavings((savingRows ?? []) as Pick<SavingsEntry, 'date' | 'account' | 'amount'>[])
+    }
 
     // The rollup chain upward. Walks parent_series_id, taking whichever instance of that
     // series contains this goal's period — the same containment rule the progress rollup
@@ -585,7 +596,49 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
         </div>
       )}
 
-      {/* 3 · DAILY TASKS FEEDING THIS */}
+      {/* Savings goals: each month's deposits − withdrawals from Journal → Finance. */}
+      {isFinanceMetric(goal.auto_metric) && (
+        <div className="flex flex-col gap-[9px]">
+          <p className="text-[11px] font-semibold tracking-[0.1em] text-ink-3">SAVED PER MONTH · FROM FINANCE</p>
+          <div className="overflow-hidden rounded-[18px] border border-line bg-surface">
+            {eachMonthOfInterval({
+              start: new Date(goal.period_start + 'T00:00:00'),
+              end: new Date(periodEndISO(goal.period_type, goal.period_start) + 'T00:00:00'),
+            }).map((m, i) => {
+              const start = format(m, 'yyyy-MM-dd')
+              const t = periodTotals(savings, start, periodEndISO('month', start))
+              const future = start > format(new Date(), 'yyyy-MM-dd')
+              return (
+                <div key={start} className={`flex items-center gap-3 px-[15px] py-3 ${i > 0 ? 'border-t border-line' : ''}`}>
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className={`text-[13px] font-semibold ${future ? 'text-ink-disabled' : 'text-ink'}`}>{format(m, 'MMMM')}</span>
+                    {!future && (
+                      <span className="text-[11px] text-ink-muted">
+                        +{formatKr(t.net + t.withdrawn)}
+                        {t.withdrawn > 0 ? ` · −${formatKr(t.withdrawn)} withdrawn` : ''}
+                      </span>
+                    )}
+                  </span>
+                  <span className={`shrink-0 text-sm font-semibold ${future ? 'text-ink-disabled' : t.net < 0 ? 'text-cat-rose-ink' : ''}`} style={!future && t.net >= 0 ? { color: style.ink } : undefined}>
+                    {future ? '—' : formatKr(t.net)}
+                  </span>
+                </div>
+              )
+            })}
+            <div className="flex items-center justify-between border-t border-line bg-page px-[15px] py-2.5">
+              <span className="text-xs font-semibold text-ink-3">Total</span>
+              <span className="text-sm font-semibold text-ink">
+                {formatKr(progress)}
+                {goal.target_value != null ? ` of ${formatKr(goal.target_value)}` : ''}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3 · DAILY TASKS FEEDING THIS — for manual goals, or when tasks are actually linked.
+          A goal that tracks itself from data has nothing for an empty task list to say. */}
+      {(!metricInfo || tasks.length > 0) && (
       <div className="flex flex-col gap-[9px]">
         <div className="flex items-center justify-between">
           <p className="text-[11px] font-semibold tracking-[0.1em] text-ink-3">DAILY TASKS FEEDING THIS</p>
@@ -639,9 +692,11 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
           )}
         </div>
       </div>
+      )}
 
-      {/* 4 · The only history shown, and all of it inside the current period. */}
-      {buckets.length > 0 && (
+      {/* 4 · The only history shown, and all of it inside the current period. Savings goals
+          use the per-month list above instead. */}
+      {buckets.length > 0 && !isFinanceMetric(goal.auto_metric) && (
         <div className="flex flex-col gap-[9px]">
           <p className="text-[11px] font-semibold tracking-[0.1em] text-ink-3">{SUB_INTERVAL_HEADING[goal.period_type]}</p>
           <div className="flex h-[72px] items-end gap-[5px] rounded-[18px] border border-line bg-surface px-[15px] py-3.5">
