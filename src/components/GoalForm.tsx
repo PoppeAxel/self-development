@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { periodStartISO } from '../lib/dates'
-import { SESSION_METRIC_INFO, SESSION_METRICS } from '../lib/goals'
+import { FINANCE_METRIC_INFO, SESSION_METRIC_INFO, SESSION_METRICS } from '../lib/goals'
 import { AUTO_METRICS, METRIC_INFO } from '../lib/metrics'
-import { CATEGORY_STYLES } from '../lib/categories'
+import { CATEGORY_COLOR_LABELS, CATEGORY_STYLES } from '../lib/categories'
 import { formatGoalValue, milestoneState, parseGoalValue } from '../lib/checkins'
-import type { Category, GoalKind, PeriodType } from '../lib/types'
+import { CATEGORY_COLORS, type Category, type CategoryColor, type GoalKind, type PeriodType } from '../lib/types'
 
 // New goal (design 2c). Long-term goals pick their kind first and only see that kind's
 // fields; week/month goals are always 'number' (a target, or none = done-or-not) plus a
@@ -42,6 +42,24 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
   const [repeat, setRepeat] = useState(true)
   const [exercises, setExercises] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
+  const [labels, setLabels] = useState(categories)
+  const [newLabel, setNewLabel] = useState<string | null>(null)
+  const [newColor, setNewColor] = useState<CategoryColor>('amber')
+
+  async function addLabel() {
+    const name = newLabel?.trim()
+    if (!name) return
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    const { data } = await supabase.from('categories').insert({ user_id: user.id, name, color: newColor }).select().single()
+    if (data) {
+      setLabels((ls) => [...ls, data as Category])
+      setCategoryId((data as Category).id)
+    }
+    setNewLabel(null)
+  }
 
   useEffect(() => {
     if (!long) return
@@ -140,7 +158,7 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
         <div className="flex flex-col gap-2">
           <p className="text-[11px] font-semibold tracking-[0.1em] text-ink-3">LABEL</p>
           <div className="flex flex-wrap gap-[7px]">
-            {[{ id: null, name: 'None', color: 'violet' as const }, ...categories].map((c) => {
+            {[{ id: null, name: 'None', color: 'violet' as const }, ...labels].map((c) => {
               const active = categoryId === c.id
               return (
                 <button
@@ -153,7 +171,42 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
                 </button>
               )
             })}
+            {newLabel == null && (
+              <button onClick={() => setNewLabel('')} className="rounded-full border border-dashed border-line-strong px-3.5 py-2 text-xs font-medium text-pine">
+                + New label
+              </button>
+            )}
           </div>
+          {/* Same categories table as Settings → Labels, so a label made here shows up there too. */}
+          {newLabel != null && (
+            <div className="flex flex-col gap-2 rounded-[18px] border border-line bg-surface p-3">
+              <input
+                autoFocus
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.target.value)}
+                placeholder="Money"
+                className="bg-transparent text-sm font-medium text-ink outline-none placeholder:text-ink-faint"
+              />
+              <div className="flex items-center gap-2">
+                {CATEGORY_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    onClick={() => setNewColor(color)}
+                    aria-label={CATEGORY_COLOR_LABELS[color]}
+                    className={`h-6 w-6 rounded-full ${newColor === color ? 'ring-2 ring-ink ring-offset-2' : ''}`}
+                    style={{ background: CATEGORY_STYLES[color].accent }}
+                  />
+                ))}
+                <span className="flex-1" />
+                <button onClick={() => setNewLabel(null)} className="text-xs font-medium text-ink-3">
+                  Cancel
+                </button>
+                <button onClick={addLabel} disabled={!newLabel.trim()} className="rounded-full bg-pine px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+                  Add
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {long && (
@@ -215,6 +268,9 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
                       {SESSION_METRIC_INFO[m].icon} {SESSION_METRIC_INFO[m].label}
                     </option>
                   ))}
+                  <option value="savings">
+                    {FINANCE_METRIC_INFO.savings.icon} {FINANCE_METRIC_INFO.savings.label}
+                  </option>
                 </select>
               )}
             </label>

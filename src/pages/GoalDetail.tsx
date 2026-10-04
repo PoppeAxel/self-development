@@ -3,6 +3,8 @@ import { format } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { PERIOD_LABELS, periodEndISO, weekStartISO } from '../lib/dates'
 import {
+  FINANCE_METRICS,
+  SESSION_METRICS,
   goalIntervalTotals,
   goalMetricInfo,
   goalPace,
@@ -18,6 +20,7 @@ import {
   type IntervalBucket,
 } from '../lib/goals'
 import { CATEGORY_STYLES } from '../lib/categories'
+import { AUTO_METRICS } from '../lib/metrics'
 import { formatGoalValue, milestoneState, parseGoalValue, type MilestoneResult } from '../lib/checkins'
 import { useNav } from '../contexts/NavContext'
 import { Screen } from '../components/Screen'
@@ -73,6 +76,8 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
   const [results, setResults] = useState<MilestoneResult[]>([])
   const [resultDate, setResultDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const [resultValue, setResultValue] = useState('')
+  const [editTarget, setEditTarget] = useState('')
+  const [editMetric, setEditMetric] = useState('')
 
   async function load() {
     setLoading(true)
@@ -200,6 +205,16 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
     setGoal({ ...goal, progress: next, status })
     setProgress(next)
     await supabase.from('goals').update({ progress: next, status }).eq('id', goal.id)
+  }
+
+  async function saveTargetSource(e: React.FormEvent) {
+    e.preventDefault()
+    if (!goal) return
+    const target_value = editTarget.trim() ? parseGoalValue(editTarget, false) : null
+    const auto_metric = editMetric || null
+    setMenuOpen(false)
+    await supabase.from('goals').update({ target_value, auto_metric }).eq('id', goal.id)
+    load()
   }
 
   async function setLabel(categoryId: string | null) {
@@ -340,7 +355,12 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
             </>
           )}
           <button
-            onClick={() => setMenuOpen((v) => !v)}
+            onClick={() => {
+              // Seed the target/source editor with what the goal has now.
+              setEditTarget(goal.target_value != null ? String(goal.target_value) : '')
+              setEditMetric(goal.auto_metric ?? '')
+              setMenuOpen((v) => !v)
+            }}
             aria-label="Goal actions"
             className="h-[30px] rounded-[14px] bg-track px-3 text-xs font-semibold text-ink-3"
           >
@@ -363,6 +383,40 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
               </button>
             ))}
           </div>
+          {/* Target + source, editable after the fact (a target typed into the title, a goal
+              created before its data source existed). Number goals only. */}
+          {isNumber && (
+            <form onSubmit={saveTargetSource} className="flex flex-col gap-2 border-t border-line px-2 pt-2.5 pb-1">
+              <label className="flex items-center justify-between gap-3">
+                <span className="shrink-0 text-xs font-medium text-ink-3">Target</span>
+                <input
+                  value={editTarget}
+                  onChange={(e) => setEditTarget(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="none = done or not"
+                  className="min-w-0 flex-1 rounded-xl border border-line bg-page px-3 py-1.5 text-right text-sm text-ink outline-none focus:border-pine"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-3">
+                <span className="shrink-0 text-xs font-medium text-ink-3">Track from</span>
+                <select
+                  value={editMetric}
+                  onChange={(e) => setEditMetric(e.target.value)}
+                  className="min-w-0 flex-1 rounded-xl border border-line bg-page px-3 py-1.5 text-right text-sm text-ink outline-none focus:border-pine"
+                >
+                  <option value="">Manual</option>
+                  {[...AUTO_METRICS, ...SESSION_METRICS, ...FINANCE_METRICS].map((m) => (
+                    <option key={m} value={m}>
+                      {goalMetricInfo(m).icon} {goalMetricInfo(m).label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button type="submit" className="self-end rounded-full bg-pine px-3.5 py-1.5 text-xs font-semibold text-white">
+                Save
+              </button>
+            </form>
+          )}
           {isNumber && goal.target_value == null && (
             <button onClick={toggleDone} className="rounded-[14px] px-3 py-2.5 text-left text-sm font-medium text-ink-2">
               {goal.status === 'done' ? 'Mark as active' : 'Mark as done'}

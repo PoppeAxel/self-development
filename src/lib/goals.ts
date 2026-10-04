@@ -32,14 +32,31 @@ export function isSessionMetric(value: string | null): value is SessionMetric {
   return value != null && (SESSION_METRICS as readonly string[]).includes(value)
 }
 
-export type GoalMetric = AutoMetric | SessionMetric
+// Money saved, from Journal → Finance (savings_entries): a goal sums every account's net
+// (deposits minus withdrawals) over its period.
+export const FINANCE_METRICS = ['savings'] as const
+export type FinanceMetric = (typeof FINANCE_METRICS)[number]
+export const FINANCE_METRIC_INFO: Record<FinanceMetric, { label: string; icon: string; unit: string }> = {
+  savings: { label: 'Saved (Finance)', icon: '💰', unit: 'kr' },
+}
+export function isFinanceMetric(value: string | null): value is FinanceMetric {
+  return value === 'savings'
+}
+
+export type GoalMetric = AutoMetric | SessionMetric | FinanceMetric
 
 export function isGoalMetric(value: string | null): value is GoalMetric {
-  return isAutoMetric(value) || isSessionMetric(value)
+  return isAutoMetric(value) || isSessionMetric(value) || isFinanceMetric(value)
 }
 
 export function goalMetricInfo(metric: GoalMetric): { label: string; icon: string; unit: string } {
+  if (isFinanceMetric(metric)) return FINANCE_METRIC_INFO[metric]
   return isAutoMetric(metric) ? METRIC_INFO[metric] : SESSION_METRIC_INFO[metric]
+}
+
+async function savingsRows(start: string, end: string) {
+  const { data } = await supabase.from('savings_entries').select('date, amount').gte('date', start).lte('date', end)
+  return (data ?? []).map((r) => ({ date: r.date as string, amount: Number(r.amount) }))
 }
 
 /** What one workout adds to a session metric: 1 for the counts, its km for cardio_km. */
@@ -104,6 +121,7 @@ export function goalStyle(goal: Pick<Goal, 'category_id'>, categories: Map<strin
 /** Where a goal's number comes from, for the small caption on cards and check-ups. */
 export function goalSource(goal: Goal): string {
   if (goal.kind === 'milestone') return goal.source_exercise ? '🏋️ Gym log' : 'by hand'
+  if (isFinanceMetric(goal.auto_metric)) return '💰 Finance'
   if (isSessionMetric(goal.auto_metric)) return `${SESSION_METRIC_INFO[goal.auto_metric].icon} Strava`
   if (isAutoMetric(goal.auto_metric)) return `${METRIC_INFO[goal.auto_metric].icon} auto`
   return 'manual'
@@ -140,6 +158,9 @@ export async function autoMetricProgress(goal: Goal): Promise<number> {
   const periodEnd = periodEndISO(goal.period_type, goal.period_start)
   if (isSessionMetric(goal.auto_metric)) {
     return countWorkoutSessions(goal.auto_metric, goal.period_start, periodEnd)
+  }
+  if (isFinanceMetric(goal.auto_metric)) {
+    return (await savingsRows(goal.period_start, periodEnd)).reduce((sum, r) => sum + r.amount, 0)
   }
   if (!isAutoMetric(goal.auto_metric)) return goal.progress
   const { data } = await supabase
@@ -342,6 +363,11 @@ export async function goalIntervalTotals(goal: Goal, today: Date = new Date()): 
     for (const row of data ?? []) {
       const key = bucketKeyFor(row.date, goal)
       totals.set(key, (totals.get(key) ?? 0) + (row.value_numeric ?? 0))
+    }
+  } else if (isFinanceMetric(goal.auto_metric)) {
+    for (const row of await savingsRows(goal.period_start, periodEnd)) {
+      const key = bucketKeyFor(row.date, goal)
+      totals.set(key, (totals.get(key) ?? 0) + row.amount)
     }
   } else if (isSessionMetric(goal.auto_metric)) {
     const { data } = await supabase

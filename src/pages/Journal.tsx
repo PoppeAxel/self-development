@@ -31,6 +31,7 @@ import { ProgressRing } from '../components/ProgressRing'
 import { CATEGORY_STYLES } from '../lib/categories'
 import { THEME } from '../lib/theme'
 import { Screen, HeroSegments, HeroChip } from '../components/Screen'
+import { Finance } from '../components/Finance'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
 import { dailyKcalTotals, MIN_LOGGED_KCAL } from '../lib/food'
@@ -55,13 +56,14 @@ import type {
 // the list because it's the one that answers "how did the week go" without picking a
 // metric first, which the per-metric tabs can't do.
 // Cardio and Strength live in their own bottom tab, Training (src/components/Training.tsx).
-type JournalTab = Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes' | 'mood' | 'note'> | 'review'
-const TABS: JournalTab[] = ['review', 'weight', 'sleep_hours', 'steps']
+type JournalTab = Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes' | 'mood' | 'note'> | 'review' | 'finance'
+const TABS: JournalTab[] = ['review', 'weight', 'sleep_hours', 'steps', 'finance']
 const TAB_LABELS: Record<JournalTab, string> = {
   review: 'Week',
   weight: 'Weight',
   sleep_hours: 'Sleep',
   steps: 'Steps',
+  finance: 'Finance',
 }
 const ENTRY_TYPE_LABELS: Partial<Record<JournalEntryType, string>> = {
   weight: 'weight entry',
@@ -77,6 +79,7 @@ const METRIC_HUE: Record<JournalTab, (typeof CATEGORY_STYLES)[keyof typeof CATEG
   weight: CATEGORY_STYLES.violet,
   sleep_hours: CATEGORY_STYLES.sky,
   steps: CATEGORY_STYLES.emerald,
+  finance: CATEGORY_STYLES.amber,
 }
 
 // The Weekly review's six cards, in the order they're drawn. Each carries the same hue its
@@ -629,6 +632,11 @@ export function Journal() {
       )}
     </>
   )
+
+  // Finance owns its own data and screen; Journal just hands it the tab pills.
+  if (tab === 'finance') {
+    return <Finance segments={<HeroSegments options={TABS.map((t) => ({ id: t, label: TAB_LABELS[t] }))} value={tab} onChange={setTab} />} />
+  }
 
   return (
     <Screen title={tab === 'review' ? 'Your week' : 'Journal'} onRefresh={load} hero={hero}>
