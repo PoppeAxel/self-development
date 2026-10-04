@@ -20,6 +20,8 @@ const KINDS: { id: GoalKind; title: string; hint: string }[] = [
   { id: 'done', title: 'Just do it', hint: 'Learn to surf · Visit Japan. Done or not. Check-ins carry the story.' },
 ]
 
+// Sentinel in the milestone source select for the body-weight log (not a gym exercise name).
+const WEIGHT = '__weight'
 const ROW = 'flex items-center justify-between gap-3 px-[15px] py-3'
 const FIELD = 'min-w-0 flex-1 bg-transparent text-right text-sm font-semibold text-ink outline-none placeholder:font-medium placeholder:text-ink-faint'
 
@@ -70,9 +72,22 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
       .then(({ data }) => setExercises((data ?? []).map((e) => e.name as string)))
   }, [long])
 
-  // Picking a gym exercise pre-fills the starting point with the best so far.
+  // Picking a source pre-fills the starting point: the latest weigh-in, or a lift's best.
   useEffect(() => {
     if (!exercise) return
+    if (exercise === WEIGHT) {
+      supabase
+        .from('journal_entries')
+        .select('value_numeric')
+        .eq('type', 'weight')
+        .order('date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .then(({ data }) => {
+          if (data?.[0]?.value_numeric != null) setStart(String(data[0].value_numeric))
+        })
+      return
+    }
     supabase
       .from('gym_session_sets')
       .select('weight, gym_sessions!inner(date)')
@@ -86,8 +101,13 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
   }, [exercise])
 
   const milestone = long && kind === 'milestone'
-  const lower = milestone && !exercise && lowerIsBetter
-  const targetValue = parseGoalValue(target, lower)
+  const weight = milestone && exercise === WEIGHT
+  const gym = milestone && !!exercise && !weight
+  // Direction is a choice for hand-logged results and weight; a lift is always "higher is better".
+  const lower = milestone && !gym && lowerIsBetter
+  // Only hand-logged lower-is-better results are times (h:mm:ss); a weight is plain kg.
+  const timeInput = lower && !weight
+  const targetValue = parseGoalValue(target, timeInput)
   const valid = title.trim() !== '' && (kind === 'done' || !milestone || targetValue != null)
 
   async function save() {
@@ -106,10 +126,10 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
       category_id: categoryId,
       kind: isLongKind,
       target_value: isLongKind === 'done' ? null : targetValue,
-      auto_metric: isLongKind === 'number' ? metric || null : null,
-      source_exercise: milestone ? exercise || null : null,
+      auto_metric: isLongKind === 'number' ? metric || null : weight ? 'weight' : null,
+      source_exercise: gym ? exercise : null,
       lower_is_better: lower,
-      start_value: milestone ? parseGoalValue(start, lower) : null,
+      start_value: milestone ? parseGoalValue(start, timeInput) : null,
       // Long-term goals don't repeat; week/month goals follow the switch (the check-up can change it later).
       recurring: !long && repeat,
     })
@@ -238,8 +258,8 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
               <input
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
-                inputMode={lower ? 'text' : 'decimal'}
-                placeholder={lower ? '3:00:00' : milestone ? (exercise ? '100 kg' : '100') : long ? '300 000' : 'none = done or not'}
+                inputMode={timeInput ? 'text' : 'decimal'}
+                placeholder={timeInput ? '3:00:00' : weight ? '90 kg' : milestone ? (gym ? '100 kg' : '100') : long ? '300 000' : 'none = done or not'}
                 className={FIELD}
               />
             </label>
@@ -247,8 +267,17 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
             <label className={ROW}>
               <span className="shrink-0 text-[13px] font-medium text-ink-3">Track from</span>
               {milestone ? (
-                <select value={exercise} onChange={(e) => setExercise(e.target.value)} className={`${FIELD} appearance-none`}>
+                <select
+                  value={exercise}
+                  onChange={(e) => {
+                    setExercise(e.target.value)
+                    // Losing weight is the usual weight goal; flip the switch for a bulk.
+                    if (e.target.value === WEIGHT) setLowerIsBetter(true)
+                  }}
+                  className={`${FIELD} appearance-none`}
+                >
                   <option value="">✍️ By hand</option>
+                  <option value={WEIGHT}>⚖️ Weight log</option>
                   {exercises.map((name) => (
                     <option key={name} value={name}>
                       🏋️ Gym log · {name}
@@ -274,11 +303,11 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
                 </select>
               )}
             </label>
-            {milestone && !exercise && (
+            {milestone && !gym && (
               <>
                 <span className="block h-px bg-line" />
                 <label className={ROW}>
-                  <span className="text-[13px] font-medium text-ink-3">Lower is better (times)</span>
+                  <span className="text-[13px] font-medium text-ink-3">{weight ? 'Lower is better' : 'Lower is better (times)'}</span>
                   <input type="checkbox" checked={lowerIsBetter} onChange={(e) => setLowerIsBetter(e.target.checked)} className="h-4 w-4 accent-pine" />
                 </label>
               </>
@@ -288,7 +317,7 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
                 <span className="block h-px bg-line" />
                 <label className={ROW}>
                   <span className="shrink-0 text-[13px] font-medium text-ink-3">Starting point</span>
-                  <input value={start} onChange={(e) => setStart(e.target.value)} inputMode={lower ? 'text' : 'decimal'} placeholder={lower ? '3:30:00' : '80'} className={FIELD} />
+                  <input value={start} onChange={(e) => setStart(e.target.value)} inputMode={timeInput ? 'text' : 'decimal'} placeholder={timeInput ? '3:30:00' : '80'} className={FIELD} />
                 </label>
               </>
             )}
@@ -305,9 +334,11 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
         )}
         {milestone && !exercise && (
           <p className="text-[11px] font-medium leading-relaxed text-ink-muted">
-            Log results by hand on the goal, e.g. race times{lower && targetValue != null ? ` — target reads ${formatGoalValue({ lower_is_better: true, source_exercise: null }, targetValue)}` : ''}.
+            Log results by hand on the goal, e.g. race times
+            {timeInput && targetValue != null ? ` — target reads ${formatGoalValue({ lower_is_better: true, source_exercise: null, auto_metric: null }, targetValue)}` : ''}.
           </p>
         )}
+        {weight && <p className="text-[11px] font-medium leading-relaxed text-ink-muted">Uses your latest weigh-in from Journal → Weight, not your lightest ever.</p>}
       </div>
 
       <div className="shrink-0 px-5 pt-2 pb-7 safe-bottom">

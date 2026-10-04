@@ -3,7 +3,7 @@ import { format } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { periodEndISO } from '../lib/dates'
 import { goalSource, goalStyle, rolloverRecurringGoals, type GoalPace } from '../lib/goals'
-import { formatGoalValue, milestoneState, type MilestoneResult } from '../lib/checkins'
+import { formatGoalValue, isWeightGoal, milestoneState, type MilestoneResult } from '../lib/checkins'
 import type { Category, CheckinRating, Goal } from '../lib/types'
 
 // The two check-up flows from the Goals round-8 handoff. Both write goal_checkins, one row
@@ -76,7 +76,7 @@ function checkinChips(row: GoalRow, reviewStart: string, reviewEnd: string): str
     if (!now.best) return ['No result yet']
     const v = (n: number) => formatGoalValue(goal, n)
     return [
-      `Best ${v(now.best.value)}${now.best.reps ? ` × ${now.best.reps}` : ''}`,
+      `${isWeightGoal(goal) ? 'Now' : 'Best'} ${v(now.best.value)}${now.best.reps ? ` × ${now.best.reps}` : ''}`,
       gain ? `${gain > 0 ? '+' : '−'}${v(Math.abs(gain))} in ${month}` : `No change in ${month}`,
       now.toGo ? `${v(now.toGo)} to go` : 'Target hit',
     ]

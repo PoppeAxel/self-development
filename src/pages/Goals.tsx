@@ -84,7 +84,8 @@ export function Goals() {
     const resolved = await Promise.all(
       needed.map(async (goal): Promise<GoalRow> => {
         if (goal.kind === 'milestone' && (goal.period_type === 'year' || goal.period_type === 'quarter')) {
-          const results = (await loadMilestoneResults(goal)).filter((r) => r.date >= goal.period_start)
+          // A weight goal's "now" can predate the period (last weigh-in was last month); keep them all.
+          const results = (await loadMilestoneResults(goal)).filter((r) => goal.auto_metric === 'weight' || r.date >= goal.period_start)
           const state = milestoneState(goal, results, goal.period_start)
           return { goal, progress: state.best?.value ?? 0, pace: goalPace(goal, 0), done: state.toGo === 0, results }
         }
@@ -235,7 +236,7 @@ export function Goals() {
         )
       }
       line = !m.best
-        ? `No result yet${goal.source_exercise ? '' : ' · log one on the goal'}`
+        ? `No result yet${goal.source_exercise || goal.auto_metric === 'weight' ? '' : ' · log one on the goal'}`
         : [goal.start_value != null ? `From ${v(goal.start_value)}` : null, m.toGo ? `${v(m.toGo)} to go` : 'Target hit'].filter(Boolean).join(' · ')
     } else if (goal.target_value != null) {
       const pct = Math.min(100, (progress / goal.target_value) * 100)

@@ -32,11 +32,18 @@ export function parseGoalValue(text: string, lowerIsBetter: boolean): number | n
   return Number.isFinite(n) ? n : null
 }
 
-/** A goal value in its own terms: times as h:mm:ss, gym weights in kg, else a plain number. */
-export function formatGoalValue(goal: Pick<Goal, 'lower_is_better' | 'source_exercise'>, v: number): string {
-  if (goal.lower_is_better) return formatSeconds(v)
+/**
+ * A weight goal tracks the body-weight log, and what counts is where you are *now* — the
+ * latest weigh-in — not the lightest you've ever been. Every other milestone is a best.
+ */
+export const isWeightGoal = (goal: Pick<Goal, 'auto_metric'>) => goal.auto_metric === 'weight'
+
+/** A goal value in its own terms: weights in kg, other times as h:mm:ss, else a plain number. */
+export function formatGoalValue(goal: Pick<Goal, 'lower_is_better' | 'source_exercise' | 'auto_metric'>, v: number): string {
   const n = Math.round(v * 10) / 10
-  return `${n.toLocaleString('sv-SE')}${goal.source_exercise ? ' kg' : ''}`
+  if (isWeightGoal(goal) || goal.source_exercise) return `${n.toLocaleString('sv-SE')} kg`
+  if (goal.lower_is_better) return formatSeconds(v)
+  return n.toLocaleString('sv-SE')
 }
 
 // --- Milestones -------------------------------------------------------------------------
@@ -58,10 +65,17 @@ export interface MilestoneState {
   gainPct: number
 }
 
-export function milestoneState(goal: Pick<Goal, 'lower_is_better' | 'start_value' | 'target_value'>, results: MilestoneResult[], since: string): MilestoneState {
+export function milestoneState(
+  goal: Pick<Goal, 'lower_is_better' | 'start_value' | 'target_value'> & Partial<Pick<Goal, 'auto_metric'>>,
+  results: MilestoneResult[],
+  since: string,
+): MilestoneState {
   const lower = goal.lower_is_better
   const better = (a: number, b: number) => (lower ? a < b : a > b)
-  const bestOf = (rs: MilestoneResult[]) => rs.reduce<MilestoneResult | null>((b, r) => (!b || better(r.value, b.value) ? r : b), null)
+  // Weight goals read the latest result (ties: the later one in the list), everything else the best.
+  const latest = isWeightGoal({ auto_metric: goal.auto_metric ?? null })
+  const bestOf = (rs: MilestoneResult[]) =>
+    rs.reduce<MilestoneResult | null>((b, r) => (!b || (latest ? r.date >= b.date : better(r.value, b.value)) ? r : b), null)
   const best = bestOf(results)
   const before = bestOf(results.filter((r) => r.date < since))
   const target = goal.target_value

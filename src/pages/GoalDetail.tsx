@@ -23,7 +23,7 @@ import {
 import { CATEGORY_STYLES } from '../lib/categories'
 import { AUTO_METRICS } from '../lib/metrics'
 import { formatKr, periodTotals, type SavingsEntry } from '../lib/finance'
-import { formatGoalValue, milestoneState, parseGoalValue, type MilestoneResult } from '../lib/checkins'
+import { formatGoalValue, isWeightGoal, milestoneState, parseGoalValue, type MilestoneResult } from '../lib/checkins'
 import { useNav } from '../contexts/NavContext'
 import { Screen } from '../components/Screen'
 import { DaysRing, PaceBars } from '../components/Pace'
@@ -108,7 +108,7 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
     setIsRollup(resolved.isRollup)
     setBuckets(intervals)
     setCategories(new Map(((catRows ?? []) as Category[]).map((c) => [c.id, c])))
-    setResults(milestoneResults.filter((r) => r.date >= loaded.period_start).sort((a, b) => b.date.localeCompare(a.date)))
+    setResults(milestoneResults.filter((r) => loaded.auto_metric === 'weight' || r.date >= loaded.period_start).sort((a, b) => b.date.localeCompare(a.date)))
     // Check-ins for every instance of this series (a year goal is one row; a weekly one many).
     const seriesIds = ((parentRows ?? []) as Goal[]).filter((g) => g.series_id === loaded.series_id).map((g) => g.id)
     const { data: checkinRows } = await supabase.from('goal_checkins').select('*').in('goal_id', seriesIds).order('period_start', { ascending: false })
@@ -294,7 +294,7 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
       {milestone && (
         <div className="mt-4 flex flex-col gap-1.5">
           <div className="flex items-baseline justify-between gap-2">
-            <span className="text-[17px] font-semibold text-white">{milestone.best ? `Best ${v(milestone.best.value)}` : 'No result yet'}</span>
+            <span className="text-[17px] font-semibold text-white">{milestone.best ? `${isWeightGoal(goal) ? 'Now' : 'Best'} ${v(milestone.best.value)}` : 'No result yet'}</span>
             {goal.target_value != null && <span className="text-[11px] font-medium text-white/70">target {v(goal.target_value)}</span>}
           </div>
           {milestone.basePct + milestone.gainPct > 0 && (
@@ -449,7 +449,7 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
       {milestone && (
         <div className="flex flex-col gap-[9px]">
           <p className="text-[11px] font-semibold tracking-[0.1em] text-ink-3">RESULTS</p>
-          {!goal.source_exercise && (
+          {!goal.source_exercise && !isWeightGoal(goal) && (
             <form onSubmit={logResult} className="flex gap-2">
               <input
                 type="date"
@@ -472,7 +472,7 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
           <div className="overflow-hidden rounded-[18px] border border-line bg-surface">
             {results.length === 0 ? (
               <p className="px-[15px] py-3 text-[13px] text-ink-disabled">
-                {goal.source_exercise ? `No ${goal.source_exercise} sets with a weight logged this ${periodLabel.toLowerCase()} yet.` : 'Nothing logged yet.'}
+                {isWeightGoal(goal) ? 'No weigh-ins this period yet — log them in Journal → Weight.' : goal.source_exercise ? `No ${goal.source_exercise} sets with a weight logged this ${periodLabel.toLowerCase()} yet.` : 'Nothing logged yet.'}
               </p>
             ) : (
               results.slice(0, 12).map((r, i) => (

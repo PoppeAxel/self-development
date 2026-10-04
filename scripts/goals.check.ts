@@ -1,7 +1,7 @@
 // Asserts the pure goal helpers in src/lib/checkins.ts. Run:
 //   npx rolldown scripts/goals.check.ts --platform node -f esm -o <tmp>/gc.mjs && node <tmp>/gc.mjs
 import assert from 'node:assert/strict'
-import { formatSeconds, historyDots, milestoneState, parseGoalValue, reviewPeriod, suggestRating } from '../src/lib/checkins'
+import { formatGoalValue, formatSeconds, historyDots, milestoneState, parseGoalValue, reviewPeriod, suggestRating } from '../src/lib/checkins'
 import type { Goal, GoalCheckin } from '../src/lib/types'
 
 // Values
@@ -32,6 +32,20 @@ const rm = milestoneState(race, [{ date: '2026-05-01', value: 11660 }], '2026-10
 assert.equal(rm.toGo, 860)
 assert.ok(rm.basePct > 52 && rm.basePct < 53) // 940 of 1800 seconds improved
 assert.equal(milestoneState(race, [], '2026-10-01').best, null)
+
+// Weight goal (≤ 90, from 95): the LATEST weigh-in counts, not the lightest ever.
+const weightGoal = { lower_is_better: true, start_value: 95, target_value: 90, auto_metric: 'weight' }
+const weighIns = [
+  { date: '2026-08-01', value: 89.5 }, // lightest, but long ago
+  { date: '2026-09-20', value: 93 },
+  { date: '2026-10-02', value: 92 },
+]
+const w = milestoneState(weightGoal, weighIns, '2026-10-01')
+assert.equal(w.best?.value, 92)
+assert.equal(w.toGo, 2)
+assert.equal(w.gain, 1) // 93 → 92 since 1 Oct
+assert.equal(formatGoalValue({ ...weightGoal, source_exercise: null }, 92), '92 kg') // kg, not h:mm:ss despite lower_is_better
+assert.equal(milestoneState(weightGoal, [...weighIns, { date: '2026-10-03', value: 89.8 }], '2026-10-01').toGo, 0)
 
 // Review period: Sat 3 Oct → previous week/month; Sun 4 Oct → this week; 31 Oct → this month.
 assert.deepEqual(reviewPeriod('week', new Date('2026-10-03T12:00')), { start: '2026-09-21', isCurrent: false })

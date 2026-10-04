@@ -120,7 +120,7 @@ export function goalStyle(goal: Pick<Goal, 'category_id'>, categories: Map<strin
 
 /** Where a goal's number comes from, for the small caption on cards and check-ups. */
 export function goalSource(goal: Goal): string {
-  if (goal.kind === 'milestone') return goal.source_exercise ? '🏋️ Gym log' : 'by hand'
+  if (goal.kind === 'milestone') return goal.auto_metric === 'weight' ? '⚖️ Weight log' : goal.source_exercise ? '🏋️ Gym log' : 'by hand'
   if (isFinanceMetric(goal.auto_metric)) return '💰 Finance'
   if (isSessionMetric(goal.auto_metric)) return `${SESSION_METRIC_INFO[goal.auto_metric].icon} Strava`
   if (isAutoMetric(goal.auto_metric)) return `${METRIC_INFO[goal.auto_metric].icon} auto`
@@ -132,6 +132,17 @@ export function goalSource(goal: Goal): string {
  * or the results logged by hand. Unsorted; milestoneState() picks the best.
  */
 export async function loadMilestoneResults(goal: Goal): Promise<MilestoneResult[]> {
+  if (goal.auto_metric === 'weight') {
+    // Oldest first, so on a day with two weigh-ins milestoneState's "latest" picks the later one.
+    const { data } = await supabase
+      .from('journal_entries')
+      .select('date, value_numeric')
+      .eq('type', 'weight')
+      .not('value_numeric', 'is', null)
+      .order('date')
+      .order('created_at')
+    return (data ?? []).map((r) => ({ date: r.date as string, value: Number(r.value_numeric) }))
+  }
   if (goal.source_exercise) {
     const { data } = await supabase
       .from('gym_session_sets')
