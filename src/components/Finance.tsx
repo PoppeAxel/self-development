@@ -5,6 +5,7 @@ import { periodEndISO, periodStartISO, todayISO } from '../lib/dates'
 import { ACCOUNT_INFO, SAVINGS_ACCOUNTS, formatKr, periodTotals, type SavingsAccount, type SavingsEntry } from '../lib/finance'
 import { ChipRail, Screen } from './Screen'
 import { ConfirmDialog } from './ConfirmDialog'
+import { Pots } from './Pots'
 import type { PeriodType } from '../lib/types'
 
 // Journal → Finance. Savings logged by hand: what went to the buffer, the house loan and
@@ -31,6 +32,8 @@ export function Finance({ segments }: { segments: React.ReactNode }) {
   const [period, setPeriod] = useState<Exclude<PeriodType, 'week'>>('month')
   const [showAll, setShowAll] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<SavingsEntry | null>(null)
+  // Long-term savings (counts toward totals/goals) vs short-term pots (kept apart).
+  const [view, setView] = useState<'long' | 'pots'>('long')
 
   async function load() {
     const { data } = await supabase.from('savings_entries').select('*').order('date', { ascending: false }).order('created_at', { ascending: false })
@@ -82,6 +85,7 @@ export function Finance({ segments }: { segments: React.ReactNode }) {
   const hero = (
     <>
       {segments}
+      {view === 'long' && (
       <div className="mt-5 flex items-end justify-between gap-3">
         <div>
           <p className="text-[11px] font-semibold tracking-[0.07em] text-white/72">SAVED IN {format(new Date(), 'yyyy')}</p>
@@ -94,11 +98,25 @@ export function Finance({ segments }: { segments: React.ReactNode }) {
           </span>
         </span>
       </div>
+      )}
+      {view === 'pots' && <p className="mt-4 text-sm font-medium leading-snug text-white">Short-term saving for one thing at a time — a ring, a watch, a trip.</p>}
     </>
   )
 
   return (
     <Screen title="Journal" onRefresh={load} hero={hero}>
+      <ChipRail
+        options={[
+          { id: 'long', label: 'Long-term savings' },
+          { id: 'pots', label: 'Pots' },
+        ]}
+        value={view}
+        onChange={setView}
+      />
+      {view === 'pots' ? (
+        <Pots />
+      ) : (
+      <>
       {/* Log form */}
       <form onSubmit={save} className="flex flex-col gap-3 rounded-[20px] border border-line bg-surface p-3.5 shadow-card">
         <div className="grid grid-cols-2 gap-1.5 rounded-2xl bg-page p-1">
@@ -206,6 +224,9 @@ export function Finance({ segments }: { segments: React.ReactNode }) {
         <button onClick={() => setShowAll((v) => !v)} className="self-center pb-2 text-xs font-medium text-pine">
           {showAll ? 'Show fewer' : `Show all ${entries.length}`}
         </button>
+      )}
+
+      </>
       )}
 
       <ConfirmDialog

@@ -40,4 +40,45 @@ export function periodTotals(entries: Pick<SavingsEntry, 'date' | 'account' | 'a
   return { byAccount, withdrawn, net: byAccount.buffer + byAccount.mortgage + byAccount.investments }
 }
 
-export const formatKr = (n: number) => `${Math.round(n).toLocaleString('sv-SE')} kr`
+// --- Pots: short-term saving for one thing (ring, watch, trip). Separate from the totals above.
+
+export interface SavingsPot {
+  id: string
+  user_id: string
+  name: string
+  emoji: string | null
+  target_amount: number
+  target_date: string | null
+  status: 'active' | 'done'
+}
+
+export interface PotEntry {
+  id: string
+  pot_id: string
+  date: string
+  /** Negative = taken out of the pot. */
+  amount: number
+  note: string | null
+}
+
+export interface PotProgress {
+  saved: number
+  remaining: number
+  /** Months left to the target date, counting the current one. Null without a date. */
+  monthsLeft: number | null
+  /** What to put in each remaining month to make the date. Null without a date or when reached. */
+  perMonth: number | null
+}
+
+export function potProgress(pot: Pick<SavingsPot, 'id' | 'target_amount' | 'target_date'>, entries: Pick<PotEntry, 'pot_id' | 'amount'>[], today: string): PotProgress {
+  const saved = entries.filter((e) => e.pot_id === pot.id).reduce((s, e) => s + Number(e.amount), 0)
+  const remaining = Math.max(0, Number(pot.target_amount) - saved)
+  if (!pot.target_date) return { saved, remaining, monthsLeft: null, perMonth: null }
+  const [ty, tm] = pot.target_date.split('-').map(Number)
+  const [y, m] = today.split('-').map(Number)
+  // A date this month (or already past) leaves one month: the whole remainder is due now.
+  const monthsLeft = Math.max(1, (ty - y) * 12 + (tm - m) + 1)
+  return { saved, remaining, monthsLeft, perMonth: remaining > 0 ? Math.ceil(remaining / monthsLeft) : null }
+}
+
+export const formatKr =(n: number) => `${Math.round(n).toLocaleString('sv-SE')} kr`
