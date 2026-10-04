@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { periodStartISO } from '../lib/dates'
-import { FINANCE_METRIC_INFO, SESSION_METRIC_INFO, SESSION_METRICS } from '../lib/goals'
+import { FINANCE_METRIC_INFO, goalMetricInfo, SESSION_METRIC_INFO, SESSION_METRICS } from '../lib/goals'
+import { MEDIA_METRICS } from '../lib/media'
 import { AUTO_METRICS, METRIC_INFO } from '../lib/metrics'
 import { CATEGORY_COLOR_LABELS, CATEGORY_STYLES } from '../lib/categories'
 import { formatGoalValue, milestoneState, parseGoalValue } from '../lib/checkins'
@@ -310,6 +311,11 @@ export function GoalForm({ tab, categories, onClose, onCreated }: {
                   <option value="savings">
                     {FINANCE_METRIC_INFO.savings.icon} {FINANCE_METRIC_INFO.savings.label}
                   </option>
+                  {MEDIA_METRICS.map((m) => (
+                    <option key={m} value={m}>
+                      {goalMetricInfo(m).icon} {goalMetricInfo(m).label}
+                    </option>
+                  ))}
                 </select>
               )}
             </label>

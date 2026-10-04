@@ -12,6 +12,7 @@ import { isAutoMetric, METRIC_INFO, type AutoMetric } from './metrics'
 import { isStrengthWorkout } from './workouts'
 import { CATEGORY_STYLES } from './categories'
 import type { MilestoneResult } from './checkins'
+import { isMediaMetric, MEDIA_INFO, MEDIA_METRIC_KIND, type MediaMetric } from './media'
 import type { Category, Goal, PeriodType } from './types'
 
 // Counts workouts (not minutes) synced from Strava, e.g. "2x gym sessions/week" — distinct
@@ -43,15 +44,30 @@ export function isFinanceMetric(value: string | null): value is FinanceMetric {
   return value === 'savings'
 }
 
-export type GoalMetric = AutoMetric | SessionMetric | FinanceMetric
+export type GoalMetric = AutoMetric | SessionMetric | FinanceMetric | MediaMetric
 
 export function isGoalMetric(value: string | null): value is GoalMetric {
-  return isAutoMetric(value) || isSessionMetric(value) || isFinanceMetric(value)
+  return isAutoMetric(value) || isSessionMetric(value) || isFinanceMetric(value) || isMediaMetric(value)
 }
 
 export function goalMetricInfo(metric: GoalMetric): { label: string; icon: string; unit: string } {
   if (isFinanceMetric(metric)) return FINANCE_METRIC_INFO[metric]
+  if (isMediaMetric(metric)) {
+    const info = MEDIA_INFO[MEDIA_METRIC_KIND[metric]]
+    return { label: `${info.plural} finished (Media)`, icon: info.icon, unit: info.plural.toLowerCase() }
+  }
   return isAutoMetric(metric) ? METRIC_INFO[metric] : SESSION_METRIC_INFO[metric]
+}
+
+/** Dates of finished media of one kind in a range — each counts 1 toward a media goal. */
+async function mediaDates(metric: MediaMetric, start: string, end: string): Promise<string[]> {
+  const { data } = await supabase
+    .from('media_entries')
+    .select('finished_on')
+    .eq('kind', MEDIA_METRIC_KIND[metric])
+    .gte('finished_on', start)
+    .lte('finished_on', end)
+  return (data ?? []).map((r) => r.finished_on as string)
 }
 
 async function savingsRows(start: string, end: string) {
@@ -122,6 +138,7 @@ export function goalStyle(goal: Pick<Goal, 'category_id'>, categories: Map<strin
 export function goalSource(goal: Goal): string {
   if (goal.kind === 'milestone') return goal.auto_metric === 'weight' ? '⚖️ Weight log' : goal.source_exercise ? '🏋️ Gym log' : 'by hand'
   if (isFinanceMetric(goal.auto_metric)) return '💰 Finance'
+  if (isMediaMetric(goal.auto_metric)) return `${MEDIA_INFO[MEDIA_METRIC_KIND[goal.auto_metric]].icon} Media`
   if (isSessionMetric(goal.auto_metric)) return `${SESSION_METRIC_INFO[goal.auto_metric].icon} Strava`
   if (isAutoMetric(goal.auto_metric)) return `${METRIC_INFO[goal.auto_metric].icon} auto`
   return 'manual'
@@ -172,6 +189,9 @@ export async function autoMetricProgress(goal: Goal): Promise<number> {
   }
   if (isFinanceMetric(goal.auto_metric)) {
     return (await savingsRows(goal.period_start, periodEnd)).reduce((sum, r) => sum + r.amount, 0)
+  }
+  if (isMediaMetric(goal.auto_metric)) {
+    return (await mediaDates(goal.auto_metric, goal.period_start, periodEnd)).length
   }
   if (!isAutoMetric(goal.auto_metric)) return goal.progress
   const { data } = await supabase
@@ -379,6 +399,11 @@ export async function goalIntervalTotals(goal: Goal, today: Date = new Date()): 
     for (const row of await savingsRows(goal.period_start, periodEnd)) {
       const key = bucketKeyFor(row.date, goal)
       totals.set(key, (totals.get(key) ?? 0) + row.amount)
+    }
+  } else if (isMediaMetric(goal.auto_metric)) {
+    for (const date of await mediaDates(goal.auto_metric, goal.period_start, periodEnd)) {
+      const key = bucketKeyFor(date, goal)
+      totals.set(key, (totals.get(key) ?? 0) + 1)
     }
   } else if (isSessionMetric(goal.auto_metric)) {
     const { data } = await supabase
