@@ -11,10 +11,13 @@ export function Screen({
   subtitle,
   onBack,
   onRefresh,
+  titleAside,
   hero,
   children,
 }: {
   title: string
+  /** Small element right of the title on tab screens — Today's daily check-in pill. */
+  titleAside?: React.ReactNode
   /** Small line under the title — only used by pushed views, which have no tab icons. */
   subtitle?: string
   /** When set the header becomes a pushed view: a back square instead of the tab icons. */
@@ -44,7 +47,10 @@ export function Screen({
           </div>
         ) : (
           <div className="flex items-center justify-between gap-3">
-            <h1 className="text-2xl font-semibold">{title}</h1>
+            <div className="flex min-w-0 items-center gap-2.5">
+              <h1 className="text-2xl font-semibold">{title}</h1>
+              {titleAside}
+            </div>
             <TopIcons active={tab} onChange={setTab} onRefresh={onRefresh} />
           </div>
         )}

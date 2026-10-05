@@ -27,7 +27,8 @@ self.addEventListener('notificationclick', (event) => {
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       const existing = clients.find((c) => 'focus' in c)
-      if (existing) return (existing as WindowClient).focus()
+      // An already-open app still needs to land on the push's target (e.g. /?checkin=1).
+      if (existing) return (existing as WindowClient).focus().then((c) => (url === '/' ? c : c.navigate(url)))
       return self.clients.openWindow(url)
     }),
   )

@@ -54,6 +54,16 @@ Deno.serve(async (req) => {
         .maybeSingle()
       if (completion) continue
     }
+    // The daily check-in nudge only fires if tonight's check-in isn't saved yet.
+    if (reminder.kind === 'checkin') {
+      const { data: checkin } = await supabase
+        .from('daily_checkins')
+        .select('id')
+        .eq('user_id', reminder.user_id)
+        .eq('date', today)
+        .maybeSingle()
+      if (checkin) continue
+    }
     due.push(reminder)
   }
 
@@ -64,7 +74,7 @@ Deno.serve(async (req) => {
       try {
         await webpush.sendNotification(
           sub.subscription,
-          JSON.stringify({ title: 'Self Development', body: reminder.label, url: '/' }),
+          JSON.stringify({ title: 'Self Development', body: reminder.label, url: reminder.kind === 'checkin' ? '/?checkin=1' : '/' }),
         )
         sent++
       } catch (err) {

@@ -29,6 +29,8 @@ import { useNav } from '../contexts/NavContext'
 import { Screen, HeroChip } from '../components/Screen'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { MorningCheckIn } from '../components/MorningCheckIn'
+import { DailyCheckin } from '../components/DailyCheckin'
+import { checkinDateISO } from '../lib/dailyCheckin'
 import type { Category, DailyTask, Goal, Reminder, RecipeIngredient } from '../lib/types'
 
 // A task whose auto_metric is this sentinel auto-completes off today's Food-log total
@@ -38,6 +40,19 @@ import type { Category, DailyTask, Goal, Reminder, RecipeIngredient } from '../l
 const CALORIE_BUDGET_METRIC = 'calorie_budget'
 
 export function Today() {
+  // Daily check-in: red until tonight's row exists, green after. The 22:00 push opens
+  // /?checkin=1, which lands straight in the check-in.
+  const checkinDate = checkinDateISO()
+  const [checkinDone, setCheckinDone] = useState<boolean | null>(null)
+  const [checkinOpen, setCheckinOpen] = useState(() => new URLSearchParams(window.location.search).has('checkin'))
+  async function loadCheckin() {
+    const { data } = await supabase.from('daily_checkins').select('id').eq('date', checkinDate).maybeSingle()
+    setCheckinDone(!!data)
+  }
+  useEffect(() => {
+    loadCheckin()
+    if (checkinOpen) window.history.replaceState(null, '', window.location.pathname)
+  }, [])
   const [tasks, setTasks] = useState<DailyTask[]>([])
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set())
   const [categories, setCategories] = useState<Category[]>([])
@@ -659,7 +674,22 @@ export function Today() {
   )
 
   return (
-    <Screen title="Today" onRefresh={load} hero={hero}>
+    <Screen
+      title="Today"
+      onRefresh={load}
+      hero={hero}
+      titleAside={
+        checkinDone != null && (
+          <button
+            onClick={() => setCheckinOpen(true)}
+            className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold text-white ${checkinDone ? 'bg-[#3f9a6b]' : 'bg-cat-rose'}`}
+          >
+            {checkinDone ? '✓ Check-in' : 'Check-in'}
+          </button>
+        )
+      }
+    >
+      {checkinOpen && <DailyCheckin date={checkinDate} onClose={() => setCheckinOpen(false)} onSaved={loadCheckin} />}
       <MorningCheckIn onSaved={load} />
 
       {summaryOpen && (
