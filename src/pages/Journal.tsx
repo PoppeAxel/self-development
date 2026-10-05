@@ -33,6 +33,7 @@ import { THEME } from '../lib/theme'
 import { Screen, HeroSegments, HeroChip } from '../components/Screen'
 import { Finance } from '../components/Finance'
 import { Media } from '../components/Media'
+import { DiaryList } from '../components/DiaryList'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
 import { dailyKcalTotals, MIN_LOGGED_KCAL } from '../lib/food'
@@ -57,10 +58,11 @@ import type {
 // the list because it's the one that answers "how did the week go" without picking a
 // metric first, which the per-metric tabs can't do.
 // Cardio and Strength live in their own bottom tab, Training (src/components/Training.tsx).
-type JournalTab = Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes' | 'mood' | 'note'> | 'review' | 'finance' | 'media'
-const TABS: JournalTab[] = ['review', 'weight', 'sleep_hours', 'steps', 'finance', 'media']
+type JournalTab = Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes' | 'mood' | 'note'> | 'review' | 'diary' | 'finance' | 'media'
+const TABS: JournalTab[] = ['review', 'diary', 'weight', 'sleep_hours', 'steps', 'finance', 'media']
 const TAB_LABELS: Record<JournalTab, string> = {
   review: 'Week',
+  diary: 'Diary',
   weight: 'Weight',
   sleep_hours: 'Sleep',
   steps: 'Steps',
@@ -78,6 +80,7 @@ const ENTRY_TYPE_LABELS: Partial<Record<JournalEntryType, string>> = {
 // matching the design; the rest take the category hue that fits what they measure.
 const METRIC_HUE: Record<JournalTab, (typeof CATEGORY_STYLES)[keyof typeof CATEGORY_STYLES]> = {
   review: CATEGORY_STYLES.emerald,
+  diary: CATEGORY_STYLES.emerald,
   weight: CATEGORY_STYLES.violet,
   sleep_hours: CATEGORY_STYLES.sky,
   steps: CATEGORY_STYLES.emerald,
@@ -637,8 +640,9 @@ export function Journal() {
   )
 
   // Finance owns its own data and screen; Journal just hands it the tab pills.
-  if (tab === 'finance' || tab === 'media') {
+  if (tab === 'finance' || tab === 'media' || tab === 'diary') {
     const segments = <HeroSegments options={TABS.map((t) => ({ id: t, label: TAB_LABELS[t] }))} value={tab} onChange={setTab} />
+    if (tab === 'diary') return <DiaryList segments={segments} />
     return tab === 'finance' ? <Finance segments={segments} /> : <Media segments={segments} />
   }
 
