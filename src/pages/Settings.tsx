@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { enableNotifications, notificationsEnabled } from '../lib/push'
 import { connectStrava, stravaConnected, handleStravaOAuthRedirect } from '../lib/strava'
-import { localTimeToUTC, utcTimeToLocal, DAY_LABELS } from '../lib/dates'
+import { DAY_LABELS } from '../lib/dates'
 import { ensureDefaultCategories, CATEGORY_STYLES, CATEGORY_COLOR_LABELS } from '../lib/categories'
 import { Screen } from '../components/Screen'
 import { CATEGORY_COLORS } from '../lib/types'
@@ -105,7 +105,7 @@ export function Settings() {
     if (!user) return
     await supabase.from('reminders').insert({
       label: label.trim(),
-      time_of_day: localTimeToUTC(time),
+      time_of_day: time,
       days_of_week: [0, 1, 2, 3, 4, 5, 6],
       user_id: user.id,
       task_id: newReminderTaskId || null,
@@ -203,7 +203,7 @@ export function Settings() {
               <div>
                 <p className="font-medium text-ink">{reminder.label}</p>
                 <p className="text-sm text-ink-disabled">
-                  {utcTimeToLocal(reminder.time_of_day)}
+                  {reminder.time_of_day.slice(0, 5)}
                   {linkedTask && ` — only if "${linkedTask.title}" isn't done`}
                   {reminder.task_id && !linkedTask && ' — linked task no longer active'}
                 </p>

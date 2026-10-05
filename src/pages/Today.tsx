@@ -4,8 +4,6 @@ import { supabase } from '../lib/supabase'
 import {
   todayISO,
   weekStartISO,
-  localTimeToUTC,
-  utcTimeToLocal,
   periodEndISO,
   PERIOD_TYPES,
   DAY_LABELS,
@@ -280,7 +278,7 @@ export function Today() {
     setNewScheduledDate(task.scheduled_date ?? '')
     const reminder = reminders.find((r) => r.task_id === task.id)
     setReminderId(reminder?.id ?? null)
-    setReminderTime(reminder ? utcTimeToLocal(reminder.time_of_day) : '')
+    setReminderTime(reminder ? reminder.time_of_day.slice(0, 5) : '')
     setReminderEnabled(reminder?.enabled ?? true)
     setReminderDays(reminder?.days_of_week ?? [])
     setAddFormOpen(true)
@@ -331,7 +329,7 @@ export function Today() {
           .from('reminders')
           .update({
             label: newTitle.trim(),
-            time_of_day: localTimeToUTC(reminderTime),
+            time_of_day: reminderTime,
             enabled: reminderEnabled,
             days_of_week: finalReminderDays,
           })
@@ -340,7 +338,7 @@ export function Today() {
     } else if (reminderTime) {
       await supabase.from('reminders').insert({
         label: newTitle.trim(),
-        time_of_day: localTimeToUTC(reminderTime),
+        time_of_day: reminderTime,
         days_of_week: finalReminderDays,
         user_id: user.id,
         task_id: taskId,

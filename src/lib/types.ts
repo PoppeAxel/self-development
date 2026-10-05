@@ -95,7 +95,7 @@ export interface Reminder {
   id: string
   user_id: string
   label: string
-  time_of_day: string
+  time_of_day: string // local wall-clock time in `timezone` (default Europe/Stockholm), not UTC
   days_of_week: number[]
   enabled: boolean
   task_id: string | null

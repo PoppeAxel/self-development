@@ -2,6 +2,7 @@
 // Invoked every 15 minutes by pg_cron (see supabase/migrations/0002_cron.sql).
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import webpush from 'npm:web-push@3'
+import { isDue, localParts } from './localTime.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -21,30 +22,22 @@ Deno.serve(async (req) => {
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
 
   const now = new Date()
-  const day = now.getUTCDay()
-  // 15-minute window ending now, so a reminder fires once even if the cron run is a little late/early.
-  const windowStart = new Date(now.getTime() - 15 * 60 * 1000)
-  const hhmm = (d: Date) => d.toISOString().slice(11, 16)
 
-  const { data: reminders, error } = await supabase
-    .from('reminders')
-    .select('*')
-    .eq('enabled', true)
-    .contains('days_of_week', [day])
+  const { data: reminders, error } = await supabase.from('reminders').select('*').eq('enabled', true)
 
   if (error) {
     return new Response(JSON.stringify({ error: error.message }), { status: 500 })
   }
 
-  const dueByTime = (reminders ?? []).filter((r) => {
-    const t = r.time_of_day.slice(0, 5)
-    return t >= hhmm(windowStart) && t <= hhmm(now)
-  })
-
-  // A reminder tied to a task only fires if that task hasn't been completed yet today.
-  const today = now.toISOString().slice(0, 10)
+  // time_of_day/days_of_week are local to each reminder's timezone (0036), so "now" is
+  // worked out per zone — that's what keeps 22:00 at 22:00 across summer/winter time.
   const due = []
-  for (const reminder of dueByTime) {
+  for (const reminder of reminders ?? []) {
+    const local = localParts(now, reminder.timezone)
+    if (!isDue(reminder.time_of_day, reminder.days_of_week, local)) continue
+    // Task/check-in completions are stored under the local date.
+    const today = local.date
+    // A reminder tied to a task only fires if that task hasn't been completed yet today.
     if (reminder.task_id) {
       const { data: completion } = await supabase
         .from('task_completions')
