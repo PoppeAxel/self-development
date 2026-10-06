@@ -30,7 +30,7 @@ import { isGoalMetric, resolveGoalProgress } from '../lib/goals'
 import { ProgressRing } from '../components/ProgressRing'
 import { CATEGORY_STYLES } from '../lib/categories'
 import { THEME } from '../lib/theme'
-import { Screen, HeroSegments, HeroChip } from '../components/Screen'
+import { Screen, HeroSegments, HeroChip, ChipRail } from '../components/Screen'
 import { Finance } from '../components/Finance'
 import { Media } from '../components/Media'
 import { DiaryList } from '../components/DiaryList'
@@ -59,7 +59,16 @@ import type {
 // metric first, which the per-metric tabs can't do.
 // Cardio and Strength live in their own bottom tab, Training (src/components/Training.tsx).
 type JournalTab = Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes' | 'mood' | 'note'> | 'review' | 'diary' | 'finance' | 'media'
-const TABS: JournalTab[] = ['review', 'diary', 'weight', 'sleep_hours', 'steps', 'finance', 'media']
+// Seven pills stopped fitting a phone-width track (design_handoff_journal_tabs), so the
+// hero has two levels: three group segments, then a chip rail with that group's tabs.
+// `tab` stays the single source of truth; the group is derived from it.
+type JournalGroup = 'week' | 'body' | 'life'
+const GROUPS: { id: JournalGroup; label: string; tabs: JournalTab[] }[] = [
+  { id: 'week', label: 'Week', tabs: ['review'] },
+  { id: 'body', label: 'Body', tabs: ['weight', 'sleep_hours', 'steps'] },
+  { id: 'life', label: 'Life', tabs: ['diary', 'finance', 'media'] },
+]
+const groupOf = (t: JournalTab) => GROUPS.find((g) => g.tabs.includes(t))!.id
 const TAB_LABELS: Record<JournalTab, string> = {
   review: 'Week',
   diary: 'Diary',
@@ -86,6 +95,17 @@ const METRIC_HUE: Record<JournalTab, (typeof CATEGORY_STYLES)[keyof typeof CATEG
   steps: CATEGORY_STYLES.emerald,
   finance: CATEGORY_STYLES.amber,
   media: CATEGORY_STYLES.sky,
+}
+
+// The 8px dot on each sub-tab chip. Body's are the handoff frame's values (light enough to
+// read on the pine gradient); Life's use their hue's light tint for the same reason.
+const CHIP_DOT: Partial<Record<JournalTab, string>> = {
+  weight: '#6a4f7a',
+  sleep_hours: '#a9bde0',
+  steps: THEME.pineArc,
+  diary: METRIC_HUE.diary.tint,
+  finance: METRIC_HUE.finance.tint,
+  media: METRIC_HUE.media.tint,
 }
 
 // The Weekly review's six cards, in the order they're drawn. Each carries the same hue its
@@ -216,7 +236,13 @@ function StepsChart({ data, stepGoal, height }: { data: { date: string; value: n
 export function Journal() {
   const [entries, setEntries] = useState<JournalEntry[]>([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<JournalTab>('weight')
+  const [tab, setTabState] = useState<JournalTab>('weight')
+  // Tapping a group reopens the sub-tab you were last on in it (Body → Life → Body = Sleep).
+  const [lastInGroup, setLastInGroup] = useState<Record<JournalGroup, JournalTab>>({ week: 'review', body: 'weight', life: 'diary' })
+  function setTab(t: JournalTab) {
+    setTabState(t)
+    setLastInGroup((l) => ({ ...l, [groupOf(t)]: t }))
+  }
   const [weight, setWeight] = useState('')
   const [sleepHoursPart, setSleepHoursPart] = useState('')
   const [sleepMinutesPart, setSleepMinutesPart] = useState('')
@@ -595,9 +621,26 @@ export function Journal() {
             }
           : null
 
+  const group = groupOf(tab)
+  const segments = (
+    <>
+      <HeroSegments options={GROUPS.map((g) => ({ id: g.id, label: g.label }))} value={group} onChange={(g) => setTab(lastInGroup[g])} />
+      {group !== 'week' && (
+        <div className="mt-3">
+          <ChipRail
+            tone="hero"
+            options={GROUPS.find((g) => g.id === group)!.tabs.map((t) => ({ id: t, label: TAB_LABELS[t], dot: CHIP_DOT[t] }))}
+            value={tab}
+            onChange={setTab}
+          />
+        </div>
+      )}
+    </>
+  )
+
   const hero = (
     <>
-      <HeroSegments options={TABS.map((t) => ({ id: t, label: TAB_LABELS[t] }))} value={tab} onChange={setTab} />
+      {segments}
       {tab === 'review' && (
         <>
           <div className="mt-[18px] flex items-center justify-between gap-2 rounded-[18px] bg-white/14 px-2.5 py-[7px]">
@@ -641,7 +684,6 @@ export function Journal() {
 
   // Finance owns its own data and screen; Journal just hands it the tab pills.
   if (tab === 'finance' || tab === 'media' || tab === 'diary') {
-    const segments = <HeroSegments options={TABS.map((t) => ({ id: t, label: TAB_LABELS[t] }))} value={tab} onChange={setTab} />
     if (tab === 'diary') return <DiaryList segments={segments} />
     return tab === 'finance' ? <Finance segments={segments} /> : <Media segments={segments} />
   }
