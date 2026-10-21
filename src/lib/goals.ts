@@ -104,7 +104,9 @@ export async function rolloverRecurringGoals() {
   const toCreate = [...latestBySeries.values()].filter((g) => g.period_start < currentStartByPeriod[g.period_type])
   if (!toCreate.length) return
 
-  await supabase.from('goals').insert(
+  // Today and Goals both run this on load, so two can race for the same new period. The
+  // (series_id, period_start) unique key makes the loser's row a no-op instead of a double.
+  await supabase.from('goals').upsert(
     toCreate.map((g) => ({
       user_id: g.user_id,
       title: g.title,
@@ -123,6 +125,7 @@ export async function rolloverRecurringGoals() {
       lower_is_better: g.lower_is_better,
       source_exercise: g.source_exercise,
     })),
+    { onConflict: 'series_id,period_start', ignoreDuplicates: true },
   )
 }
 
