@@ -2,10 +2,23 @@ import { Fragment, useEffect, useState } from 'react'
 import { addDays, addMonths, differenceInCalendarDays, format, getISOWeek } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { periodEndISO, periodStartISO } from '../lib/dates'
-import { goalPace, goalSource, goalStyle, isGoalDone, loadMilestoneResults, resolveGoalProgress, rolloverRecurringGoals } from '../lib/goals'
+import {
+  goalMetricInfo,
+  goalPace,
+  goalSource,
+  goalStyle,
+  isGoalDone,
+  isGoalMetric,
+  isOffPace,
+  loadMilestoneResults,
+  resolveGoalProgress,
+  rolloverRecurringGoals,
+} from '../lib/goals'
+import { CATEGORY_STYLES } from '../lib/categories'
 import { coversMonth, formatGoalValue, historyDots, milestoneState, reviewPeriod, suggestRating } from '../lib/checkins'
 import { useNav } from '../contexts/NavContext'
 import { ChipRail, HeroSegments, Screen } from '../components/Screen'
+import { ProgressRing } from '../components/ProgressRing'
 import { GoalForm, type GoalTab } from '../components/GoalForm'
 import { LongTermCheckin, PeriodCheckup, type GoalRow } from '../components/GoalCheckins'
 import type { Category, CheckinRating, Goal, GoalCheckin, PeriodType } from '../lib/types'
@@ -32,6 +45,26 @@ function suggestCheckup(row: GoalRow, periodStart: string): CheckinRating | null
   if (row.done) return 'done'
   return (milestoneState(row.goal, row.results, periodStart).gain ?? 0) > 0 ? 'partly' : 'missed'
 }
+
+const unitOf = (goal: Goal) => (isGoalMetric(goal.auto_metric) ? goalMetricInfo(goal.auto_metric).unit : '')
+/** "1 session", not "1 sessions" — the metric units are all plurals. */
+const unitFor = (goal: Goal, n: number) => {
+  const unit = unitOf(goal)
+  return Math.round(n) === 1 && unit.endsWith('s') ? unit.slice(0, -1) : unit
+}
+// Distance reads better with a decimal (14.3 of 35 km); every other unit is whole.
+const fmtValue = (goal: Goal, n: number) => (goal.auto_metric === 'cardio_km' && n < 100 ? (Math.round(n * 10) / 10).toLocaleString('sv-SE') : fmt(n))
+const goalIcon = (goal: Goal) =>
+  isGoalMetric(goal.auto_metric) ? goalMetricInfo(goal.auto_metric).icon : goal.kind === 'milestone' ? '📈' : goal.target_value == null ? '☑️' : '🎯'
+/** Where the number comes from, e.g. "Gym sessions (Strava)" — the icon tile shows the emoji. */
+const sourceText = (goal: Goal) =>
+  goal.kind === 'number' && isGoalMetric(goal.auto_metric)
+    ? goalMetricInfo(goal.auto_metric).label
+    : goal.kind === 'number' && goal.target_value != null
+      ? 'Counted by hand'
+      : goalSource(goal).replace(/^\P{ASCII}+\s/u, '')
+/** Only number goals have a pace to fall behind; a milestone or a plain to-do is judged at check-up. */
+const offPace = (row: GoalRow) => row.goal.kind === 'number' && row.goal.target_value != null && isOffPace(row.pace, row.done)
 
 function daysLeft(periodType: PeriodType, start: string): number {
   const end = new Date(periodEndISO(periodType, start) + 'T00:00:00')
@@ -183,6 +216,37 @@ export function Goals() {
     await supabase.from('goals').update({ progress, status }).eq('id', goal.id)
   }
 
+  // --- the hero's summary: how far the tab's goals have come, and how many are on pace
+  const scored = tabRows.filter((r) => (r.goal.kind === 'number' && r.goal.target_value != null) || r.goal.target_value == null)
+  const avgPct = scored.length
+    ? (scored.reduce((sum, r) => sum + (r.done ? 1 : r.goal.target_value ? Math.min(1, r.progress / r.goal.target_value) : 0), 0) / scored.length) * 100
+    : 0
+  const behind = tabRows.filter(offPace).length
+  const periodLine =
+    tab === 'long'
+      ? (['year', 'quarter'] as const)
+          .filter((p) => tabRows.some((r) => r.goal.period_type === p))
+          .map((p) => `${p === 'year' ? format(new Date(current.year + 'T00:00:00'), 'yyyy') : `Q${Math.floor(new Date(current.quarter + 'T00:00:00').getMonth() / 3) + 1}`} · ${daysLeft(p, current[p])} days left`)
+          .join(' · ')
+      : `${
+          tab === 'week'
+            ? `Week ${getISOWeek(new Date(current.week + 'T00:00:00'))} · ${format(new Date(current.week + 'T00:00:00'), 'd')}–${format(new Date(periodEndISO('week', current.week) + 'T00:00:00'), 'd MMM')}`
+            : format(today, 'MMMM')
+        } · ${daysLeft(tab, current[tab]) === 0 ? 'last day' : `${daysLeft(tab, current[tab])} days left`}`
+  const summary = (
+    <div className="mt-3.5 flex items-center gap-3.5">
+      <ProgressRing percent={avgPct} size={58} strokeWidth={6} color="#fff" trackColor="rgba(255,255,255,.2)">
+        <span className="text-[13px] font-semibold text-white">{Math.round(avgPct)}%</span>
+      </ProgressRing>
+      <div className="min-w-0 flex-1">
+        <p className="text-[17px] font-semibold text-white">
+          {behind === 0 ? `All ${tabRows.length} on track` : `${tabRows.length - behind} of ${tabRows.length} on track`}
+        </p>
+        <p className="mt-0.5 truncate text-xs font-medium text-white/75">{periodLine}</p>
+      </div>
+    </div>
+  )
+
   const hero = (
     <>
       <HeroSegments
@@ -197,6 +261,7 @@ export function Goals() {
           setLabel('all')
         }}
       />
+      {!loading && tabRows.length > 0 && summary}
       {!loading && due && (
         <div className="mt-3 flex items-center gap-2.5 rounded-2xl bg-white/14 py-2.5 pr-2.5 pl-3.5">
           <span className="min-w-0 flex-1 text-[13px] font-medium text-white">
@@ -213,12 +278,123 @@ export function Goals() {
     </>
   )
 
+  // ------------------------------------------------------------------ goal card
+  // One card for every number goal (quarter, month, week) and every week/month goal: an
+  // icon tile in the label's colour, a pace verdict, the number big with its unit, a bar
+  // with today's pace tick, and — on week/month goals — the last few periods as dots.
+  function goalCard(row: GoalRow, history: boolean) {
+    const { goal, progress, pace, done } = row
+    const style = goalStyle(goal, categoryById)
+    const target = goal.target_value
+    const hasBar = goal.kind === 'number' && target != null
+    const manual = hasBar && !goal.auto_metric
+    const dots = history ? historyDots(all.filter((g) => g.series_id === goal.series_id && g.period_type === goal.period_type), checkins, goal.period_start) : []
+
+    let pill: { label: string; bg: string; fg: string } | null = null
+    if (done && target != null) pill = { label: 'Done ✓', bg: CATEGORY_STYLES.emerald.tint, fg: CATEGORY_STYLES.emerald.ink }
+    else if (hasBar && pace.started && pace.delta != null) {
+      const amount = Math.abs(pace.delta)
+      const unit = unitFor(goal, amount)
+      // Outside the 5% band but rounding to nothing ("0 sessions ahead") reads as on pace.
+      pill = pace.onPace || fmtValue(goal, amount) === '0'
+        ? { label: 'On pace', bg: CATEGORY_STYLES.emerald.tint, fg: CATEGORY_STYLES.emerald.ink }
+        : pace.delta > 0
+          ? { label: `${fmtValue(goal, amount)}${unit ? ` ${unit}` : ''} ahead`, bg: CATEGORY_STYLES.emerald.tint, fg: CATEGORY_STYLES.emerald.ink }
+          : { label: `${fmtValue(goal, amount)}${unit ? ` ${unit}` : ''} behind`, bg: CATEGORY_STYLES.amber.tint, fg: CATEGORY_STYLES.amber.ink }
+    }
+
+    let side: React.ReactNode = null
+    if (target == null) side = <Circle done={done} color={style.check} onClick={() => toggleDone(goal)} size={28} />
+    else if (goal.kind === 'milestone')
+      side = (
+        <span className="shrink-0 text-sm font-semibold" style={{ color: style.ink }}>
+          {row.results.length ? formatGoalValue(goal, progress) : '—'} / {formatGoalValue(goal, target)}
+        </span>
+      )
+
+    let line: string | null = null
+    if (hasBar && !done) {
+      const remaining = Math.max(0, target - progress)
+      line = `${fmtValue(goal, remaining)}${unitOf(goal) ? ` ${unitFor(goal, remaining)}` : ''} to go`
+      if ((goal.period_type === 'quarter' || goal.period_type === 'year') && pace.started && pace.projected != null && progress > 0)
+        line += ` · heading for ${fmtValue(goal, pace.projected)}`
+    }
+
+    return (
+      <div
+        key={goal.id}
+        role="button"
+        onClick={() => openGoalDetail(goal.id)}
+        className="flex cursor-pointer flex-col gap-2.5 rounded-[20px] border border-line bg-surface px-[15px] py-[13px] shadow-card"
+      >
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] text-lg" style={{ background: style.tint }}>
+            {goalIcon(goal)}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className={`line-clamp-2 text-[15px] font-semibold leading-snug ${done ? 'text-ink-disabled line-through' : 'text-ink'}`}>{goal.title}</p>
+            <p className="truncate text-[11px] font-medium text-ink-muted">{sourceText(goal)}</p>
+          </div>
+          {pill && (
+            <span className="shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold" style={{ background: pill.bg, color: pill.fg }}>
+              {pill.label}
+            </span>
+          )}
+          {side}
+        </div>
+        {hasBar && (
+          <>
+            <div className="flex items-end justify-between gap-2">
+              <span className="text-[22px] font-semibold leading-none" style={{ color: style.ink }}>
+                {fmtValue(goal, progress)}
+                <span className="text-[13px] font-medium text-ink-muted">
+                  {' '}
+                  / {fmtValue(goal, target)}
+                  {unitOf(goal) ? ` ${unitOf(goal)}` : ''}
+                </span>
+              </span>
+              {manual ? (
+                <span className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                  <button onClick={() => bump(goal, -1)} aria-label="Less" className="flex h-8 w-8 items-center justify-center rounded-full bg-[#efe9dc] font-semibold text-ink-3">
+                    −
+                  </button>
+                  <button onClick={() => bump(goal, 1)} aria-label="More" className="flex h-8 w-8 items-center justify-center rounded-full font-semibold text-white" style={{ background: style.check }}>
+                    +
+                  </button>
+                </span>
+              ) : null}
+            </div>
+            <div className="relative h-2 rounded-full bg-[#ece5d7]">
+              <span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${Math.min(100, (progress / target) * 100)}%`, background: style.accent }} />
+              {!done && pace.started && (
+                <span className="absolute -top-[3px] -bottom-[3px] w-0.5 rounded-sm bg-ink/70" style={{ left: `${pace.elapsedFraction * 100}%` }} />
+              )}
+            </div>
+          </>
+        )}
+        {(line || dots.length > 0) && (
+          <div className="flex items-center justify-between gap-3">
+            <span className="min-w-0 truncate text-[11px] font-medium text-ink-2">{line}</span>
+            {dots.length > 0 && (
+              <span className="flex shrink-0 gap-[3px]" title={`Last ${dots.length} ${goal.period_type}s`}>
+                {dots.map((d, i) => (
+                  <span key={i} className="h-2 w-2 rounded-[3px]" style={d === 'missed' ? { background: MISSED } : { background: style.accent, opacity: DOT[d] }} />
+                ))}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   // ------------------------------------------------------------------ long-term cards (3a)
   function longCard(row: GoalRow) {
     const { goal, progress, pace, done } = row
     const style = goalStyle(goal, categoryById)
     const labelName = goal.category_id ? (categoryById.get(goal.category_id)?.name ?? 'General') : 'General'
     const edge = <span className="w-[5px] shrink-0 self-stretch" style={{ background: style.accent }} />
+    if (goal.kind === 'number' && goal.target_value != null) return goalCard(row, false)
 
     if (goal.kind === 'done') {
       return (
@@ -308,75 +484,34 @@ export function Goals() {
     )
   }
 
-  // ------------------------------------------------------------------ week / month rows (3b)
-  function periodRow(row: GoalRow, last: boolean) {
-    const { goal, progress, done } = row
-    const style = goalStyle(goal, categoryById)
-    const series = all.filter((g) => g.series_id === goal.series_id && g.period_type === goal.period_type)
-    const dots = historyDots(series, checkins, goal.period_start)
-    let control: React.ReactNode
-    if (goal.target_value == null) control = <Circle done={done} color={style.check} onClick={() => toggleDone(goal)} size={28} />
-    else if (goal.auto_metric)
-      control = (
-        <span className="shrink-0 text-right">
-          <span className="block text-sm font-semibold" style={{ color: style.ink }}>
-            {goal.kind === 'milestone'
-              ? `${row.results.length ? formatGoalValue(goal, progress) : '—'} / ${formatGoalValue(goal, goal.target_value)}`
-              : `${fmt(progress)} / ${fmt(goal.target_value)}`}
-          </span>
-          <span className="block text-[9px] font-medium text-ink-muted">{goalSource(goal)}</span>
-        </span>
-      )
-    else
-      control = (
-        <span className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => bump(goal, -1)} aria-label="Less" className="flex h-7 w-7 items-center justify-center rounded-full bg-[#efe9dc] font-semibold text-ink-3">
-            −
-          </button>
-          <span className="text-sm font-semibold" style={{ color: style.ink }}>
-            {fmt(progress)}/{fmt(goal.target_value)}
-          </span>
-          <button onClick={() => bump(goal, 1)} aria-label="More" className="flex h-7 w-7 items-center justify-center rounded-full font-semibold text-white" style={{ background: style.check }}>
-            +
-          </button>
-        </span>
-      )
-    return (
-      <Fragment key={goal.id}>
-        <div onClick={() => openGoalDetail(goal.id)} className={`flex cursor-pointer items-center gap-3 px-[15px] ${last ? 'pt-[9px] pb-3' : 'py-[9px]'}`}>
-          <div className="min-w-0 flex-1">
-            <p className={`text-sm font-semibold ${done ? 'text-ink-disabled line-through' : 'text-ink'}`}>{goal.title}</p>
-            {dots.length > 0 && (
-              <div className="mt-1.5 flex gap-[3px]">
-                {dots.map((d, i) => (
-                  <span key={i} className="h-2 w-2 rounded-[3px]" style={d === 'missed' ? { background: MISSED } : { background: style.accent, opacity: DOT[d] }} />
-                ))}
-              </div>
-            )}
-          </div>
-          {control}
-        </div>
-        {!last && <span className="mx-[15px] block h-px bg-line" />}
-      </Fragment>
-    )
-  }
-
+  // ------------------------------------------------------------------ week / month (3b)
   function periodTab(periodType: 'week' | 'month') {
-    const start = current[periodType]
-    const left = daysLeft(periodType, start)
     const groups = [...categories.map((c) => c.id), 'none']
       .map((key) => ({ key, rows: visible.filter((r) => labelKey(r.goal) === key) }))
       .filter((g) => g.rows.length > 0)
+    const anyHistory = visible.some((r) => all.some((g) => g.series_id === r.goal.series_id && g.period_start < r.goal.period_start))
     return (
       <>
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs font-semibold text-ink-3">
-            {periodType === 'week'
-              ? `${format(new Date(start + 'T00:00:00'), 'd MMM')} – ${format(new Date(periodEndISO('week', start) + 'T00:00:00'), 'd MMM')}`
-              : format(new Date(start + 'T00:00:00'), 'MMMM')}{' '}
-            · {left === 0 ? 'last day' : `${left} day${left === 1 ? '' : 's'} left`}
-          </span>
-          <span className="flex shrink-0 items-center gap-2.5 text-[10px] font-medium text-ink-muted">
+        {groups.length === 0 && <p className="text-sm text-ink-disabled">No goals for this {periodType} yet.</p>}
+        {groups.map(({ key, rows }) => {
+          const style = goalStyle({ category_id: key === 'none' ? null : key }, categoryById)
+          const name = key === 'none' ? 'GENERAL' : (categoryById.get(key)?.name ?? '').toUpperCase()
+          return (
+            <div key={key} className="flex flex-col gap-2.5">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full" style={{ background: style.accent }} />
+                <span className="text-[11px] font-semibold tracking-[0.07em]" style={{ color: style.ink }}>
+                  {name}
+                </span>
+                <span className="h-px flex-1 bg-line-strong" />
+              </div>
+              {rows.map((r) => goalCard(r, true))}
+            </div>
+          )
+        })}
+        {anyHistory && (
+          <span className="flex items-center justify-center gap-3 text-[10px] font-medium text-ink-muted">
+            <span>Past {periodType}s:</span>
             {(['done', 'partly', 'missed'] as const).map((d) => (
               <span key={d} className="flex items-center gap-1">
                 <span className="h-2 w-2 rounded-[3px]" style={d === 'missed' ? { background: MISSED } : { background: '#58534a', opacity: DOT[d] }} />
@@ -384,23 +519,7 @@ export function Goals() {
               </span>
             ))}
           </span>
-        </div>
-        {groups.length === 0 && <p className="text-sm text-ink-disabled">No goals for this {periodType} yet.</p>}
-        {groups.map(({ key, rows }) => {
-          const style = goalStyle({ category_id: key === 'none' ? null : key }, categoryById)
-          const name = key === 'none' ? 'GENERAL' : (categoryById.get(key)?.name ?? '').toUpperCase()
-          return (
-            <div key={key} className="overflow-hidden rounded-[20px] border border-line bg-surface shadow-card">
-              <div className="flex items-center gap-[7px] px-[15px] pt-[11px] pb-1">
-                <span className="h-2 w-2 rounded-full" style={{ background: style.accent }} />
-                <span className="text-[11px] font-semibold tracking-[0.06em]" style={{ color: style.ink }}>
-                  {name}
-                </span>
-              </div>
-              {rows.map((r, i) => periodRow(r, i === rows.length - 1))}
-            </div>
-          )
-        })}
+        )}
       </>
     )
   }
@@ -421,7 +540,7 @@ export function Goals() {
               {p === 'year' ? format(new Date(start + 'T00:00:00'), 'yyyy') : `Q${Math.floor(new Date(start + 'T00:00:00').getMonth() / 3) + 1}`}
             </span>
             <span className="text-[11px] font-medium text-ink-disabled">
-              {plural(rows.length)} · {daysLeft(p, start)} days left
+              {plural(rows.length)}
             </span>
             <span className="h-px flex-1 bg-line-strong" />
           </div>
