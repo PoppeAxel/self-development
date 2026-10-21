@@ -189,6 +189,18 @@ export function matchesSearch(name: string, query: string): boolean {
   return words.every((w) => wordMatches(normalizedName, w))
 }
 
+/**
+ * How well a name that already passes matchesSearch fits the query, lower is better:
+ * the name starts with it (0), a later word in the name does (1), it's somewhere inside (2).
+ * Lets a half-typed "kv" put Kvarg above Ost, kvarg & bär.
+ */
+export function searchRank(name: string, query: string): number {
+  const q = foldDiacritics(query.toLowerCase()).trim()
+  const n = foldDiacritics(name.toLowerCase())
+  if (!q || n.startsWith(q)) return 0
+  return n.split(/[\s,()/-]+/).some((w) => w.startsWith(q)) ? 1 : 2
+}
+
 // --- Livsmedelsverket (Swedish Food Agency) open food-composition API ---
 // Free, no API key, CORS-open. https://dataportal.livsmedelsverket.se/livsmedel
 // License: CC BY 4.0 — "Livsmedelsverket" must be credited as the source (see Settings).

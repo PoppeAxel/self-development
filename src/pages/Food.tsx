@@ -17,6 +17,7 @@ import {
   fetchOpenFoodFactsProduct,
   defaultMealTypeForNow,
   matchesSearch,
+  searchRank,
   mealUsuals,
   relativeDayLabel,
   MEAL_LOOK,
@@ -167,6 +168,7 @@ export function Food() {
   const [expandedMeal, setExpandedMeal] = useState<MealType | null>(null)
   const [addLogOpen, setAddLogOpen] = useState(false)
   const [addLogQuery, setAddLogQuery] = useState('')
+  const [addLogFilter, setAddLogFilter] = useState<'all' | 'recipe' | 'ingredient'>('all')
   // entryId set means this is editing an existing food_log_entries row (update) rather
   // than logging a new one (insert) — same dialog, same fields, different save target.
   // True once the ⌨ cell is tapped — the numeric field is hidden behind it, since the
@@ -224,7 +226,7 @@ export function Food() {
   // 'recipe' means this ingredient is being created from inside the recipe builder's
   // ingredient picker (pickingIngredientFor already holds which row/slot it's for) — on
   // save it gets auto-added to that recipe row instead of just returning to the library.
-  const [ingredientFormOrigin, setIngredientFormOrigin] = useState<'library' | 'recipe'>('library')
+  const [ingredientFormOrigin, setIngredientFormOrigin] = useState<'library' | 'recipe' | 'log'>('library')
   const [editingIngredient, setEditingIngredient] = useState<Ingredient | null>(null)
   const [ingredientForm, setIngredientForm] = useState<IngredientFormState>(emptyIngredientForm())
   const [ingredientFormMode, setIngredientFormMode] = useState<'manual' | 'search'>('manual')
@@ -291,6 +293,7 @@ export function Food() {
 
   function openAddLog() {
     setAddLogQuery('')
+    setAddLogFilter('all')
     setAddLogOpen(true)
   }
 
@@ -578,8 +581,44 @@ export function Food() {
     )
   }
 
-  const matchingRecipes = recipes.filter((r) => matchesSearch(r.name, addLogQuery))
-  const matchingIngredients = ingredients.filter((i) => matchesSearch(i.name, addLogQuery))
+  // The add-food sheet is one list, not a recipes block then an ingredients block: names
+  // that start with what you typed come first, then whatever you log most, so the thing
+  // you meant is at the top whichever kind it is. With no query it's everything, most-used first.
+  const addLogResults = [
+    ...(addLogFilter === 'ingredient' ? [] : recipes).map((r) => ({
+      kind: 'recipe' as const,
+      id: r.id,
+      name: r.name,
+      used: counts.byRecipe.get(r.id) ?? 0,
+    })),
+    ...(addLogFilter === 'recipe' ? [] : ingredients).map((i) => ({
+      kind: 'ingredient' as const,
+      id: i.id,
+      name: i.name,
+      used: counts.byIngredient.get(i.id) ?? 0,
+    })),
+  ]
+    .filter((r) => matchesSearch(r.name, addLogQuery))
+    .sort(
+      (a, b) =>
+        searchRank(a.name, addLogQuery) - searchRank(b.name, addLogQuery) || b.used - a.used || a.name.localeCompare(b.name),
+    )
+
+  // "Can't find it?" from the add-food sheet: make the ingredient, then land straight in
+  // the quantity sheet for the meal you were adding to (see the 'log' origin in
+  // saveIngredientNow) instead of a detour through Library and back.
+  function newIngredientFromLog(mode: 'manual' | 'search' | 'scan') {
+    const q = addLogQuery.trim()
+    setAddLogOpen(false)
+    openNewIngredient('log')
+    if (mode === 'manual') setIngredientForm((f) => ({ ...f, name: q }))
+    if (mode === 'search') {
+      setIngredientFormMode('search')
+      setLsvQuery(q)
+      if (q) runLsvSearch(q)
+    }
+    if (mode === 'scan') setScannerOpen(true)
+  }
 
   // --- Recipe builder ---
 
@@ -814,7 +853,7 @@ export function Food() {
 
   // --- Ingredient library ---
 
-  function openNewIngredient(origin: 'library' | 'recipe' = 'library') {
+  function openNewIngredient(origin: 'library' | 'recipe' | 'log' = 'library') {
     setEditingIngredient(null)
     setIngredientForm(emptyIngredientForm())
     setIngredientFormMode('manual')
@@ -844,8 +883,8 @@ export function Food() {
     setIngredientFormOpen(true)
   }
 
-  async function runLsvSearch() {
-    const q = lsvQuery.trim()
+  async function runLsvSearch(query = lsvQuery) {
+    const q = query.trim()
     if (!q) return
     setLsvSearching(true)
     const results = await searchLivsmedelsverket(q)
@@ -955,6 +994,17 @@ export function Food() {
         .select()
         .single()
       if (!error && data) addIngredientToRecipe(data)
+    } else if (ingredientFormOrigin === 'log') {
+      // Created from the add-food sheet's "Can't find it?" — go on to log it right away.
+      const { data, error } = await supabase
+        .from('ingredients')
+        .insert({ ...payload, source: 'manual', user_id: user.id })
+        .select()
+        .single()
+      if (!error && data) {
+        setIngredients((is) => [...is, data])
+        beginQuantify('ingredient', data.id, data.name)
+      }
     } else {
       await supabase.from('ingredients').insert({ ...payload, source: 'manual', user_id: user.id })
     }
@@ -1141,6 +1191,27 @@ export function Food() {
             })}
           </div>
 
+          {/* Search sits right under the strip, always visible, so something you haven't
+              logged for this meal before is one tap away rather than behind the usuals. */}
+          <div className="flex shrink-0 gap-2">
+            <button
+              onClick={openAddLog}
+              className="flex min-w-0 flex-1 items-center gap-2.5 rounded-[18px] border border-line bg-surface px-3.5 py-3 text-left shadow-card"
+            >
+              <span className="shrink-0 text-sm">🔍</span>
+              <span className="truncate text-[13px] font-medium text-ink-muted">
+                Search food for {MEAL_TYPE_INFO[selectedMeal].label.toLowerCase()}
+              </span>
+            </button>
+            <button
+              onClick={() => newIngredientFromLog('scan')}
+              aria-label="Scan barcode"
+              className="flex w-[48px] shrink-0 items-center justify-center rounded-[18px] border border-line bg-surface text-base shadow-card"
+            >
+              📷
+            </button>
+          </div>
+
           {loading ? (
             <p className="text-sm text-ink-disabled">Loading…</p>
           ) : expandedMeal ? (
@@ -1258,79 +1329,59 @@ export function Food() {
                         </button>
                       )
                     })}
-                    <button
-                      onClick={openAddLog}
-                      aria-label="Search all food"
-                      className="flex shrink-0 items-center rounded-2xl border border-line bg-surface px-[11px] py-[7px] text-xs font-medium text-ink-3"
-                    >
-                      ›
-                    </button>
                   </div>
                 </>
               )}
 
-              <div className="flex shrink-0 flex-col gap-[9px]">
-                <div className="flex items-center gap-2.5">
-                  <span className="text-[10px] font-semibold tracking-[0.07em] text-ink-muted">
-                    MOST-LOGGED {MEAL_TYPE_INFO[selectedMeal].label.toUpperCase()}S
-                  </span>
-                  <span className="h-px flex-1 bg-line-strong" />
-                </div>
-                <div className="grid grid-cols-2 gap-[9px]">
-                  {usuals.frequent.map((usual) => {
-                    const look = MEAL_LOOK[selectedMeal]
-                    const amount =
-                      usual.ref.kind === 'recipe'
-                        ? `${usual.quantity} serving${usual.quantity === 1 ? '' : 's'}`
-                        : `${round(usual.quantity)} g`
-                    return (
-                      <button
-                        key={`${usual.ref.kind}:${usual.ref.id}`}
-                        onClick={() => beginQuantify(usual.ref.kind, usual.ref.id, usual.name, usual.quantity)}
-                        className="flex flex-col gap-1 rounded-[18px] border border-line bg-surface px-[13px] py-[11px] text-left shadow-card"
-                      >
-                        <span className="line-clamp-2 text-[13px] font-semibold leading-tight text-ink">{usual.name}</span>
-                        <span className="text-[10px] font-medium text-ink-muted">
-                          {amount} · {round(usual.kcal)} kcal
-                        </span>
-                        <span className="mt-0.5 flex items-center justify-between">
-                          <span className="text-[9px] font-semibold" style={{ color: look.accent }}>
-                            {usual.count}×
-                          </span>
-                          <span
-                            className="flex h-7 w-7 items-center justify-center rounded-full text-[15px] font-semibold"
-                            style={{ background: look.tint, color: look.ink }}
-                          >
-                            +
-                          </span>
-                        </span>
-                      </button>
-                    )
-                  })}
-
-                  {/* Search and the scanner live in the grid's last cell — no separate
-                      action row, which is what keeps the six tiles above the fold. */}
-                  <div className="flex flex-col justify-center gap-[5px] rounded-[18px] border border-dashed border-line-strong bg-surface px-[13px] py-[11px]">
-                    <button onClick={openAddLog} className="text-left text-[13px] font-semibold text-pine">
-                      🔍 Search all
-                    </button>
-                    <span className="text-[10px] font-medium text-ink-muted">
-                      {recipes.length} recipe{recipes.length === 1 ? '' : 's'} · {ingredients.length} item
-                      {ingredients.length === 1 ? '' : 's'}
+              {usuals.frequent.length > 0 && (
+                <div className="flex shrink-0 flex-col gap-[9px]">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-[10px] font-semibold tracking-[0.07em] text-ink-muted">
+                      MOST-LOGGED {MEAL_TYPE_INFO[selectedMeal].label.toUpperCase()}S
                     </span>
-                    <button
-                      onClick={() => {
-                        setScanLookupError(null)
-                        openNewIngredient('library')
-                        setScannerOpen(true)
-                      }}
-                      className="mt-0.5 text-left text-[10px] font-semibold text-pine"
-                    >
-                      📷 Scan barcode
-                    </button>
+                    <span className="h-px flex-1 bg-line-strong" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-[9px]">
+                    {usuals.frequent.map((usual) => {
+                      const look = MEAL_LOOK[selectedMeal]
+                      const amount =
+                        usual.ref.kind === 'recipe'
+                          ? `${usual.quantity} serving${usual.quantity === 1 ? '' : 's'}`
+                          : `${round(usual.quantity)} g`
+                      return (
+                        <button
+                          key={`${usual.ref.kind}:${usual.ref.id}`}
+                          onClick={() => beginQuantify(usual.ref.kind, usual.ref.id, usual.name, usual.quantity)}
+                          className="flex flex-col gap-1 rounded-[18px] border border-line bg-surface px-[13px] py-[11px] text-left shadow-card"
+                        >
+                          <span className="line-clamp-2 text-[13px] font-semibold leading-tight text-ink">{usual.name}</span>
+                          <span className="text-[10px] font-medium text-ink-muted">
+                            {amount} · {round(usual.kcal)} kcal
+                          </span>
+                          <span className="mt-0.5 flex items-center justify-between">
+                            <span className="text-[9px] font-semibold" style={{ color: look.accent }}>
+                              {usual.count}×
+                            </span>
+                            <span
+                              className="flex h-7 w-7 items-center justify-center rounded-full text-[15px] font-semibold"
+                              style={{ background: look.tint, color: look.ink }}
+                            >
+                              +
+                            </span>
+                          </span>
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
-              </div>
+              )}
+
+              {usuals.recent.length === 0 && usuals.frequent.length === 0 && (
+                <p className="shrink-0 px-1 text-[13px] text-ink-muted">
+                  Nothing logged for {MEAL_TYPE_INFO[selectedMeal].label.toLowerCase()} yet — search above, and what you log here
+                  will show up as one-tap suggestions next time.
+                </p>
+              )}
             </>
           )}
 
@@ -1798,67 +1849,128 @@ export function Food() {
           )
         })()}
 
-      {/* Add to log */}
-      {addLogOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
-          <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-ink">Add food</h2>
-            <button onClick={() => setAddLogOpen(false)} className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2">
-              Close ✕
-            </button>
-          </div>
-          <div className="p-4">
-            <input
-              autoFocus
-              value={addLogQuery}
-              onChange={(e) => setAddLogQuery(e.target.value)}
-              placeholder="Search recipes and ingredients"
-              className="w-full rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
-            />
-          </div>
-          <div className="flex-1 overflow-y-auto px-4 pb-4">
-            {matchingRecipes.length > 0 && (
-              <>
-                <h3 className="mb-1 text-xs font-semibold uppercase text-ink-disabled">Recipes</h3>
-                <div className="mb-3 flex flex-col gap-2">
-                  {matchingRecipes.map((r) => (
-                    <button
-                      key={r.id}
-                      onClick={() => beginQuantify('recipe', r.id, r.name)}
-                      className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 text-left shadow-card"
-                    >
-                      <span className="font-medium text-ink">{r.name}</span>
-                      <span className="text-xs text-ink-disabled">
-                        {round(recipePerServingMacros(r, recipeLines.get(r.id) ?? [], ingredientsById).kcal)} kcal/serving
+      {/* Add to log — one ranked list across recipes and ingredients, headed by the meal
+          it adds to, and never a dead end: "Can't find it?" makes the ingredient from here. */}
+      {addLogOpen &&
+        (() => {
+          const look = MEAL_LOOK[selectedMeal]
+          const q = addLogQuery.trim()
+          const notFound = (
+            <div className="flex flex-col gap-1.5 rounded-[20px] border border-dashed border-line-strong bg-surface p-3.5">
+              <span className="text-[13px] font-semibold text-ink">
+                {addLogResults.length === 0 && q ? `Nothing called “${q}” yet` : "Can't find it?"}
+              </span>
+              <button onClick={() => newIngredientFromLog('search')} className="text-left text-[13px] font-semibold text-pine">
+                🔎 Search Livsmedelsverket{q ? ` for “${q}”` : ''}
+              </button>
+              <button onClick={() => newIngredientFromLog('scan')} className="text-left text-[13px] font-semibold text-pine">
+                📷 Scan a barcode
+              </button>
+              <button onClick={() => newIngredientFromLog('manual')} className="text-left text-[13px] font-semibold text-pine">
+                ✎ {q ? `Create “${q}” with your own numbers` : 'Create an ingredient with your own numbers'}
+              </button>
+              <span className="text-[10px] font-medium text-ink-muted">
+                Saved to your library, then straight on to logging it for {MEAL_TYPE_INFO[selectedMeal].label.toLowerCase()}.
+              </span>
+            </div>
+          )
+          return (
+            <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
+              <div className="flex items-center justify-between gap-3 px-4 pt-4">
+                <span className="flex min-w-0 flex-col">
+                  <span className="text-[11px] font-semibold tracking-[0.07em]" style={{ color: look.accent }}>
+                    {logDate === todayISO() ? 'TODAY' : format(new Date(logDate + 'T00:00:00'), 'EEE d MMM').toUpperCase()}
+                  </span>
+                  <h2 className="truncate text-lg font-bold text-ink">
+                    {look.icon} Add to {MEAL_TYPE_INFO[selectedMeal].label.toLowerCase()}
+                  </h2>
+                </span>
+                <button onClick={() => setAddLogOpen(false)} className="shrink-0 rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2">
+                  Close ✕
+                </button>
+              </div>
+              <div className="flex flex-col gap-2.5 px-4 pt-3 pb-3">
+                <div className="flex items-center gap-2.5 rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 focus-within:border-pine">
+                  <span className="shrink-0 text-sm">🔍</span>
+                  <input
+                    autoFocus
+                    value={addLogQuery}
+                    onChange={(e) => setAddLogQuery(e.target.value)}
+                    placeholder="Search recipes and ingredients"
+                    className="min-w-0 flex-1 bg-transparent text-ink placeholder-ink-disabled outline-none"
+                  />
+                  {addLogQuery && (
+                    <button onClick={() => setAddLogQuery('')} aria-label="Clear search" className="shrink-0 text-sm text-ink-faint">
+                      ✕
+                    </button>
+                  )}
+                </div>
+                <ChipRail
+                  options={[
+                    { id: 'all', label: 'All' },
+                    { id: 'recipe', label: `Recipes · ${recipes.length}` },
+                    { id: 'ingredient', label: `Ingredients · ${ingredients.length}` },
+                  ]}
+                  value={addLogFilter}
+                  onChange={setAddLogFilter}
+                />
+              </div>
+              <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-4 pb-4">
+                {addLogResults.length === 0 && q ? (
+                  notFound
+                ) : (
+                  <>
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-[10px] font-semibold tracking-[0.07em] text-ink-muted">
+                        {q ? `${addLogResults.length} MATCH${addLogResults.length === 1 ? '' : 'ES'}` : 'MOST-LOGGED FIRST'}
                       </span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-            {matchingIngredients.length > 0 && (
-              <>
-                <h3 className="mb-1 text-xs font-semibold uppercase text-ink-disabled">Ingredients</h3>
-                <div className="flex flex-col gap-2">
-                  {matchingIngredients.map((i) => (
-                    <button
-                      key={i.id}
-                      onClick={() => beginQuantify('ingredient', i.id, i.name)}
-                      className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 text-left shadow-card"
-                    >
-                      <span className="font-medium text-ink">{i.name}</span>
-                      <span className="text-xs text-ink-disabled">{i.kcal_per_100g} kcal/100g</span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-            {matchingRecipes.length === 0 && matchingIngredients.length === 0 && (
-              <p className="text-sm text-ink-disabled">No matches — add a new ingredient or recipe from the Recipes/Library tabs first.</p>
-            )}
-          </div>
-        </div>
-      )}
+                      <span className="h-px flex-1 bg-line-strong" />
+                    </div>
+                    {addLogResults.map((r) => {
+                      const recipe = r.kind === 'recipe' ? recipesById.get(r.id) : null
+                      const ingredient = r.kind === 'ingredient' ? ingredientsById.get(r.id) : null
+                      const glyph = recipe
+                        ? recipe.meal_type
+                          ? MEAL_TYPE_INFO[recipe.meal_type].icon
+                          : '🍽'
+                        : categoryLook(ingredient?.category ?? UNCATEGORIZED).glyph
+                      const caption = recipe
+                        ? `Recipe · ${round(recipeMacros(recipe).kcal)} kcal/serving`
+                        : ingredient
+                          ? `${ingredient.kcal_per_100g} kcal/100g${
+                              ingredient.portion_label && ingredient.portion_grams
+                                ? ` · 1 ${ingredient.portion_label} = ${ingredient.portion_grams}g`
+                                : ''
+                            }`
+                          : ''
+                      return (
+                        <button
+                          key={`${r.kind}:${r.id}`}
+                          onClick={() => logFromList(r.kind, r.id, r.name)}
+                          className="flex items-center gap-3 rounded-[18px] border border-line bg-surface py-2.5 pr-3 pl-2.5 text-left shadow-card"
+                        >
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-track text-base">{glyph}</span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium text-ink">{r.name}</span>
+                            <span className="block truncate text-[11px] text-ink-muted">{caption}</span>
+                          </span>
+                          {r.used > 0 && <span className="shrink-0 text-[10px] font-semibold text-ink-muted">{r.used}×</span>}
+                          <span
+                            className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full text-[15px] font-semibold"
+                            style={{ background: look.tint, color: look.ink }}
+                          >
+                            +
+                          </span>
+                        </button>
+                      )
+                    })}
+                    <div className="mt-2">{notFound}</div>
+                  </>
+                )}
+              </div>
+            </div>
+          )
+        })()}
 
       {/* Quantity sheet — presets rather than a keypad, because almost every log is one
           of four amounts. The ⌨ cell is the escape for the rest. */}
@@ -2409,7 +2521,7 @@ export function Food() {
                     placeholder="e.g. kycklingfilé"
                     className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
                   />
-                  <button onClick={runLsvSearch} className="shrink-0 rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white">
+                  <button onClick={() => runLsvSearch()} className="shrink-0 rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white">
                     Search
                   </button>
                 </div>
