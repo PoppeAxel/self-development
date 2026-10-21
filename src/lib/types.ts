@@ -20,6 +20,8 @@ export interface DailyTask {
   auto_metric_target: number | null
   recurring: boolean
   scheduled_date: string | null
+  /** Weekdays a recurring task repeats on (0 = Sunday); null = every day. */
+  repeat_days: number[] | null
 }
 
 export interface TaskCompletion {

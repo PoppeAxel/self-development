@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { format, addDays, subDays, getDay } from 'date-fns'
+import { useEffect, useRef, useState } from 'react'
+import { format, addDays, getDay } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import {
   todayISO,
@@ -12,8 +12,6 @@ import {
   rolloverRecurringGoals,
   goalPace,
   isGoalDone,
-  isGoalMetric,
-  goalMetricInfo,
   paceVerdict,
   resolveGoalProgress,
   type GoalPace,
@@ -29,6 +27,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { MorningCheckIn } from '../components/MorningCheckIn'
 import { DailyCheckin } from '../components/DailyCheckin'
 import { checkinDateISO } from '../lib/dailyCheckin'
+import { WEEK_ORDER, XP_PER_TASK, habitHistory, isScheduledOn, levelFor, repeatLabel } from '../lib/planner'
 import type { Category, DailyTask, Goal, Reminder, RecipeIngredient } from '../lib/types'
 
 // A task whose auto_metric is this sentinel auto-completes off today's Food-log total
@@ -36,6 +35,19 @@ import type { Category, DailyTask, Goal, Reminder, RecipeIngredient } from '../l
 // grows toward a floor), it's a ceiling: done means "at or under budget," so it can
 // un-complete itself later in the day if more food gets logged and the total goes over.
 const CALORIE_BUDGET_METRIC = 'calorie_budget'
+
+const iso = (d: Date) => format(d, 'yyyy-MM-dd')
+const shiftISO = (date: string, days: number) => iso(addDays(new Date(date + 'T00:00:00'), days))
+const WEEKDAYS = [1, 2, 3, 4, 5]
+type QuickWhen = 'today' | 'tomorrow' | 'daily' | 'weekdays'
+const QUICK_WHEN: { id: QuickWhen; label: string }[] = [
+  { id: 'today', label: 'Today' },
+  { id: 'tomorrow', label: 'Tomorrow' },
+  { id: 'daily', label: 'Every day' },
+  { id: 'weekdays', label: 'Weekdays' },
+]
+/** A finished task's moment: the floating "+10 XP", or the bigger day-cleared / level-up card. */
+type Celebration = { kind: 'xp'; key: number } | { kind: 'cleared' | 'level'; key: number; level: number; dayXp: number }
 
 export function Today() {
   // Daily check-in: red until tonight's row exists, green after. The 22:00 push opens
@@ -51,7 +63,19 @@ export function Today() {
     loadCheckin()
     if (checkinOpen) window.history.replaceState(null, '', window.location.pathname)
   }, [])
+  // `tasks` is what's on the viewed day; `allTasks` every active one (the week strip needs
+  // to know what each other day had planned).
   const [tasks, setTasks] = useState<DailyTask[]>([])
+  const [allTasks, setAllTasks] = useState<DailyTask[]>([])
+  const [upcoming, setUpcoming] = useState<DailyTask[]>([])
+  // Completion dates per task over the last nine weeks — habit dots and the week strip.
+  const [history, setHistory] = useState<Map<string, Set<string>>>(new Map())
+  // Every completion ever, ×XP_PER_TASK, is the XP total behind the level.
+  const [totalDone, setTotalDone] = useState(0)
+  const [quickTitle, setQuickTitle] = useState('')
+  const [quickWhen, setQuickWhen] = useState<QuickWhen>('today')
+  const [celebration, setCelebration] = useState<Celebration | null>(null)
+  const celebrationTimer = useRef<number | undefined>(undefined)
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set())
   const [categories, setCategories] = useState<Category[]>([])
   const { openGoalDetail } = useNav()
@@ -70,6 +94,7 @@ export function Today() {
   const [newAutoMetric, setNewAutoMetric] = useState('')
   const [newAutoMetricTarget, setNewAutoMetricTarget] = useState('')
   const [newRecurring, setNewRecurring] = useState(true)
+  const [newRepeatDays, setNewRepeatDays] = useState<number[] | null>(null)
   const [newScheduledDate, setNewScheduledDate] = useState('')
   const [reminderId, setReminderId] = useState<string | null>(null)
   const [reminderTime, setReminderTime] = useState('')
@@ -84,8 +109,6 @@ export function Today() {
   const [weightInput, setWeightInput] = useState('')
   const [todayCalories, setTodayCalories] = useState<number | null>(null)
   const [summaryOpen, setSummaryOpen] = useState(false)
-  // Completed tasks collapse behind a "N done · show" toggle so the list is what's left.
-  const [showDone, setShowDone] = useState(false)
   const [addFormOpen, setAddFormOpen] = useState(false)
   const [confirmTask, setConfirmTask] = useState<DailyTask | null>(null)
   const [metricEntryTask, setMetricEntryTask] = useState<DailyTask | null>(null)
@@ -93,6 +116,7 @@ export function Today() {
   const [viewDate, setViewDate] = useState(todayISO())
   const date = viewDate
   const weekStart = weekStartISO(new Date(viewDate + 'T00:00:00'))
+  const historyFrom = shiftISO(date, -62)
   const steps = metricValues.get('steps') ?? null
   const isToday = viewDate === todayISO()
 
@@ -113,6 +137,9 @@ export function Today() {
       { data: recipeRows },
       { data: recipeIngredientRows },
       { data: ingredientRows },
+      { data: historyRows },
+      { count: completionCount },
+      { data: upcomingRows },
     ] = await Promise.all([
       supabase
         .from('daily_tasks')
@@ -150,8 +177,27 @@ export function Today() {
       supabase.from('recipes').select('*'),
       supabase.from('recipe_ingredients').select('*'),
       supabase.from('ingredients').select('*'),
+      supabase.from('task_completions').select('task_id, date').gte('date', historyFrom).lte('date', shiftISO(weekStart, 6)),
+      supabase.from('task_completions').select('id', { count: 'exact', head: true }),
+      supabase
+        .from('daily_tasks')
+        .select('*')
+        .eq('active', true)
+        .eq('recurring', false)
+        .gt('scheduled_date', date)
+        .lte('scheduled_date', shiftISO(date, 14))
+        .order('scheduled_date'),
     ])
-    const allTasks = taskRows ?? []
+    const activeTasks = (taskRows ?? []) as DailyTask[]
+    // A finished one-time task is archived (active = false) the moment it's ticked, so on a
+    // reload it would vanish from the day it was done — fetch those back so the day keeps
+    // its record (and its XP) on screen.
+    const doneIds = (completionRows ?? []).map((r) => r.task_id as string)
+    const missing = doneIds.filter((id) => !activeTasks.some((t) => t.id === id))
+    const archivedDone = missing.length
+      ? (((await supabase.from('daily_tasks').select('*').in('id', missing)).data ?? []) as DailyTask[])
+      : []
+    const allTasks = [...activeTasks.filter((t) => isScheduledOn(t, date)), ...archivedDone]
     // One extra query, batched over the day's linked series rather than per task.
     const linkedSeries = [...new Set(allTasks.map((t) => t.goal_series_id).filter(Boolean))] as string[]
     if (linkedSeries.length > 0) {
@@ -215,6 +261,17 @@ export function Today() {
     }
 
     setTasks(allTasks)
+    setAllTasks(activeTasks)
+    setUpcoming((upcomingRows ?? []) as DailyTask[])
+    const byTask = new Map<string, Set<string>>()
+    for (const r of historyRows ?? []) {
+      const set = byTask.get(r.task_id) ?? new Set<string>()
+      set.add(r.date)
+      byTask.set(r.task_id, set)
+    }
+    for (const t of toAutoComplete) (byTask.get(t.id) ?? byTask.set(t.id, new Set()).get(t.id)!).add(date)
+    setHistory(byTask)
+    setTotalDone((completionCount ?? 0) + toAutoComplete.length)
     setCompletedIds(completed)
     setCategories(categoryRows ?? [])
     setWeekGoals(goalRows ?? [])
@@ -255,6 +312,7 @@ export function Today() {
     setNewAutoMetric('')
     setNewAutoMetricTarget('')
     setNewRecurring(true)
+    setNewRepeatDays(null)
     setNewScheduledDate(viewDate)
     setReminderId(null)
     setReminderTime('')
@@ -262,9 +320,40 @@ export function Today() {
     setReminderDays([])
   }
 
+  // "More" on the quick-add bar: the full form, carrying over what was typed and picked.
   function openAddForm() {
     resetForm()
+    setNewTitle(quickTitle.trim())
+    setNewRecurring(quickWhen === 'daily' || quickWhen === 'weekdays')
+    setNewRepeatDays(quickWhen === 'weekdays' ? WEEKDAYS : null)
+    setNewScheduledDate(quickWhen === 'tomorrow' ? shiftISO(viewDate, 1) : viewDate)
     setAddFormOpen(true)
+  }
+
+  // One line and a "when" chip is all a new task needs; the full form is for the rest.
+  async function quickAdd(e: React.FormEvent) {
+    e.preventDefault()
+    const title = quickTitle.trim()
+    if (!title) return
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    setQuickTitle('')
+    await supabase.from('daily_tasks').insert({
+      title,
+      user_id: user.id,
+      recurring: quickWhen === 'daily' || quickWhen === 'weekdays',
+      repeat_days: quickWhen === 'weekdays' ? WEEKDAYS : null,
+      scheduled_date: quickWhen === 'tomorrow' ? shiftISO(viewDate, 1) : viewDate,
+    })
+    load()
+  }
+
+  function celebrate(c: Celebration) {
+    window.clearTimeout(celebrationTimer.current)
+    setCelebration(c)
+    celebrationTimer.current = window.setTimeout(() => setCelebration(null), c.kind === 'xp' ? 1100 : 2600)
   }
 
   function openEditForm(task: DailyTask) {
@@ -275,6 +364,7 @@ export function Today() {
     setNewAutoMetric(task.auto_metric ?? '')
     setNewAutoMetricTarget(task.auto_metric_target != null ? String(task.auto_metric_target) : '')
     setNewRecurring(task.recurring)
+    setNewRepeatDays(task.repeat_days?.length ? task.repeat_days : null)
     setNewScheduledDate(task.scheduled_date ?? '')
     const reminder = reminders.find((r) => r.task_id === task.id)
     setReminderId(reminder?.id ?? null)
@@ -303,6 +393,8 @@ export function Today() {
       auto_metric: newAutoMetric || null,
       auto_metric_target: newAutoMetric && newAutoMetricTarget ? Number(newAutoMetricTarget) : null,
       recurring: newRecurring,
+      // Every day is stored as null, not all seven — one spelling for "no restriction".
+      repeat_days: newRecurring && newRepeatDays?.length && newRepeatDays.length < 7 ? newRepeatDays : null,
       scheduled_date: newScheduledDate || null,
     }
     const finalReminderDays = reminderDays.length ? reminderDays : defaultReminderDays
@@ -362,9 +454,18 @@ export function Today() {
   async function toggle(task: DailyTask) {
     const isDone = completedIds.has(task.id)
     const next = new Set(completedIds)
+    const markHistory = (done: boolean) =>
+      setHistory((h) => {
+        const set = new Set(h.get(task.id) ?? [])
+        if (done) set.add(date)
+        else set.delete(date)
+        return new Map(h).set(task.id, set)
+      })
     if (isDone) {
       next.delete(task.id)
       setCompletedIds(next)
+      markHistory(false)
+      setTotalDone((n) => Math.max(0, n - 1))
       await supabase.from('task_completions').delete().eq('task_id', task.id).eq('date', date)
       await bumpLinkedGoal(task, -1)
       if (!task.recurring) {
@@ -374,6 +475,15 @@ export function Today() {
     } else {
       next.add(task.id)
       setCompletedIds(next)
+      markHistory(true)
+      setTotalDone(totalDone + 1)
+      // The last open task of the day gets the big moment; a level boundary gets its own;
+      // anything else just the floating +XP.
+      const left = tasks.filter((t) => t.id !== task.id && !(t.auto_metric === CALORIE_BUDGET_METRIC ? isTaskDone(t) : next.has(t.id)))
+      const newLevel = levelFor((totalDone + 1) * XP_PER_TASK).level
+      if (newLevel > levelFor(totalDone * XP_PER_TASK).level) celebrate({ kind: 'level', key: Date.now(), level: newLevel, dayXp: next.size * XP_PER_TASK })
+      else if (left.length === 0) celebrate({ kind: 'cleared', key: Date.now(), level: newLevel, dayXp: next.size * XP_PER_TASK })
+      else celebrate({ kind: 'xp', key: Date.now() })
       const {
         data: { user },
       } = await supabase.auth.getUser()
@@ -432,242 +542,237 @@ export function Today() {
 
   const doneCount = tasks.filter(isTaskDone).length
   const remainingCount = tasks.length - doneCount
-  // Attribution counts: a task "moves a goal" when its linked series resolved to a goal
-  // whose period covers today — a link to a series with no current period says nothing.
-  const attributedCount = tasks.filter((t) => t.goal_series_id && taskGoals.has(t.goal_series_id)).length
-  const unattributedCount = tasks.length - attributedCount
-  const outstandingTasks = tasks.filter((t) => !isTaskDone(t))
-  const completedTasks = tasks.filter(isTaskDone)
+  const habits = tasks.filter((t) => t.recurring)
+  const todos = tasks.filter((t) => !t.recurring)
   // Settings' step goal wins, but a "walk N steps" task carries the same intent — fall
-  // back to its target so the hero line works without setting the goal in two places.
+  // back to its target so the steps ring works without setting the goal in two places.
   const stepTaskTarget = tasks.find((t) => t.auto_metric === 'steps')?.auto_metric_target ?? null
   const effectiveStepGoal = stepGoal ?? stepTaskTarget
-  const stepsToGoal = effectiveStepGoal != null && steps != null && effectiveStepGoal > steps ? effectiveStepGoal - steps : null
   const categoryById = new Map(categories.map((c) => [c.id, c]))
   const metricEntryInfo = metricEntryTask && isAutoMetric(metricEntryTask.auto_metric) ? METRIC_INFO[metricEntryTask.auto_metric] : null
-  // Recurring tasks default to reminding every day; a one-time task only has one
-  // relevant day, so default to the weekday it's actually scheduled for.
+  // Reminders follow the task's own days: a Mon/Wed/Fri habit reminds Mon/Wed/Fri, a
+  // one-time task on the weekday it's scheduled for.
   const defaultReminderDays = newRecurring
-    ? [0, 1, 2, 3, 4, 5, 6]
+    ? (newRepeatDays ?? [0, 1, 2, 3, 4, 5, 6])
     : [getDay(new Date((newScheduledDate || viewDate) + 'T00:00:00'))]
   const activeReminderDays = reminderDays.length ? reminderDays : defaultReminderDays
 
-  // One task row. Rendered twice: the outstanding list, and the collapsed done list.
+  // --- the game: XP for every completion ever, a level from that, and today's share.
+  const xp = totalDone * XP_PER_TASK
+  const level = levelFor(xp)
+  const dayXp = completedIds.size * XP_PER_TASK
+  const dayPct = tasks.length ? (doneCount / tasks.length) * 100 : 0
+
+  // The week strip: each day's ring is completions over what was due — the habits planned
+  // for that weekday plus any one-time task finished on it. A day with every habit done
+  // earns a star.
+  const weekDays = Array.from({ length: 7 }, (_, i) => shiftISO(weekStart, i))
+  const doneOn = (d: string) => [...history.values()].filter((set) => set.has(d)).length
+  const habitsOn = (d: string) =>
+    allTasks.filter(
+      (t) => t.recurring && t.auto_metric !== CALORIE_BUDGET_METRIC && isScheduledOn(t, d) && (t.scheduled_date ?? t.created_at.slice(0, 10)) <= d,
+    ).length
+  const thisWeek = weekStart === weekStartISO(new Date())
+
+  // One task row: the check on the left, title and one line of detail, XP on the right.
+  // Tapping the text opens it for editing; the check (or for a metric task, its value).
   function renderTask(task: DailyTask) {
-            const isBudget = task.auto_metric === CALORIE_BUDGET_METRIC
-            const done = isTaskDone(task)
-            const category = task.category_id ? categoryById.get(task.category_id) : undefined
-            const style = category ? CATEGORY_STYLES[category.color] : CATEGORY_STYLES.violet
-            const linked = task.goal_series_id ? taskGoals.get(task.goal_series_id) : undefined
-            // "No goal" stays deliberately plain: the handoff pairs it with a streak, and
-            // streaks are the one concept this app dropped on purpose (see CONTEXT.md).
-            const attribution = linked
-              ? (() => {
-                  const verdict = paceVerdict(linked.goal, linked.pace)
-                  const unit = isGoalMetric(linked.goal.auto_metric) ? goalMetricInfo(linked.goal.auto_metric).unit : ''
-                  const amounts =
-                    linked.goal.target_value != null
-                      ? ` · ${Math.round(linked.progress).toLocaleString()}/${linked.goal.target_value.toLocaleString()}${unit ? ` ${unit}` : ''}`
-                      : ''
-                  return {
-                    label: `→ ${linked.goal.title}${amounts}${verdict ? ` · ${verdict.label}` : ''}`,
-                    color: verdict?.tone === 'behind' ? '#a33327' : THEME.ink2,
-                  }
-                })()
-              : task.goal_series_id
-                ? { label: '→ goal has no current period', color: THEME.inkDisabled }
-                : { label: 'No goal', color: THEME.inkDisabled }
-            const metric = isAutoMetric(task.auto_metric) ? task.auto_metric : null
-            const metricInfo = metric ? METRIC_INFO[metric] : null
-            const effectiveStartDate = task.scheduled_date ?? task.created_at.slice(0, 10)
-            const isLate = !task.recurring && !done && effectiveStartDate < viewDate
-            const metricValue = metric ? metricValues.get(metric) ?? 0 : null
-            // A metric with a target trades the long caption for a bar and what's left to
-            // do; without one there's nothing to fill, so it keeps a plain value readout.
-            const metricPct =
-              metric && metricValue != null && task.auto_metric_target
-                ? Math.min(100, (metricValue / task.auto_metric_target) * 100)
-                : null
-            const metricRemaining =
-              metric && metricValue != null && task.auto_metric_target ? task.auto_metric_target - metricValue : null
-            // One metadata line, in category ink — category, linked goal, and the one-time
-            // or late state, rather than a row of separate badges.
-            const metaParts: React.ReactNode[] = []
-            if (category) metaParts.push(category.name)
-            // The linked goal now gets its own line under the title (see below), so it no
-            // longer rides along in the category/one-time meta line.
-            if (!task.recurring) {
-              metaParts.push(isLate ? <span className="text-cat-rose-ink">late</span> : 'one-time')
-            }
-            return (
-              <li
-                key={task.id}
-                className="flex items-center gap-3 overflow-hidden rounded-[22px] border border-line bg-surface shadow-card"
-              >
-                <span className="w-[5px] self-stretch" style={{ background: style.accent }} />
-                <button
-                  onClick={() => (metric ? openMetricEntry(task) : isBudget ? undefined : toggle(task))}
-                  className="flex min-w-0 flex-1 items-center gap-3 py-3.5 text-left"
-                >
-                  <span
-                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[15px] text-lg font-semibold"
-                    style={{ background: style.tint, color: style.ink }}
-                  >
-                    {isBudget ? '🔥' : metricInfo ? metricInfo.icon : category ? category.name.charAt(0).toUpperCase() : '•'}
-                  </span>
-                  <span className="flex min-w-0 flex-1 flex-col gap-1">
-                    {/* Two lines at most — the design draws one, but a real title like
-                        "Stay under calorie budget" doesn't fit beside the row controls. */}
-                    <span
-                      className={`line-clamp-2 text-[15px] leading-snug ${done ? 'text-ink-disabled line-through' : 'font-medium text-ink'}`}
-                    >
-                      {task.title}
-                    </span>
-                    {/* Which goal this task moves, and how that goal is doing — the other
-                        half of the loop that goal_series_id has always described but
-                        nothing ever surfaced. */}
-                    {attribution && (
-                      <span className="truncate text-[11px] font-medium" style={{ color: attribution.color }}>
-                        {attribution.label}
-                      </span>
-                    )}
-                    {metricPct != null ? (
-                      <span className="flex items-center gap-2">
-                        <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
-                          <span
-                            className="block h-full rounded-full"
-                            style={{ width: `${metricPct}%`, background: style.accent }}
-                          />
-                        </span>
-                        <span className="shrink-0 text-[11px] font-semibold" style={{ color: style.ink }}>
-                          {metricRemaining! > 0 ? `${metricRemaining!.toLocaleString()} to go` : 'goal met'}
-                        </span>
-                      </span>
-                    ) : (
-                      <span className="truncate text-[11px] font-semibold" style={{ color: style.ink }}>
-                        {isBudget ? (
-                          <>
-                            {(todayCalories ?? 0).toLocaleString()}
-                            {task.auto_metric_target != null && ` / ${task.auto_metric_target.toLocaleString()}`} kcal
-                          </>
-                        ) : metricInfo ? (
-                          `${metricValue?.toLocaleString()} ${metricInfo.unit}`
-                        ) : (
-                          metaParts.map((part, i) => (
-                            <span key={i}>
-                              {i > 0 && ' · '}
-                              {part}
-                            </span>
-                          ))
-                        )}
-                      </span>
-                    )}
-                  </span>
-                </button>
-                {linked && (
-                  <button
-                    onClick={() => openGoalDetail(linked.goal.id)}
-                    className="shrink-0 px-0.5 text-sm text-ink-faint"
-                    aria-label={`Open ${linked.goal.title}`}
-                  >
-                    ›
-                  </button>
-                )}
-                <button onClick={() => openEditForm(task)} className="shrink-0 px-0.5 text-sm text-ink-faint" aria-label="Edit task">
-                  ✎
-                </button>
-                <button onClick={() => setConfirmTask(task)} className="shrink-0 px-0.5 text-sm text-ink-faint" aria-label="Remove task">
-                  ✕
-                </button>
-                <button
-                  onClick={() => (metric ? openMetricEntry(task) : isBudget ? undefined : toggle(task))}
-                  aria-label={done ? 'Mark not done' : 'Mark done'}
-                  className="mx-3 flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
-                  style={done ? { background: style.check } : { border: `2px solid ${THEME.lineStrong}` }}
-                >
-                  {done && (
-                    <svg viewBox="0 0 24 24" className="h-4 w-4 text-white" fill="none">
-                      <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  )}
-                </button>
-              </li>
+    const isBudget = task.auto_metric === CALORIE_BUDGET_METRIC
+    const done = isTaskDone(task)
+    const category = task.category_id ? categoryById.get(task.category_id) : undefined
+    const style = category ? CATEGORY_STYLES[category.color] : CATEGORY_STYLES.violet
+    const linked = task.goal_series_id ? taskGoals.get(task.goal_series_id) : undefined
+    const verdict = linked ? paceVerdict(linked.goal, linked.pace) : null
+    const metric = isAutoMetric(task.auto_metric) ? task.auto_metric : null
+    const metricInfo = metric ? METRIC_INFO[metric] : null
+    const metricValue = metric ? (metricValues.get(metric) ?? 0) : null
+    const metricPct = metric && metricValue != null && task.auto_metric_target ? Math.min(100, (metricValue / task.auto_metric_target) * 100) : null
+    const metricRemaining = metric && metricValue != null && task.auto_metric_target ? task.auto_metric_target - metricValue : null
+    const start = task.scheduled_date ?? task.created_at.slice(0, 10)
+    const isLate = !task.recurring && !done && start < viewDate
+    const dots = task.recurring && !isBudget ? habitHistory(task, history.get(task.id) ?? new Set(), date) : []
+    const onCheck = () => (metric ? openMetricEntry(task) : isBudget ? undefined : toggle(task))
+
+    let detail: React.ReactNode
+    if (metricPct != null) {
+      detail = (
+        <span className="flex items-center gap-2">
+          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
+            <span className="block h-full rounded-full" style={{ width: `${metricPct}%`, background: style.accent }} />
+          </span>
+          <span className="shrink-0 text-[11px] font-semibold" style={{ color: style.ink }}>
+            {metricRemaining! > 0 ? `${metricRemaining!.toLocaleString()} to go` : 'goal met'}
+          </span>
+        </span>
+      )
+    } else if (isBudget) {
+      detail = (
+        <span className="text-[11px] font-semibold" style={{ color: style.ink }}>
+          {(todayCalories ?? 0).toLocaleString()}
+          {task.auto_metric_target != null && ` / ${task.auto_metric_target.toLocaleString()}`} kcal
+        </span>
+      )
+    } else if (metricInfo) {
+      detail = <span className="text-[11px] font-semibold" style={{ color: style.ink }}>{`${metricValue?.toLocaleString()} ${metricInfo.unit}`}</span>
+    } else {
+      const parts = [
+        category?.name,
+        task.recurring && task.repeat_days?.length ? repeatLabel(task.repeat_days) : null,
+        !task.recurring ? (isLate ? `late · from ${format(new Date(start + 'T00:00:00'), 'EEE d MMM')}` : null) : null,
+      ].filter(Boolean)
+      detail = (
+        <span className={`truncate text-[11px] font-medium ${isLate ? 'text-cat-rose-ink' : 'text-ink-muted'}`}>{parts.join(' · ')}</span>
+      )
+    }
+
+    return (
+      <li key={task.id} className={`flex items-center gap-3 rounded-[20px] border border-line bg-surface py-3 pr-3 pl-3 shadow-card ${done ? 'opacity-70' : ''}`}>
+        <button
+          onClick={onCheck}
+          aria-label={done ? 'Mark not done' : 'Mark done'}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-base transition active:scale-90"
+          style={done ? { background: style.check } : { border: `2px solid ${style.accent}66`, background: style.tint }}
+        >
+          {done ? (
+            <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] text-white" fill="none">
+              <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          ) : isBudget ? (
+            '🔥'
+          ) : metricInfo ? (
+            metricInfo.icon
+          ) : null}
+        </button>
+        <button onClick={() => openEditForm(task)} className="flex min-w-0 flex-1 flex-col gap-1 text-left">
+          <span className={`line-clamp-2 text-[15px] leading-snug ${done ? 'text-ink-muted line-through' : 'font-medium text-ink'}`}>{task.title}</span>
+          {detail}
+          {linked && (
+            <span className="truncate text-[11px] font-medium" style={{ color: verdict?.tone === 'behind' ? '#a33327' : THEME.ink2 }}>
+              → {linked.goal.title}
+              {verdict ? ` · ${verdict.label}` : ''}
+            </span>
+          )}
+          {dots.length > 0 && (
+            <span className="flex items-center gap-[3px]" title="Last 7 times it was due">
+              {dots.map((d, i) => (
+                <span key={i} className="h-[7px] w-[7px] rounded-full" style={{ background: d ? style.accent : THEME.line }} />
+              ))}
+              <span className="ml-1 text-[10px] font-semibold" style={{ color: style.ink }}>
+                {dots.filter(Boolean).length}/{dots.length}
+              </span>
+            </span>
+          )}
+        </button>
+        {!isBudget && (
+          <span
+            className="shrink-0 rounded-full px-2 py-1 text-[10px] font-bold"
+            style={done ? { background: style.tint, color: style.ink } : { background: THEME.line, color: THEME.inkDisabled }}
+          >
+            +{XP_PER_TASK}
+          </span>
+        )}
+      </li>
+    )
+  }
+
+  function section(label: string, list: DailyTask[]) {
+    if (!list.length) return null
+    const done = list.filter(isTaskDone)
+    return (
+      <>
+        <div className="flex items-center gap-2.5">
+          <span className="text-[11px] font-semibold tracking-[0.07em] text-ink-3">{label}</span>
+          <span className="text-[11px] font-semibold text-ink-disabled">
+            {done.length}/{list.length}
+          </span>
+          <span className="h-px flex-1 bg-line-strong" />
+        </div>
+        <ul className="flex flex-col gap-2">{[...list.filter((t) => !isTaskDone(t)), ...done].map(renderTask)}</ul>
+      </>
     )
   }
 
   const hero = (
     <>
-      {/* Lead with what's left rather than what's done — the ring told you the same thing
-          but made you do the subtraction. */}
-      {(tasks.length > 0 || steps != null || weightToday != null || todayCalories != null) && (
-        <button onClick={() => setSummaryOpen((o) => !o)} className="mt-4 block w-full text-left">
-          <p className="text-[15px] font-medium leading-relaxed text-white">
-            {tasks.length === 0 ? (
-              'Nothing scheduled today.'
-            ) : remainingCount === 0 ? (
-              <>
-                <strong className="font-semibold">All done</strong> today.
-              </>
-            ) : (
-              <>
-                <strong className="font-semibold">{remainingCount} left</strong> today
-                {stepsToGoal != null && ` — and ${stepsToGoal.toLocaleString()} steps to your goal`}.
-              </>
-            )}
-          </p>
-          {tasks.length > 0 && attributedCount > 0 && (
-            <p className="mt-1.5 text-[13px] font-medium text-white/80">
-              {attributedCount} of today's {tasks.length} task{tasks.length === 1 ? '' : 's'} move a goal.
-            </p>
-          )}
-          {tasks.length > 0 && (
-            <span className="mt-3.5 flex gap-[5px]">
-              {tasks.map((task) => (
-                <span
-                  key={task.id}
-                  className="h-2 flex-1 rounded-full"
-                  style={{ background: isTaskDone(task) ? THEME.pineArc : 'rgba(255,255,255,.25)' }}
-                />
-              ))}
-            </span>
-          )}
-          <span className="mt-3.5 flex flex-wrap gap-1.5">
-            {steps != null && <HeroChip>🚶 {steps.toLocaleString()}</HeroChip>}
-            {weightToday != null && <HeroChip>⚖️ {weightToday} kg</HeroChip>}
-            {todayCalories != null && <HeroChip>🔥 {todayCalories.toLocaleString()} kcal</HeroChip>}
+      <div className="mt-3 flex items-center gap-3.5">
+        <ProgressRing percent={dayPct} size={64} strokeWidth={6} color="#fff" trackColor="rgba(255,255,255,.2)">
+          <span className="text-sm font-semibold text-white">
+            {doneCount}/{tasks.length}
           </span>
+        </ProgressRing>
+        <div className="min-w-0 flex-1">
+          <p className="text-[17px] font-semibold text-white">
+            {tasks.length === 0 ? 'Nothing planned' : remainingCount === 0 ? 'Day cleared 🎉' : `${remainingCount} left${isToday ? ' today' : ''}`}
+          </p>
+          <div className="mt-1.5 flex items-center gap-2">
+            <span className="shrink-0 rounded-full bg-white/18 px-2 py-0.5 text-[11px] font-bold text-white">Lv {level.level}</span>
+            <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/20">
+              <span className="block h-full rounded-full bg-[#f3d98b]" style={{ width: `${(level.into / level.span) * 100}%` }} />
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] font-medium text-white/70">
+            {level.span - level.into} XP to level {level.level + 1}
+            {dayXp > 0 && <span className="font-semibold text-[#f3d98b]"> · +{dayXp} today</span>}
+          </p>
+        </div>
+      </div>
+
+      {(steps != null || weightToday != null || todayCalories != null) && (
+        <button onClick={() => setSummaryOpen((o) => !o)} className="mt-3 flex flex-wrap gap-1.5 text-left">
+          {steps != null && (
+            <HeroChip>
+              🚶 {steps.toLocaleString()}
+              {effectiveStepGoal ? ` / ${effectiveStepGoal.toLocaleString()}` : ''}
+            </HeroChip>
+          )}
+          {weightToday != null && <HeroChip>⚖️ {weightToday} kg</HeroChip>}
+          {todayCalories != null && <HeroChip>🔥 {todayCalories.toLocaleString()} kcal</HeroChip>}
         </button>
       )}
 
-      <div className="mt-4 flex items-center justify-between gap-2 rounded-[18px] bg-white/14 px-2.5 py-[7px]">
+      {/* The week as a strip of days, each ringed by how much of it got done — tap one to
+          plan or review it. Arrows page by week. */}
+      <div className="mt-3.5 flex items-center gap-1 rounded-[18px] bg-white/12 px-1.5 py-2">
         <button
-          onClick={() => setViewDate((d) => format(subDays(new Date(d + 'T00:00:00'), 1), 'yyyy-MM-dd'))}
-          aria-label="Previous day"
-          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-white/18 text-white"
+          onClick={() => setViewDate((d) => shiftISO(d, -7))}
+          aria-label="Previous week"
+          className="flex h-7 w-6 shrink-0 items-center justify-center text-white/80"
         >
           ‹
         </button>
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-medium text-white">
-            {isToday ? 'Today' : format(new Date(viewDate + 'T00:00:00'), 'EEEE, MMM d')}
-          </span>
-          {!isToday && (
-            <button
-              onClick={() => setViewDate(todayISO())}
-              className="shrink-0 rounded-full bg-surface px-2.5 py-0.5 text-xs font-semibold text-pine"
-            >
-              Jump to today
+        {weekDays.map((d) => {
+          const due = habitsOn(d)
+          const done = doneOn(d)
+          const past = d <= todayISO()
+          const pct = !past ? 0 : due ? Math.min(100, (done / due) * 100) : done ? 100 : 0
+          const star = past && due > 0 && done >= due
+          const selected = d === viewDate
+          return (
+            <button key={d} onClick={() => setViewDate(d)} className="flex flex-1 flex-col items-center gap-1">
+              <span className={`text-[10px] font-semibold ${selected ? 'text-white' : 'text-white/65'}`}>
+                {format(new Date(d + 'T00:00:00'), 'EEEEE')}
+              </span>
+              <ProgressRing percent={pct} size={32} strokeWidth={3} color={star ? '#f3d98b' : '#fff'} trackColor="rgba(255,255,255,.18)" disc={selected ? '#fdfbf6' : undefined}>
+                <span className={`text-[11px] font-semibold ${selected ? 'text-pine' : d === todayISO() ? 'text-white underline' : 'text-white'}`}>
+                  {star && !selected ? '★' : format(new Date(d + 'T00:00:00'), 'd')}
+                </span>
+              </ProgressRing>
             </button>
-          )}
-        </div>
+          )
+        })}
         <button
-          onClick={() => setViewDate((d) => format(addDays(new Date(d + 'T00:00:00'), 1), 'yyyy-MM-dd'))}
-          aria-label="Next day"
-          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-white/18 text-white"
+          onClick={() => setViewDate((d) => shiftISO(d, 7))}
+          aria-label="Next week"
+          className="flex h-7 w-6 shrink-0 items-center justify-center text-white/80"
         >
           ›
         </button>
       </div>
+      {(!thisWeek || !isToday) && (
+        <button onClick={() => setViewDate(todayISO())} className="mt-2 text-xs font-semibold text-white/85">
+          {format(new Date(viewDate + 'T00:00:00'), 'EEEE d MMMM')} · back to today ›
+        </button>
+      )}
     </>
   )
 
@@ -744,42 +849,105 @@ export function Today() {
         </div>
       )}
 
+      {/* Quick add: type, pick when, Enter. "More" opens the full form with both carried over. */}
+      <form onSubmit={quickAdd} className="flex flex-col gap-2.5 rounded-[20px] border border-line bg-surface p-3 shadow-card">
+        <div className="flex items-center gap-2">
+          <input
+            value={quickTitle}
+            onChange={(e) => setQuickTitle(e.target.value)}
+            placeholder={quickWhen === 'daily' || quickWhen === 'weekdays' ? 'New habit…' : 'Add a to-do…'}
+            enterKeyHint="done"
+            className="min-w-0 flex-1 bg-transparent px-1 text-[15px] text-ink placeholder-ink-disabled outline-none"
+          />
+          <button
+            type="submit"
+            disabled={!quickTitle.trim()}
+            aria-label="Add"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-pine text-lg font-semibold text-white disabled:opacity-35"
+          >
+            +
+          </button>
+        </div>
+        <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1">
+          {QUICK_WHEN.map((w) => (
+            <button
+              key={w.id}
+              type="button"
+              onClick={() => setQuickWhen(w.id)}
+              className={`shrink-0 rounded-full px-3 py-1.5 text-xs transition ${
+                quickWhen === w.id ? 'bg-pine font-semibold text-white' : 'border border-line bg-page font-medium text-ink-2'
+              }`}
+            >
+              {w.id === 'today' && !isToday ? format(new Date(viewDate + 'T00:00:00'), 'EEE d') : w.label}
+            </button>
+          ))}
+          <button type="button" onClick={openAddForm} className="shrink-0 rounded-full px-2.5 py-1.5 text-xs font-medium text-pine">
+            More…
+          </button>
+        </div>
+      </form>
+
       {loading ? (
         <p className="text-sm text-ink-disabled">Loading…</p>
       ) : tasks.length === 0 ? (
-        <p className="text-sm text-ink-disabled">No daily tasks yet. Add one below.</p>
+        <div className="rounded-[20px] border border-dashed border-line-strong px-4 py-5 text-center">
+          <p className="text-sm font-semibold text-ink-2">A blank {isToday ? 'day' : 'page'}</p>
+          <p className="mt-1 text-xs text-ink-muted">
+            Add a to-do above, or a habit that comes back every day — each one you finish is +{XP_PER_TASK} XP.
+          </p>
+        </div>
       ) : (
         <>
-          {outstandingTasks.length > 0 ? (
-            <>
-              <p className="text-[13px] font-semibold text-ink-3">Left today</p>
-              <ul className="flex flex-col gap-2.5">{outstandingTasks.map(renderTask)}</ul>
-            </>
-          ) : (
-            <p className="text-sm text-ink-disabled">Everything's done for today.</p>
-          )}
-          {showDone && completedTasks.length > 0 && (
-            <ul className="flex flex-col gap-2.5">{completedTasks.map(renderTask)}</ul>
-          )}
+          {section('HABITS', habits)}
+          {section('TO-DOS', todos)}
         </>
       )}
-      <div className="flex items-center justify-between gap-3 rounded-[20px] border border-line-strong bg-surface px-4 py-3.5">
-        <button onClick={openAddForm} className="text-[15px] font-semibold text-pine">
-          + Add task
-        </button>
-        <span className="flex shrink-0 items-center gap-2.5">
-          {unattributedCount > 0 && (
-            <span className="text-[11px] font-medium text-ink-muted">
-              {unattributedCount} task{unattributedCount === 1 ? '' : 's'} feed{unattributedCount === 1 ? 's' : ''} nothing
-            </span>
-          )}
-          {completedTasks.length > 0 && (
-            <button onClick={() => setShowDone((v) => !v)} className="text-xs font-medium text-ink-muted">
-              {completedTasks.length} done · {showDone ? 'hide' : 'show'}
-            </button>
-          )}
-        </span>
-      </div>
+
+      {upcoming.length > 0 && (
+        <>
+          <div className="mt-1 flex items-center gap-2.5">
+            <span className="text-[11px] font-semibold tracking-[0.07em] text-ink-3">COMING UP</span>
+            <span className="h-px flex-1 bg-line-strong" />
+          </div>
+          <div className="flex flex-col overflow-hidden rounded-[20px] border border-line bg-surface">
+            {upcoming.map((t, i) => (
+              <button
+                key={t.id}
+                onClick={() => setViewDate(t.scheduled_date!)}
+                className={`flex items-center gap-3 px-3.5 py-2.5 text-left ${i > 0 ? 'border-t border-line' : ''}`}
+              >
+                <span className="w-[54px] shrink-0 text-[11px] font-semibold text-ink-3">
+                  {t.scheduled_date === shiftISO(date, 1) ? 'Tomorrow' : format(new Date(t.scheduled_date + 'T00:00:00'), 'EEE d')}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-sm text-ink-2">{t.title}</span>
+                <span className="shrink-0 text-xs text-ink-faint">›</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* The reward moments. A floating +XP for any tick; a card for clearing the day or a
+          new level. Pointer-transparent so it never blocks the next tap. */}
+      {celebration?.kind === 'xp' && (
+        <div key={celebration.key} className="xp-float pointer-events-none fixed inset-x-0 z-40 flex justify-center" style={{ bottom: 'calc(var(--tabbar-space) + 24px)' }}>
+          <span className="rounded-full bg-[#f3d98b] px-3.5 py-1.5 text-sm font-bold text-[#5c4216] shadow-card">+{XP_PER_TASK} XP</span>
+        </div>
+      )}
+      {celebration && celebration.kind !== 'xp' && (
+        <div key={celebration.key} className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center px-10">
+          <div className="confetti" aria-hidden>
+            {Array.from({ length: 18 }, (_, i) => (
+              <span key={i} style={{ left: `${(i * 37) % 100}%`, animationDelay: `${(i % 6) * 0.06}s`, background: ['#f3d98b', '#a8cfc0', '#e6b39f', '#c9b6e4'][i % 4] }} />
+            ))}
+          </div>
+          <div className="pop-in flex flex-col items-center rounded-[26px] bg-pine-deep px-7 py-5 text-center text-white shadow-tabbar">
+            <span className="text-[34px] leading-none">{celebration.kind === 'level' ? '⭐' : '🎉'}</span>
+            <span className="mt-2 text-lg font-semibold">{celebration.kind === 'level' ? `Level ${celebration.level}!` : 'Day cleared!'}</span>
+            <span className="mt-0.5 text-xs font-medium text-white/75">+{celebration.dayXp} XP today</span>
+          </div>
+        </div>
+      )}
 
       {addFormOpen && (
         <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
@@ -794,22 +962,27 @@ export function Today() {
               autoFocus
               value={newTitle}
               onChange={(e) => setNewTitle(e.target.value)}
-              placeholder="New daily task"
+              placeholder="What needs doing?"
               className="rounded-[20px] border border-line bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
             />
-            <div className="flex gap-2">
-              <select
-                value={newCategoryId}
-                onChange={(e) => setNewCategoryId(e.target.value)}
-                className="min-w-0 flex-1 rounded-[20px] border border-line bg-surface px-3 py-2.5 text-sm text-ink outline-none focus:border-pine"
-              >
-                <option value="">No label</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
+            <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4 py-0.5">
+              {[{ id: '', name: 'No label', color: null }, ...categories].map((c) => {
+                const on = newCategoryId === c.id
+                const accent = c.color ? CATEGORY_STYLES[c.color].accent : THEME.inkDisabled
+                return (
+                  <button
+                    key={c.id || 'none'}
+                    type="button"
+                    onClick={() => setNewCategoryId(c.id)}
+                    className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs ${on ? 'bg-pine font-semibold text-white' : 'border border-line bg-surface font-medium text-ink-2'}`}
+                  >
+                    <span className="h-2 w-2 rounded-full" style={{ background: on ? '#fff' : accent }} />
                     {c.name}
-                  </option>
-                ))}
-              </select>
+                  </button>
+                )
+              })}
+            </div>
+            <div className="flex gap-2">
               <select
                 value={newGoalSeriesId}
                 onChange={(e) => setNewGoalSeriesId(e.target.value)}
@@ -864,28 +1037,63 @@ export function Today() {
                 </p>
               )
             )}
-            <div className="flex gap-2 rounded-[20px] bg-track p-1">
-              <button
-                type="button"
-                onClick={() => setNewRecurring(true)}
-                className={`flex-1 rounded-xl px-3 py-2 text-sm font-medium transition ${
-                  newRecurring ? 'bg-surface text-pine shadow-card' : 'text-ink-3'
-                }`}
-              >
-                Recurring daily
-              </button>
-              <button
-                type="button"
-                onClick={() => setNewRecurring(false)}
-                className={`flex-1 rounded-xl px-3 py-2 text-sm font-medium transition ${
-                  !newRecurring ? 'bg-surface text-pine shadow-card' : 'text-ink-3'
-                }`}
-              >
-                One-time
-              </button>
+            {/* Repeat: once (on a date, carried over until done), or on chosen weekdays. */}
+            <span className="mt-1 text-xs font-semibold text-ink-3">Repeat</span>
+            <div className="flex gap-1 rounded-[20px] bg-track p-1">
+              {(
+                [
+                  ['once', 'Once'],
+                  ['daily', 'Every day'],
+                  ['weekdays', 'Weekdays'],
+                  ['custom', 'Custom'],
+                ] as const
+              ).map(([id, label]) => {
+                const mode = !newRecurring
+                  ? 'once'
+                  : !newRepeatDays
+                    ? 'daily'
+                    : repeatLabel(newRepeatDays) === 'Weekdays'
+                      ? 'weekdays'
+                      : 'custom'
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => {
+                      setNewRecurring(id !== 'once')
+                      setNewRepeatDays(id === 'weekdays' ? WEEKDAYS : id === 'custom' ? (newRepeatDays ?? [1, 3, 5]) : null)
+                      setReminderDays([])
+                    }}
+                    className={`flex-1 rounded-xl px-1 py-2 text-xs font-medium transition ${mode === id ? 'bg-surface text-pine shadow-card' : 'text-ink-3'}`}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
             </div>
+            {newRecurring && newRepeatDays && (
+              <div className="flex gap-1">
+                {WEEK_ORDER.map((d) => {
+                  const on = newRepeatDays.includes(d)
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => {
+                        const next = on ? newRepeatDays.filter((x) => x !== d) : [...newRepeatDays, d]
+                        setNewRepeatDays(next.length ? next.sort() : newRepeatDays)
+                        setReminderDays([])
+                      }}
+                      className={`flex-1 rounded-xl py-2 text-xs font-semibold ${on ? 'bg-pine text-white' : 'bg-track text-ink-disabled'}`}
+                    >
+                      {DAY_LABELS[d].charAt(0)}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
             <div className="flex items-center gap-2">
-              <span className="shrink-0 text-sm text-ink-3">Starts on</span>
+              <span className="w-16 shrink-0 text-sm text-ink-3">{newRecurring ? 'Starts' : 'On'}</span>
               <input
                 value={newScheduledDate}
                 onChange={(e) => setNewScheduledDate(e.target.value)}
@@ -950,6 +1158,26 @@ export function Today() {
             <button type="submit" className="rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white">
               {editingTask ? 'Save changes' : 'Add task'}
             </button>
+            {editingTask && (
+              <div className="mt-1 flex items-center justify-between px-1">
+                <button type="button" onClick={() => setConfirmTask(editingTask)} className="text-sm font-medium text-cat-rose-ink">
+                  Remove task
+                </button>
+                {editingTask.goal_series_id && taskGoals.get(editingTask.goal_series_id) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const g = taskGoals.get(editingTask.goal_series_id!)!.goal
+                      closeForm()
+                      openGoalDetail(g.id)
+                    }}
+                    className="text-sm font-medium text-pine"
+                  >
+                    Open linked goal ›
+                  </button>
+                )}
+              </div>
+            )}
           </form>
         </div>
       )}
@@ -992,6 +1220,7 @@ export function Today() {
         onConfirm={() => {
           if (confirmTask) removeTask(confirmTask)
           setConfirmTask(null)
+          closeForm()
         }}
         onCancel={() => setConfirmTask(null)}
       />
