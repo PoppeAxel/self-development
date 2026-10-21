@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
 
@@ -16,6 +16,8 @@ export function MorningCheckIn({ onSaved }: { onSaved: () => void }) {
   const [weightInput, setWeightInput] = useState('')
   const [sleepHoursPart, setSleepHoursPart] = useState('')
   const [sleepMinutesPart, setSleepMinutesPart] = useState('')
+  const [saving, setSaving] = useState(false)
+  const savingRef = useRef(false)
 
   useEffect(() => {
     async function check() {
@@ -59,11 +61,20 @@ export function MorningCheckIn({ onSaved }: { onSaved: () => void }) {
     setOpen(false)
   }
 
+  // Guarded: Save awaits the network before the card closes, and a second tap in that
+  // gap used to insert the weight again (three identical rows in one morning).
   async function save() {
+    if (savingRef.current) return
+    savingRef.current = true
+    setSaving(true)
     const {
       data: { user },
     } = await supabase.auth.getUser()
-    if (!user) return
+    if (!user) {
+      savingRef.current = false
+      setSaving(false)
+      return
+    }
     const today = todayISO()
 
     if (needsWeight && weightInput) {
@@ -129,7 +140,8 @@ export function MorningCheckIn({ onSaved }: { onSaved: () => void }) {
         )}
         <button
           onClick={save}
-          className="shrink-0 rounded-2xl bg-pine px-4 py-2.5 text-[13px] font-semibold text-white"
+          disabled={saving}
+          className="shrink-0 disabled:opacity-60 rounded-2xl bg-pine px-4 py-2.5 text-[13px] font-semibold text-white"
         >
           Save
         </button>

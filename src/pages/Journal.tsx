@@ -274,10 +274,30 @@ export function Journal() {
     setShowHistory(false)
   }, [tab])
 
+  // Newest rows first, then flipped to the oldest-first order the charts expect. These
+  // used to be `ascending: true` + a limit, which keeps the OLDEST rows — so once the
+  // table outgrew the limit, anything newly logged was silently left out and looked like
+  // it never saved. journal_entries is paged through in full: weight's "since you
+  // started" change needs the first weigh-in, and a request caps out at 1000 rows.
+  async function allJournalEntries(): Promise<JournalEntry[]> {
+    const page = 1000
+    const rows: JournalEntry[] = []
+    for (let from = 0; ; from += page) {
+      const { data } = await supabase
+        .from('journal_entries')
+        .select('*')
+        .order('date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .range(from, from + page - 1)
+      rows.push(...((data ?? []) as JournalEntry[]))
+      if (!data || data.length < page) return rows.reverse()
+    }
+  }
+
   async function load() {
     setLoading(true)
     const [
-      { data },
+      entryRows,
       { data: settingsRow },
       { data: workoutRows },
       { data: foodEntryRows },
@@ -285,22 +305,22 @@ export function Journal() {
       { data: recipeLineRows },
       { data: ingredientRows },
     ] = await Promise.all([
-      supabase.from('journal_entries').select('*').order('date', { ascending: true }).limit(200),
+      allJournalEntries(),
       supabase.from('user_settings').select('*').maybeSingle(),
-      supabase.from('workouts').select('*').order('date', { ascending: true }).limit(200),
+      supabase.from('workouts').select('*').order('date', { ascending: false }).limit(200),
       // 60 days is comfortably more than the 28-day window the calorie-estimate card
       // averages over — see foodDailyKcal below.
-      supabase.from('food_log_entries').select('*').order('date', { ascending: true }).limit(400),
+      supabase.from('food_log_entries').select('*').order('date', { ascending: false }).limit(400),
       supabase.from('recipes').select('*'),
       supabase.from('recipe_ingredients').select('*'),
       supabase.from('ingredients').select('*'),
     ])
-    setEntries(data ?? [])
+    setEntries(entryRows)
     setGoalWeight(settingsRow?.goal_weight != null ? Number(settingsRow.goal_weight) : null)
     setMaintenanceResetDate(settingsRow?.maintenance_reset_date ?? null)
     setStepGoal(settingsRow?.step_goal != null ? Number(settingsRow.step_goal) : null)
-    setWorkouts(workoutRows ?? [])
-    setFoodEntries(foodEntryRows ?? [])
+    setWorkouts((workoutRows ?? []).reverse())
+    setFoodEntries((foodEntryRows ?? []).reverse())
     setRecipes(recipeRows ?? [])
     const byRecipe = new Map<string, RecipeIngredient[]>()
     for (const line of recipeLineRows ?? []) {
