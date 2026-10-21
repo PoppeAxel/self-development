@@ -34,6 +34,7 @@ import {
   type LivsmedelsverketFood,
 } from '../lib/food'
 import { CATEGORY_STYLES as CAT } from '../lib/categories'
+import { THEME } from '../lib/theme'
 import { resolveImportedLines, type ImportedRecipe } from '../lib/recipeImport'
 import { normalizeUrl, linkHost, linkLabel } from '../lib/links'
 import type { FoodLogEntry, Ingredient, MealType, Recipe, RecipeIngredient, SavedLink } from '../lib/types'
@@ -114,6 +115,11 @@ type FoodSubTab = 'log' | 'recipes' | 'library' | 'links'
 const SUB_TABS: FoodSubTab[] = ['log', 'recipes', 'library', 'links']
 const SUB_TAB_LABELS: Record<FoodSubTab, string> = { log: 'Log', recipes: 'Recipes', library: 'Library', links: 'Links' }
 
+const MACRO_KEYS = ['protein', 'carbs', 'fat'] as const
+const MACRO_LABEL = { protein: 'Protein', carbs: 'Carbs', fat: 'Fat' } as const
+// Same three tints as the macro split bars elsewhere in the app.
+const MACRO_COLOR = { protein: '#a8cfc0', carbs: '#e0cf9a', fat: '#e6b39f' } as const
+
 type RecipeSort = 'logged' | 'recent' | 'az' | 'kcal'
 const RECIPE_SORT_LABELS: Record<RecipeSort, string> = {
   logged: 'Most logged',
@@ -128,26 +134,6 @@ const CATEGORY_SORT_LABELS: Record<CategorySort, string> = {
   used: 'Most used',
   protein: 'Highest protein',
 }
-// Mid-sentence forms for the header's "28 ingredients · sorted …" line. A–Z keeps its
-// capitals; lowercasing the label wholesale turned it into "a–z".
-const CATEGORY_SORT_SUBTITLE: Record<CategorySort, string> = {
-  az: 'A–Z',
-  used: 'most used',
-  protein: 'highest protein',
-}
-
-// Protein / carbs / fat, in that order — the same three colours the Log tab's split bar
-// uses, so a recipe's balance and a day's balance read the same way.
-function MacroSplitBar({ macros, height }: { macros: Macros; height: number }) {
-  if (macros.protein + macros.carbs + macros.fat <= 0) return null
-  return (
-    <div className="flex gap-1" style={{ marginTop: 10 }}>
-      <span className="rounded-full" style={{ height, flex: macros.protein, background: '#a8cfc0' }} />
-      <span className="rounded-full" style={{ height, flex: macros.carbs, background: '#e0cf9a' }} />
-      <span className="rounded-full" style={{ height, flex: macros.fat, background: '#e6b39f' }} />
-    </div>
-  )
-}
 
 export function Food() {
   const [subTab, setSubTab] = useState<FoodSubTab>('log')
@@ -160,12 +146,9 @@ export function Food() {
   const [loading, setLoading] = useState(true)
 
   const [logDate, setLogDate] = useState(todayISO())
-  // The meal the Log tab is focused on. Always explicit now — seeded from the clock, then
-  // whatever you tap. `expandedMeal` is the second stage of the same tile: tapping the
-  // already-selected tile opens that meal's entries in place of the usuals sections, so
-  // only ever one of the two is expanded.
+  // The meal the Log tab is focused on — seeded from the clock, then whatever you tap. Its
+  // logged items and your usuals for it show underneath.
   const [selectedMeal, setSelectedMeal] = useState<MealType>(() => defaultMealTypeForNow())
-  const [expandedMeal, setExpandedMeal] = useState<MealType | null>(null)
   const [addLogOpen, setAddLogOpen] = useState(false)
   const [addLogQuery, setAddLogQuery] = useState('')
   const [addLogFilter, setAddLogFilter] = useState<'all' | 'recipe' | 'ingredient'>('all')
@@ -240,19 +223,37 @@ export function Food() {
   const [scanLookupError, setScanLookupError] = useState<string | null>(null)
   // Target from a "stay under calorie budget" task on Today, when one exists — see kcalLeft.
   const [calorieBudget, setCalorieBudget] = useState<number | null>(null)
+  const [macroGoals, setMacroGoals] = useState<{ protein: number | null; carbs: number | null; fat: number | null }>({
+    protein: null,
+    carbs: null,
+    fat: null,
+  })
+  const [macroGoalsOpen, setMacroGoalsOpen] = useState(false)
+  const [macroGoalDraft, setMacroGoalDraft] = useState({ protein: '', carbs: '', fat: '' })
+  const [latestWeight, setLatestWeight] = useState<number | null>(null)
+  // The Log tab's quick-add list shows a handful; this opens the rest.
+  const [showAllUsuals, setShowAllUsuals] = useState(false)
 
   // Recipes browsing: a meal filter ANDed with the text search, plus a sort.
-  const [mealTypeFilter, setMealTypeFilter] = useState<MealType | 'all'>('all')
+  const [mealTypeFilter, setMealTypeFilter] = useState<MealType | 'all' | 'none'>('all')
   const [recipeSort, setRecipeSort] = useState<RecipeSort>('logged')
-  // Library browsing: categories are collapsed until one is opened as a pushed view.
-  const [openCategory, setOpenCategory] = useState<string | null>(null)
+  // Library browsing: one list, narrowed by a chip — recent, all, or a category — and the
+  // hero search, sorted by the sort chip.
+  const [libraryFilter, setLibraryFilter] = useState<string>('all')
   const [categorySort, setCategorySort] = useState<CategorySort>('az')
-  const [categorySearch, setCategorySearch] = useState('')
 
   async function load() {
     setLoading(true)
-    const [{ data: ingredientRows }, { data: recipeRowsData }, { data: recipeLineRows }, { data: entryRows }, { data: budgetRow }, { data: linkRows }] =
-      await Promise.all([
+    const [
+      { data: ingredientRows },
+      { data: recipeRowsData },
+      { data: recipeLineRows },
+      { data: entryRows },
+      { data: budgetRow },
+      { data: linkRows },
+      { data: settingsRow },
+      { data: weightRow },
+    ] = await Promise.all([
         supabase.from('ingredients').select('*').order('name'),
         supabase.from('recipes').select('*').order('name'),
         supabase.from('recipe_ingredients').select('*').order('position'),
@@ -266,7 +267,13 @@ export function Food() {
           .limit(1)
           .maybeSingle(),
         supabase.from('saved_links').select('*').order('created_at', { ascending: false }),
+        supabase.from('user_settings').select('protein_goal, carbs_goal, fat_goal').maybeSingle(),
+        // For the protein suggestion in the targets sheet (≈1.8 g per kg).
+        supabase.from('journal_entries').select('value_numeric').eq('type', 'weight').order('date', { ascending: false }).limit(1).maybeSingle(),
       ])
+    const num = (v: unknown) => (v != null ? Number(v) : null)
+    setMacroGoals({ protein: num(settingsRow?.protein_goal), carbs: num(settingsRow?.carbs_goal), fat: num(settingsRow?.fat_goal) })
+    setLatestWeight(num(weightRow?.value_numeric))
     setCalorieBudget(budgetRow?.auto_metric_target != null ? Number(budgetRow.auto_metric_target) : null)
     const byRecipe = new Map<string, RecipeIngredient[]>()
     for (const line of recipeLineRows ?? []) {
@@ -424,7 +431,7 @@ export function Food() {
   }
 
   // Per meal, not per day — see mealUsuals. Recomputed as the selected meal changes.
-  const usuals = mealUsuals(entries, selectedMeal, describeRef)
+  const usuals = mealUsuals(entries, selectedMeal, describeRef, { recent: 3, frequent: 7 })
 
   // The app deliberately has no global daily calorie goal (days vary too much for one to
   // mean anything). A "stay under budget" task on Today is the one place a target does
@@ -432,7 +439,43 @@ export function Food() {
   const kcalLeft = calorieBudget != null ? calorieBudget - dayTotal.kcal : null
 
   // Flex weights for the macro split bar — grams, not calories, matching the design.
-  const macroGrams = dayTotal.protein + dayTotal.carbs + dayTotal.fat
+  // Each macro's share of the day's energy (4/4/9 kcal per gram).
+  const macroKcal = dayTotal.protein * 4 + dayTotal.carbs * 4 + dayTotal.fat * 9
+  const kcalShare = {
+    protein: macroKcal ? ((dayTotal.protein * 4) / macroKcal) * 100 : 0,
+    carbs: macroKcal ? ((dayTotal.carbs * 4) / macroKcal) * 100 : 0,
+    fat: macroKcal ? ((dayTotal.fat * 9) / macroKcal) * 100 : 0,
+  }
+
+  function openMacroGoals() {
+    const str = (n: number | null) => (n != null ? String(round(n)) : '')
+    setMacroGoalDraft({ protein: str(macroGoals.protein), carbs: str(macroGoals.carbs), fat: str(macroGoals.fat) })
+    setMacroGoalsOpen(true)
+  }
+
+  // A starting point, not a prescription: protein ≈1.8 g per kg of the latest weigh-in, fat
+  // ≈25% of the calorie budget, carbs whatever the budget has left. Without a budget only
+  // protein can be suggested.
+  const suggestedMacros = (() => {
+    const protein = latestWeight ? Math.round((latestWeight * 1.8) / 5) * 5 : null
+    if (!calorieBudget || !protein) return { protein, carbs: null, fat: null }
+    const fat = Math.round((calorieBudget * 0.25) / 9 / 5) * 5
+    const carbs = Math.max(0, Math.round((calorieBudget - protein * 4 - fat * 9) / 4 / 5) * 5)
+    return { protein, carbs, fat }
+  })()
+
+  async function saveMacroGoals(e: React.FormEvent) {
+    e.preventDefault()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    const val = (s: string) => (s.trim() && Number(s) > 0 ? Number(s) : null)
+    const next = { protein: val(macroGoalDraft.protein), carbs: val(macroGoalDraft.carbs), fat: val(macroGoalDraft.fat) }
+    setMacroGoals(next)
+    setMacroGoalsOpen(false)
+    await supabase.from('user_settings').upsert({ user_id: user.id, protein_goal: next.protein, carbs_goal: next.carbs, fat_goal: next.fat })
+  }
 
   // --- Recipes & Library browsing ---
   // Counted once from the entries already loaded, rather than a query per row.
@@ -450,7 +493,7 @@ export function Food() {
   // was never tagged for, same rule the Log tab's meal sections follow.
   const visibleRecipes = recipes
     .filter((r) => matchesSearch(r.name, recipeSearchQuery))
-    .filter((r) => mealTypeFilter === 'all' || r.meal_type === mealTypeFilter)
+    .filter((r) => mealTypeFilter === 'all' || (mealTypeFilter === 'none' ? !r.meal_type : r.meal_type === mealTypeFilter))
   const sortedRecipes = [...visibleRecipes].sort((a, b) => {
     switch (recipeSort) {
       case 'logged':
@@ -472,30 +515,30 @@ export function Food() {
 
   const ingredientGroups = groupByCategory(ingredients)
   const categoryKeys = orderedCategoryKeys(ingredientGroups.keys())
-  const weekAgo = format(subDays(new Date(), 7), 'yyyy-MM-dd')
-  const usedThisWeek = new Set(entries.filter((e) => e.ingredient_id && e.date >= weekAgo).map((e) => e.ingredient_id as string))
 
   // The last few distinct ingredients logged — what most sessions actually reach for.
   const recentIngredients = [...counts.lastIngredient.entries()]
     .sort((a, b) => b[1].localeCompare(a[1]))
     .map(([id]) => ingredientsById.get(id))
     .filter((i): i is Ingredient => i != null)
-    .slice(0, 8)
+    .slice(0, 12)
 
-  const openCategoryIngredients = openCategory
-    ? [...(ingredientGroups.get(openCategory) ?? [])]
-        .filter((i) => matchesSearch(i.name, categorySearch))
-        .sort((a, b) => {
-          switch (categorySort) {
-            case 'used':
-              return (counts.byIngredient.get(b.id) ?? 0) - (counts.byIngredient.get(a.id) ?? 0)
-            case 'protein':
-              return b.protein_per_100g - a.protein_per_100g
-            case 'az':
-              return a.name.localeCompare(b.name)
-          }
-        })
-    : []
+  // Recent keeps its own order (newest first); everything else follows the sort chip.
+  const libraryList =
+    libraryFilter === 'recent'
+      ? recentIngredients.filter((i) => matchesSearch(i.name, librarySearchQuery))
+      : (libraryFilter === 'all' ? ingredients : (ingredientGroups.get(libraryFilter) ?? []))
+          .filter((i) => matchesSearch(i.name, librarySearchQuery))
+          .sort((a, b) => {
+            switch (categorySort) {
+              case 'used':
+                return (counts.byIngredient.get(b.id) ?? 0) - (counts.byIngredient.get(a.id) ?? 0) || a.name.localeCompare(b.name)
+              case 'protein':
+                return b.protein_per_100g - a.protein_per_100g
+              case 'az':
+                return a.name.localeCompare(b.name, 'sv')
+            }
+          })
 
   // Opens the quantify dialog straight from a list. The dialog renders above whichever
   // sub-tab you're on, so logging never means leaving the one you were browsing —
@@ -524,59 +567,37 @@ export function Food() {
         )
       : null
 
-  // One ingredient row, used by both the open category and the flat search results.
-  // `withCategory` swaps the portion/source caption for which category it's filed under,
-  // which is the useful thing to know when results span all of them.
-  function renderIngredientRow(ingredient: Ingredient, withCategory: boolean) {
-    const key = ingredient.category ?? UNCATEGORIZED
-    const look = categoryLook(key)
+  // One library row: the category's glyph, name and per-100 g numbers, + to log it.
+  // Tapping the row edits it. `glyph` is for mixed lists (All, Recent), where the category
+  // isn't otherwise obvious; `divider` draws the line above it.
+  function renderIngredientRow(ingredient: Ingredient, glyph: boolean, divider: boolean) {
+    const look = categoryLook(ingredient.category ?? UNCATEGORIZED)
     const used = counts.byIngredient.get(ingredient.id) ?? 0
     return (
-      <div className="flex items-center gap-3 overflow-hidden rounded-[18px] border border-line bg-surface shadow-card">
-        <span className="w-[5px] shrink-0 self-stretch" style={{ background: look.accent }} />
-        <button
-          onClick={() => openEditIngredient(ingredient)}
-          className="min-w-0 flex-1 py-2.5 text-left"
-          aria-label={`Edit ${ingredient.name}`}
-        >
-          <span className="flex items-center gap-1.5">
-            <span className="min-w-0 truncate text-sm font-medium text-ink">{ingredient.name}</span>
-            {used >= 5 && (
-              <span className="shrink-0 rounded-full bg-cat-emerald-tint px-1.5 py-0.5 text-[10px] font-semibold text-cat-emerald-ink">
-                used {used}×
-              </span>
-            )}
-          </span>
-          <span className="mt-0.5 block truncate text-[11px] text-ink-muted">
-            {withCategory
-              ? key === UNCATEGORIZED
-                ? 'Uncategorised'
-                : key
-              : `${ingredient.kcal_per_100g} kcal/100g · P ${round(ingredient.protein_per_100g)}g C ${round(
-                  ingredient.carbs_per_100g,
-                )}g F ${round(ingredient.fat_per_100g)}g`}
-            {!withCategory && ingredient.portion_label && ingredient.portion_grams
-              ? ` · 1 ${ingredient.portion_label} = ${ingredient.portion_grams}g`
-              : ''}
-            {!withCategory && ingredient.source === 'livsmedelsverket' ? ' · Livsmedelsverket' : ''}
+      <div className={`flex items-center gap-3 px-3 py-2.5 ${divider ? 'border-t border-line' : ''}`}>
+        <button onClick={() => openEditIngredient(ingredient)} className="flex min-w-0 flex-1 items-center gap-3 text-left" aria-label={`Edit ${ingredient.name}`}>
+          {glyph && (
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[15px]" style={{ background: look.tint }}>
+              {look.glyph}
+            </span>
+          )}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium text-ink">{ingredient.name}</span>
+            <span className="block truncate text-[11px] text-ink-muted">
+              <span className="font-semibold text-ink-2">{round(ingredient.kcal_per_100g)} kcal</span> · P {round(ingredient.protein_per_100g)} · C{' '}
+              {round(ingredient.carbs_per_100g)} · F {round(ingredient.fat_per_100g)} /100g
+              {ingredient.portion_label && ingredient.portion_grams ? ` · 1 ${ingredient.portion_label} = ${ingredient.portion_grams}g` : ''}
+              {used > 0 ? ` · ${used}×` : ''}
+            </span>
           </span>
         </button>
-        <span className="mr-3.5 flex shrink-0 gap-1.5">
-          <button
-            onClick={() => logFromList('ingredient', ingredient.id, ingredient.name)}
-            aria-label={`Log ${ingredient.name}`}
-            className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-cat-emerald-tint text-[15px] text-cat-emerald-ink"
-          >
-            +
-          </button>
-          <button
-            onClick={() => openEditIngredient(ingredient)}
-            aria-label={`Edit ${ingredient.name}`}
-            className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-track text-xs text-ink-3"
-          >
-            ✎
-          </button>
-        </span>
+        <button
+          onClick={() => logFromList('ingredient', ingredient.id, ingredient.name)}
+          aria-label={`Log ${ingredient.name}`}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cat-emerald-tint text-base font-semibold text-cat-emerald-ink"
+        >
+          +
+        </button>
       </div>
     )
   }
@@ -619,6 +640,7 @@ export function Food() {
     }
     if (mode === 'scan') setScannerOpen(true)
   }
+
 
   // --- Recipe builder ---
 
@@ -1022,35 +1044,10 @@ export function Food() {
 
   return (
     <Screen
-      title={openCategory ? (openCategory === UNCATEGORIZED ? 'Uncategorised' : openCategory) : 'Food'}
-      subtitle={
-        openCategory
-          ? `${(ingredientGroups.get(openCategory) ?? []).length} ingredients · sorted ${CATEGORY_SORT_SUBTITLE[categorySort]}`
-          : undefined
-      }
-      onBack={openCategory ? () => setOpenCategory(null) : undefined}
+      title="Food"
       onRefresh={load}
       hero={
-        openCategory ? (
-          <>
-            <HeroSearch
-              value={categorySearch}
-              onChange={setCategorySearch}
-              placeholder={`Search in ${openCategory === UNCATEGORIZED ? 'Uncategorised' : openCategory}`}
-            />
-            <div className="mt-3">
-              <ChipRail
-                tone="hero"
-                options={(Object.keys(CATEGORY_SORT_LABELS) as CategorySort[]).map((s) => ({
-                  id: s,
-                  label: CATEGORY_SORT_LABELS[s],
-                }))}
-                value={categorySort}
-                onChange={setCategorySort}
-              />
-            </div>
-          </>
-        ) : (
+        (
           <>
             <HeroSegments
               options={SUB_TABS.map((t) => ({ id: t, label: SUB_TAB_LABELS[t] }))}
@@ -1080,10 +1077,12 @@ export function Food() {
             )}
             {subTab === 'log' && (
             <>
-              <div className="mt-4 flex items-end justify-between gap-3">
+              <div className="mt-3 flex items-end justify-between gap-3">
                 <p className="flex items-baseline gap-[7px] leading-none">
                   <span className="text-[27px] font-semibold">{round(dayTotal.kcal).toLocaleString()}</span>
-                  <span className="text-xs font-medium text-white/75">kcal logged</span>
+                  <span className="text-xs font-medium text-white/75">
+                    {calorieBudget != null ? `of ${round(calorieBudget).toLocaleString()} kcal` : 'kcal logged'}
+                  </span>
                 </p>
                 {kcalLeft != null && (
                   <span
@@ -1098,12 +1097,36 @@ export function Food() {
                   </span>
                 )}
               </div>
-              {macroGrams > 0 && (
-                <div className="mt-2.5 flex gap-1">
-                  <span className="h-1.5 rounded-full" style={{ flex: dayTotal.protein, background: '#a8cfc0' }} />
-                  <span className="h-1.5 rounded-full" style={{ flex: dayTotal.carbs, background: '#e0cf9a' }} />
-                  <span className="h-1.5 rounded-full" style={{ flex: dayTotal.fat, background: '#e6b39f' }} />
-                </div>
+              {/* Protein / carbs / fat, each against its own target when one is set — the
+                  overview the old three-colour split bar only hinted at. Tap to set targets. */}
+              <button onClick={openMacroGoals} className="mt-3 grid w-full grid-cols-3 gap-2 text-left">
+                {MACRO_KEYS.map((key) => {
+                  const grams = dayTotal[key]
+                  const goal = macroGoals[key]
+                  const pct = goal ? Math.min(100, (grams / goal) * 100) : null
+                  return (
+                    <span key={key} className="flex flex-col gap-1 rounded-2xl bg-white/12 px-2.5 py-2">
+                      <span className="text-[10px] font-semibold tracking-[0.06em] text-white/70">{MACRO_LABEL[key].toUpperCase()}</span>
+                      <span className="text-[15px] font-semibold leading-none text-white">
+                        {round(grams)}
+                        <span className="text-[11px] font-medium text-white/65">{goal ? ` / ${round(goal)} g` : ' g'}</span>
+                      </span>
+                      {/* Against the target when there is one; otherwise its share of the
+                          day's calories, said in words so the bar isn't a mystery. */}
+                      <span className="h-1 overflow-hidden rounded-full bg-white/20">
+                        <span className="block h-full rounded-full" style={{ width: `${pct ?? kcalShare[key]}%`, background: MACRO_COLOR[key] }} />
+                      </span>
+                      <span className="text-[10px] font-medium text-white/65">
+                        {goal ? (grams >= goal ? 'target reached' : `${round(goal - grams)} g to go`) : `${round(kcalShare[key])}% of kcal`}
+                      </span>
+                    </span>
+                  )
+                })}
+              </button>
+              {!macroGoals.protein && !macroGoals.carbs && !macroGoals.fat && (
+                <button onClick={openMacroGoals} className="mt-2 text-[11px] font-semibold text-white/80">
+                  Set daily macro targets ›
+                </button>
               )}
               <div className="mt-3.5 flex items-center justify-between gap-2 rounded-2xl bg-white/14 px-3 py-[7px]">
                 <button
@@ -1142,37 +1165,26 @@ export function Food() {
     >
       {subTab === 'log' && (
         <>
-          {/* The meal strip: the day at a glance, and the only meal selector. Tapping an
-              unselected tile focuses that meal; tapping the selected one toggles its
-              entries open — two stages on one control, so the strip doubles as the list. */}
+          {/* The meal strip: the day at a glance, and the meal selector. */}
           <div className="grid shrink-0 grid-cols-4 gap-2">
             {MEAL_TYPES.map((meal) => {
               const look = MEAL_LOOK[meal]
               const kcal = mealKcal.get(meal) ?? null
               const selected = selectedMeal === meal
-              const open = expandedMeal === meal
               return (
                 <button
                   key={meal}
                   onClick={() => {
-                    if (selected) {
-                      setExpandedMeal(open ? null : meal)
-                    } else {
-                      setSelectedMeal(meal)
-                      setExpandedMeal(null)
-                    }
+                    setSelectedMeal(meal)
+                    setShowAllUsuals(false)
                   }}
-                  aria-label={`${MEAL_TYPE_INFO[meal].label}${selected ? (open ? ' — hide entries' : ' — show entries') : ''}`}
-                  className={`flex flex-col items-center gap-[3px] rounded-[18px] px-1 py-2.5 ${
-                    selected ? '' : 'border border-line bg-surface'
-                  }`}
+                  aria-label={MEAL_TYPE_INFO[meal].label}
+                  aria-pressed={selected}
+                  className={`flex flex-col items-center gap-[3px] rounded-[18px] px-1 py-2.5 ${selected ? '' : 'border border-line bg-surface'}`}
                   style={selected ? { background: look.accent, boxShadow: `0 4px 12px ${look.accent}4d` } : undefined}
                 >
                   <span className="text-[15px] leading-none">{look.icon}</span>
-                  <span
-                    className="text-[13px] font-semibold leading-none"
-                    style={{ color: selected ? '#fff' : kcal == null ? '#a09a8c' : look.ink }}
-                  >
+                  <span className="text-[13px] font-semibold leading-none" style={{ color: selected ? '#fff' : kcal == null ? '#a09a8c' : look.ink }}>
                     {kcal == null ? '—' : round(kcal).toLocaleString()}
                   </span>
                   <span
@@ -1181,18 +1193,13 @@ export function Food() {
                   >
                     {MEAL_TYPE_INFO[meal].label}
                   </span>
-                  {selected && (
-                    <span className="text-[9px] leading-none" style={{ color: 'rgba(255,255,255,.7)' }}>
-                      {open ? '⌃' : '⌄'}
-                    </span>
-                  )}
                 </button>
               )
             })}
           </div>
 
           {/* Search sits right under the strip, always visible, so something you haven't
-              logged for this meal before is one tap away rather than behind the usuals. */}
+              logged for this meal before is one tap away. */}
           <div className="flex shrink-0 gap-2">
             <button
               onClick={openAddLog}
@@ -1214,175 +1221,113 @@ export function Food() {
 
           {loading ? (
             <p className="text-sm text-ink-disabled">Loading…</p>
-          ) : expandedMeal ? (
-            <>
-              {/* Entries for the open meal, in place of the usuals. */}
-              <div className="shrink-0 overflow-hidden rounded-[22px] border border-line bg-surface shadow-card">
-                <div
-                  className="flex items-center justify-between gap-2.5 px-3.5 py-2.5"
-                  style={{ background: MEAL_LOOK[expandedMeal].tint }}
-                >
-                  <span className="text-[13px] font-semibold" style={{ color: MEAL_LOOK[expandedMeal].ink }}>
-                    {MEAL_LOOK[expandedMeal].icon} Logged for {MEAL_TYPE_INFO[expandedMeal].label.toLowerCase()}
-                  </span>
-                  <span className="shrink-0 text-xs font-semibold" style={{ color: MEAL_LOOK[expandedMeal].ink }}>
-                    {round(mealKcal.get(expandedMeal) ?? 0).toLocaleString()} kcal
-                  </span>
-                </div>
-                <div className="flex flex-col gap-[9px] px-3.5 pb-3 pt-2.5">
-                  {(dayEntriesByMeal.get(expandedMeal) ?? []).length === 0 ? (
-                    <p className="text-[13px] text-ink-disabled">Nothing logged for this meal yet.</p>
-                  ) : (
-                    (dayEntriesByMeal.get(expandedMeal) ?? []).map((entry) => {
-                      const m = macrosFor(entry)
-                      return (
-                        <div key={entry.id} className="flex items-center gap-2.5">
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-[13px] font-medium text-ink-2">{entryLabel(entry)}</span>
-                            <span className="block text-[10px] font-medium text-ink-muted">
-                              {round(m.kcal)} kcal · P {round(m.protein)} C {round(m.carbs)} F {round(m.fat)}
-                            </span>
-                          </span>
-                          <button onClick={() => beginEditEntry(entry)} className="shrink-0 text-[13px] text-ink-faint" aria-label="Edit entry">
-                            ✎
-                          </button>
-                          <button
-                            onClick={() => setConfirmDeleteEntry(entry)}
-                            className="shrink-0 text-[13px] text-ink-faint"
-                            aria-label="Remove entry"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      )
-                    })
-                  )}
-                </div>
-              </div>
-
-              {/* The usuals, collapsed into one row that reopens them. */}
-              <button
-                onClick={() => setExpandedMeal(null)}
-                className="flex shrink-0 items-center gap-3 rounded-[20px] border border-line bg-surface px-[15px] py-3 text-left shadow-card"
-              >
-                <span
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[13px] text-lg font-semibold"
-                  style={{ background: MEAL_LOOK[selectedMeal].tint, color: MEAL_LOOK[selectedMeal].ink }}
-                >
-                  +
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-semibold text-ink">
-                    Add to {MEAL_TYPE_INFO[selectedMeal].label.toLowerCase()}
-                  </span>
-                  <span className="mt-0.5 block text-[10px] font-medium text-ink-muted">
-                    {usuals.recent.length} recent · {usuals.frequent.length} usual{usuals.frequent.length === 1 ? '' : 's'}
-                  </span>
-                </span>
-                <span className="shrink-0 text-sm text-ink-faint">⌄</span>
-              </button>
-            </>
           ) : (
-            <>
-              {usuals.recent.length > 0 && (
+            (() => {
+              const look = MEAL_LOOK[selectedMeal]
+              const logged = dayEntriesByMeal.get(selectedMeal) ?? []
+              const mealMacros = logged.reduce((sum, e) => addMacros(sum, macrosFor(e)), ZERO_MACROS)
+              // Recent and most-logged as one list: what you had lately first, then your
+              // standbys — mealUsuals already keeps the two from repeating each other.
+              // Already on this meal today? It's in the list above; don't offer it twice.
+              const loggedKeys = new Set(logged.map((e) => (e.recipe_id ? `recipe:${e.recipe_id}` : `ingredient:${e.ingredient_id}`)))
+              const picks = [...usuals.recent, ...usuals.frequent].filter((u) => !loggedKeys.has(`${u.ref.kind}:${u.ref.id}`))
+              const shown = showAllUsuals ? picks : picks.slice(0, 5)
+              const label = MEAL_TYPE_INFO[selectedMeal].label.toLowerCase()
+              return (
                 <>
-                  <div className="flex shrink-0 items-center gap-2.5">
-                    <span className="text-[10px] font-semibold tracking-[0.07em] text-ink-muted">
-                      RECENT {MEAL_TYPE_INFO[selectedMeal].label.toUpperCase()}S
-                    </span>
-                    <span className="h-px flex-1 bg-line-strong" />
-                  </div>
-                  <div className="no-scrollbar -mt-1 flex shrink-0 gap-[7px] overflow-x-auto">
-                    {usuals.recent.map((usual, i) => {
-                      const look = MEAL_LOOK[selectedMeal]
-                      const first = i === 0
-                      return (
-                        <button
-                          key={`${usual.ref.kind}:${usual.ref.id}`}
-                          onClick={() => beginQuantify(usual.ref.kind, usual.ref.id, usual.name, usual.quantity)}
-                          className={`flex shrink-0 items-center gap-2 rounded-2xl py-[7px] pl-[11px] pr-[9px] text-left ${
-                            first ? '' : 'border border-line bg-surface'
-                          }`}
-                          style={first ? { background: look.tint } : undefined}
-                        >
-                          <span className="flex flex-col">
-                            <span
-                              className="text-xs font-semibold"
-                              style={{ color: first ? look.ink : undefined }}
+                  {logged.length > 0 && (
+                    <div className="shrink-0 overflow-hidden rounded-[20px] border border-line bg-surface shadow-card">
+                      <div className="flex items-center justify-between gap-2.5 px-3.5 py-2.5" style={{ background: look.tint }}>
+                        <span className="text-[13px] font-semibold" style={{ color: look.ink }}>
+                          {look.icon} {MEAL_TYPE_INFO[selectedMeal].label}
+                        </span>
+                        <span className="shrink-0 text-[11px] font-semibold" style={{ color: look.ink }}>
+                          {round(mealMacros.kcal).toLocaleString()} kcal · P {round(mealMacros.protein)} C {round(mealMacros.carbs)} F{' '}
+                          {round(mealMacros.fat)}
+                        </span>
+                      </div>
+                      <div className="flex flex-col">
+                        {logged.map((entry, i) => {
+                          const m = macrosFor(entry)
+                          return (
+                            <div key={entry.id} className={`flex items-center gap-2.5 px-3.5 py-2.5 ${i > 0 ? 'border-t border-line' : ''}`}>
+                              <button onClick={() => beginEditEntry(entry)} className="min-w-0 flex-1 text-left">
+                                <span className="block truncate text-[13px] font-medium text-ink">{entryLabel(entry)}</span>
+                                <span className="block text-[11px] font-medium text-ink-muted">
+                                  {round(m.kcal)} kcal · P {round(m.protein)} · C {round(m.carbs)} · F {round(m.fat)}
+                                </span>
+                              </button>
+                              <button
+                                onClick={() => setConfirmDeleteEntry(entry)}
+                                className="shrink-0 px-1 text-[13px] text-ink-faint"
+                                aria-label="Remove entry"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {picks.length > 0 ? (
+                    <>
+                      <div className="flex shrink-0 items-center gap-2.5">
+                        <span className="text-[10px] font-semibold tracking-[0.07em] text-ink-muted">
+                          YOUR USUAL {MEAL_TYPE_INFO[selectedMeal].label.toUpperCase()}S
+                        </span>
+                        <span className="h-px flex-1 bg-line-strong" />
+                      </div>
+                      <div className="flex shrink-0 flex-col overflow-hidden rounded-[20px] border border-line bg-surface shadow-card">
+                        {shown.map((usual, i) => {
+                          const amount =
+                            usual.ref.kind === 'recipe'
+                              ? `${usual.quantity} serving${usual.quantity === 1 ? '' : 's'}`
+                              : `${round(usual.quantity)} g`
+                          return (
+                            <button
+                              key={`${usual.ref.kind}:${usual.ref.id}`}
+                              onClick={() => beginQuantify(usual.ref.kind, usual.ref.id, usual.name, usual.quantity)}
+                              className={`flex items-center gap-3 px-3.5 py-2.5 text-left ${i > 0 ? 'border-t border-line' : ''}`}
                             >
-                              {usual.name}
-                            </span>
-                            <span className="text-[9px] font-medium" style={{ color: first ? look.accent : '#8b8577' }}>
-                              {relativeDayLabel(usual.lastDate, logDate)} · {round(usual.kcal)} kcal
-                            </span>
-                          </span>
-                          <span
-                            className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full text-sm font-semibold"
-                            style={
-                              first
-                                ? { background: look.accent, color: '#fff' }
-                                : { background: look.tint, color: look.ink }
-                            }
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-medium text-ink">{usual.name}</span>
+                                <span className="block truncate text-[11px] font-medium text-ink-muted">
+                                  {amount} · {round(usual.kcal)} kcal · {relativeDayLabel(usual.lastDate, logDate)}
+                                  {usual.count > 1 ? ` · ${usual.count}×` : ''}
+                                </span>
+                              </span>
+                              <span
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-base font-semibold"
+                                style={{ background: look.tint, color: look.ink }}
+                              >
+                                +
+                              </span>
+                            </button>
+                          )
+                        })}
+                        {picks.length > 5 && (
+                          <button
+                            onClick={() => setShowAllUsuals((v) => !v)}
+                            className="border-t border-line py-2.5 text-xs font-semibold text-pine"
                           >
-                            +
-                          </span>
-                        </button>
-                      )
-                    })}
-                  </div>
+                            {showAllUsuals ? 'Show fewer' : `Show ${picks.length - 5} more`}
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    logged.length === 0 && (
+                      <p className="shrink-0 px-1 text-[13px] text-ink-muted">
+                        Nothing logged for {label} yet — search above, and what you log here will show up as one-tap suggestions next
+                        time.
+                      </p>
+                    )
+                  )}
                 </>
-              )}
-
-              {usuals.frequent.length > 0 && (
-                <div className="flex shrink-0 flex-col gap-[9px]">
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-[10px] font-semibold tracking-[0.07em] text-ink-muted">
-                      MOST-LOGGED {MEAL_TYPE_INFO[selectedMeal].label.toUpperCase()}S
-                    </span>
-                    <span className="h-px flex-1 bg-line-strong" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-[9px]">
-                    {usuals.frequent.map((usual) => {
-                      const look = MEAL_LOOK[selectedMeal]
-                      const amount =
-                        usual.ref.kind === 'recipe'
-                          ? `${usual.quantity} serving${usual.quantity === 1 ? '' : 's'}`
-                          : `${round(usual.quantity)} g`
-                      return (
-                        <button
-                          key={`${usual.ref.kind}:${usual.ref.id}`}
-                          onClick={() => beginQuantify(usual.ref.kind, usual.ref.id, usual.name, usual.quantity)}
-                          className="flex flex-col gap-1 rounded-[18px] border border-line bg-surface px-[13px] py-[11px] text-left shadow-card"
-                        >
-                          <span className="line-clamp-2 text-[13px] font-semibold leading-tight text-ink">{usual.name}</span>
-                          <span className="text-[10px] font-medium text-ink-muted">
-                            {amount} · {round(usual.kcal)} kcal
-                          </span>
-                          <span className="mt-0.5 flex items-center justify-between">
-                            <span className="text-[9px] font-semibold" style={{ color: look.accent }}>
-                              {usual.count}×
-                            </span>
-                            <span
-                              className="flex h-7 w-7 items-center justify-center rounded-full text-[15px] font-semibold"
-                              style={{ background: look.tint, color: look.ink }}
-                            >
-                              +
-                            </span>
-                          </span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {usuals.recent.length === 0 && usuals.frequent.length === 0 && (
-                <p className="shrink-0 px-1 text-[13px] text-ink-muted">
-                  Nothing logged for {MEAL_TYPE_INFO[selectedMeal].label.toLowerCase()} yet — search above, and what you log here
-                  will show up as one-tap suggestions next time.
-                </p>
-              )}
-            </>
+              )
+            })()
           )}
 
           {/* Anything logged before meal tagging existed. Kept visible rather than being
@@ -1425,113 +1370,94 @@ export function Food() {
 
       {subTab === 'recipes' && (
         <>
-          <div className="flex gap-2.5">
+          <ChipRail
+            options={[
+              { id: 'all' as const, label: `All ${recipes.length}` },
+              ...MEAL_TYPES.filter((m) => (recipeMealCounts.get(m) ?? 0) > 0 || mealTypeFilter === m).map((m) => ({
+                id: m,
+                label: `${MEAL_TYPE_INFO[m].icon} ${MEAL_TYPE_INFO[m].label} ${recipeMealCounts.get(m) ?? 0}`,
+              })),
+              ...(recipes.some((r) => !r.meal_type) ? [{ id: 'none' as const, label: `Untagged ${recipes.filter((r) => !r.meal_type).length}` }] : []),
+            ]}
+            value={mealTypeFilter}
+            onChange={setMealTypeFilter}
+          />
+
+          {/* One slim toolbar: sort on the left, the two ways in on the right. */}
+          <div className="flex items-center gap-2">
+            <label className="flex min-w-0 items-center gap-1 text-xs font-medium text-ink-3">
+              <span className="shrink-0">Sort</span>
+              <select
+                value={recipeSort}
+                onChange={(e) => setRecipeSort(e.target.value as RecipeSort)}
+                aria-label="Sort recipes"
+                className="min-w-0 bg-transparent text-xs font-semibold text-ink-2 outline-none"
+              >
+                {(Object.keys(RECIPE_SORT_LABELS) as RecipeSort[]).map((s) => (
+                  <option key={s} value={s}>
+                    {RECIPE_SORT_LABELS[s]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="flex-1" />
             <button
               onClick={() => {
                 setImportUrl('')
                 setImportError(null)
                 setImportOpen(true)
               }}
-              className="flex-1 rounded-[20px] bg-pine py-3.5 text-sm font-semibold text-white"
+              className="shrink-0 rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-pine"
             >
-              🔗 Import from URL
+              🔗 Import
             </button>
-            <button
-              onClick={openNewRecipe}
-              className="flex-1 rounded-[20px] border border-line-strong bg-surface py-3.5 text-sm font-semibold text-pine"
-            >
-              + New recipe
+            <button onClick={openNewRecipe} className="shrink-0 rounded-full bg-pine px-3 py-1.5 text-xs font-semibold text-white">
+              + New
             </button>
-          </div>
-
-          <ChipRail
-            options={[
-              { id: 'all' as const, label: `All ${recipes.length}` },
-              ...MEAL_TYPES.map((m) => ({ id: m, label: `${MEAL_TYPE_INFO[m].icon} ${recipeMealCounts.get(m) ?? 0}` })),
-            ]}
-            value={mealTypeFilter}
-            onChange={setMealTypeFilter}
-          />
-
-          <div className="flex items-center justify-between gap-2">
-            <span className="shrink-0 text-xs font-semibold text-ink-3">Sorted by</span>
-            <select
-              value={recipeSort}
-              onChange={(e) => setRecipeSort(e.target.value as RecipeSort)}
-              aria-label="Sort recipes"
-              className="min-w-0 rounded-[14px] border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink-2 outline-none"
-            >
-              {(Object.keys(RECIPE_SORT_LABELS) as RecipeSort[]).map((s) => (
-                <option key={s} value={s}>
-                  {RECIPE_SORT_LABELS[s]}
-                </option>
-              ))}
-            </select>
           </div>
 
           {loading ? (
             <p className="text-sm text-ink-disabled">Loading…</p>
           ) : recipes.length === 0 ? (
-            <p className="text-sm text-ink-disabled">No recipes yet — add one below.</p>
+            <p className="text-sm text-ink-disabled">No recipes yet — import one from a link or build one with + New.</p>
           ) : sortedRecipes.length === 0 ? (
             <p className="text-sm text-ink-disabled">
               {recipeSearchQuery ? `No recipes match "${recipeSearchQuery}".` : 'No recipes tagged for that meal.'}
             </p>
           ) : (
-            <div className="flex flex-col gap-2.5">
-              {sortedRecipes.map((recipe) => {
-                const lines = recipeLines.get(recipe.id) ?? []
+            // A compact list: one row per recipe with what matters for picking one — energy
+            // and macros per serving, how often it's logged — and + to log it. Tap the row
+            // for ingredients and editing.
+            <div className="flex flex-col overflow-hidden rounded-[20px] border border-line bg-surface shadow-card">
+              {sortedRecipes.map((recipe, i) => {
                 const perServing = recipeMacros(recipe)
                 const logged = counts.byRecipe.get(recipe.id) ?? 0
-                // MEAL_LOOK, not a second map: this card used to paint dinner slate blue
-                // while the Log tab painted it terracotta, for the same meal.
-                const accent = recipe.meal_type ? MEAL_LOOK[recipe.meal_type].accent : '#8b8577'
+                const look = recipe.meal_type ? MEAL_LOOK[recipe.meal_type] : null
                 return (
-                  <div
-                    key={recipe.id}
-                    className="flex overflow-hidden rounded-[22px] border border-line bg-surface shadow-card"
-                  >
-                    <span className="w-[5px] shrink-0 self-stretch" style={{ background: accent }} />
-                    <div className="min-w-0 flex-1 px-4 py-3.5">
-                      <button onClick={() => setViewingRecipe(recipe)} className="w-full text-left">
-                        <div className="flex items-start justify-between gap-2.5">
-                          <div className="min-w-0">
-                            <p className="truncate text-[15px] font-semibold text-ink">{recipe.name}</p>
-                            <p className="mt-0.5 truncate text-[11px] font-medium text-ink-muted">
-                              {recipe.meal_type ? `${MEAL_TYPE_INFO[recipe.meal_type].icon} ${MEAL_TYPE_INFO[recipe.meal_type].label} · ` : ''}
-                              {recipe.servings} serving{recipe.servings === 1 ? '' : 's'} · {lines.length} ingredient
-                              {lines.length === 1 ? '' : 's'}
-                            </p>
-                          </div>
-                          <span className="shrink-0 text-right">
-                            <span className="block text-[17px] font-semibold text-ink">{round(perServing.kcal)}</span>
-                            <span className="text-[10px] font-medium text-ink-muted">kcal/serving</span>
-                          </span>
-                        </div>
-                        <MacroSplitBar macros={perServing} height={6} />
-                      </button>
-                      <div className="mt-2.5 flex items-center justify-between gap-2">
-                        <span className="min-w-0 truncate text-[11px] font-medium text-ink-2">
-                          P {round(perServing.protein)}g · C {round(perServing.carbs)}g · F {round(perServing.fat)}g
-                          {logged > 0 && ` · logged ${logged}×`}
+                  <div key={recipe.id} className={`flex items-center gap-3 px-3 py-2.5 ${i > 0 ? 'border-t border-line' : ''}`}>
+                    <button onClick={() => setViewingRecipe(recipe)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+                      <span
+                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] text-base"
+                        style={{ background: look?.tint ?? THEME.track }}
+                      >
+                        {look?.icon ?? '🍽'}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold text-ink">{recipe.name}</span>
+                        <span className="block truncate text-[11px] font-medium text-ink-muted">
+                          <span className="font-semibold text-ink-2">{round(perServing.kcal)} kcal</span> · P {round(perServing.protein)} · C{' '}
+                          {round(perServing.carbs)} · F {round(perServing.fat)}
+                          {logged > 0 && ` · ${logged}×`}
                         </span>
-                        <span className="flex shrink-0 gap-1.5">
-                          <button
-                            onClick={() => logFromList('recipe', recipe.id, recipe.name)}
-                            className="rounded-[14px] bg-cat-emerald-tint px-3 py-1.5 text-xs font-semibold text-cat-emerald-ink"
-                          >
-                            + Log
-                          </button>
-                          <button
-                            onClick={() => openEditRecipe(recipe)}
-                            aria-label={`Edit ${recipe.name}`}
-                            className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-track text-xs text-ink-3"
-                          >
-                            ✎
-                          </button>
-                        </span>
-                      </div>
-                    </div>
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => logFromList('recipe', recipe.id, recipe.name)}
+                      aria-label={`Log ${recipe.name}`}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cat-emerald-tint text-base font-semibold text-cat-emerald-ink"
+                    >
+                      +
+                    </button>
                   </div>
                 )
               })}
@@ -1540,25 +1466,55 @@ export function Food() {
         </>
       )}
 
-      {/* Library, collapsed: one row per category. A text search bypasses the accordion
-          entirely and shows flat results, which is what a search is for. */}
-      {subTab === 'library' && !openCategory && (
+      {/* Library: one list. The chips pick recent, everything, or one category; the hero
+          search narrows whichever is picked; letter headings while it's A–Z. */}
+      {subTab === 'library' && (
         <>
-          <div className="flex gap-2.5">
+          <ChipRail
+            options={[
+              ...(recentIngredients.length ? [{ id: 'recent', label: '🕘 Recent' }] : []),
+              { id: 'all', label: `All ${ingredients.length}` },
+              ...categoryKeys.map((key) => ({
+                id: key,
+                label: `${categoryLook(key).glyph} ${key === UNCATEGORIZED ? 'Uncategorised' : key} ${ingredientGroups.get(key)?.length ?? 0}`,
+              })),
+            ]}
+            value={libraryFilter}
+            onChange={setLibraryFilter}
+          />
+
+          <div className="flex items-center gap-2">
+            {libraryFilter !== 'recent' ? (
+              <label className="flex min-w-0 items-center gap-1 text-xs font-medium text-ink-3">
+                <span className="shrink-0">Sort</span>
+                <select
+                  value={categorySort}
+                  onChange={(e) => setCategorySort(e.target.value as CategorySort)}
+                  aria-label="Sort ingredients"
+                  className="min-w-0 bg-transparent text-xs font-semibold text-ink-2 outline-none"
+                >
+                  {(Object.keys(CATEGORY_SORT_LABELS) as CategorySort[]).map((sort) => (
+                    <option key={sort} value={sort}>
+                      {CATEGORY_SORT_LABELS[sort]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <span className="text-xs font-medium text-ink-3">Last used first</span>
+            )}
+            <span className="flex-1" />
             <button
               onClick={() => {
                 setScanLookupError(null)
                 openNewIngredient('library')
                 setScannerOpen(true)
               }}
-              className="flex flex-1 items-center justify-center gap-2 rounded-[20px] bg-pine py-3.5 text-sm font-semibold text-white"
+              className="shrink-0 rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-pine"
             >
               📷 Scan
             </button>
-            <button
-              onClick={() => openNewIngredient('library')}
-              className="flex-1 rounded-[20px] border border-line-strong bg-surface py-3.5 text-sm font-semibold text-pine"
-            >
+            <button onClick={() => openNewIngredient('library')} className="shrink-0 rounded-full bg-pine px-3 py-1.5 text-xs font-semibold text-white">
               + New
             </button>
           </div>
@@ -1566,108 +1522,31 @@ export function Food() {
           {loading ? (
             <p className="text-sm text-ink-disabled">Loading…</p>
           ) : ingredients.length === 0 ? (
-            <p className="text-sm text-ink-disabled">No ingredients yet — add one above.</p>
-          ) : librarySearchQuery ? (
-            (() => {
-              const matches = ingredients.filter((i) => matchesSearch(i.name, librarySearchQuery))
-              if (matches.length === 0)
-                return <p className="text-sm text-ink-disabled">No ingredients match "{librarySearchQuery}".</p>
-              return (
-                <div className="flex flex-col gap-2">
-                  {matches.map((ingredient) => renderIngredientRow(ingredient, true))}
-                </div>
-              )
-            })()
-          ) : (
-            <>
-              {recentIngredients.length > 0 && (
-                <>
-                  <p className="text-xs font-semibold text-ink-3">Recently used</p>
-                  <div className="no-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5">
-                    {recentIngredients.map((ingredient) => (
-                      <button
-                        key={ingredient.id}
-                        onClick={() => logFromList('ingredient', ingredient.id, ingredient.name)}
-                        className="shrink-0 whitespace-nowrap rounded-2xl border border-line bg-surface px-3.5 py-2.5 text-xs font-medium text-ink"
-                      >
-                        {ingredient.name}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-
-              <div className="flex flex-col gap-2">
-                {categoryKeys.map((key) => {
-                  const group = ingredientGroups.get(key)!
-                  const look = categoryLook(key)
-                  const usedCount = group.filter((i) => usedThisWeek.has(i.id)).length
-                  return (
-                    <button
-                      key={key}
-                      onClick={() => {
-                        setOpenCategory(key)
-                        setCategorySearch('')
-                        setCategorySort('az')
-                      }}
-                      className="flex items-center gap-3 rounded-[20px] border border-line bg-surface px-4 py-3.5 text-left shadow-card"
-                    >
-                      <span
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[15px]"
-                        style={{ background: look.tint }}
-                      >
-                        {look.glyph}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-semibold text-ink">
-                          {key === UNCATEGORIZED ? 'Uncategorised' : key}
-                        </span>
-                        <span className="block truncate text-[11px] text-ink-muted">
-                          {group.length} item{group.length === 1 ? '' : 's'}
-                          {key === UNCATEGORIZED
-                            ? ' · tap to sort them'
-                            : usedCount > 0
-                              ? ` · ${usedCount} used this week`
-                              : ''}
-                        </span>
-                      </span>
-                      <span className="shrink-0 text-sm text-ink-muted">⌄</span>
-                    </button>
-                  )
-                })}
-              </div>
-            </>
-          )}
-
-          <p className="text-[11px] text-ink-disabled">Nutrition data via Livsmedelsverket's Livsmedelsdatabasen (CC BY 4.0).</p>
-        </>
-      )}
-
-      {/* Library, one category open — a pushed view with its own header (see Screen's
-          onBack) and its own sort rail. */}
-      {subTab === 'library' && openCategory && (
-        <>
-          {openCategoryIngredients.length === 0 ? (
+            <p className="text-sm text-ink-disabled">No ingredients yet — scan a barcode or add one with + New.</p>
+          ) : libraryList.length === 0 ? (
             <p className="text-sm text-ink-disabled">
-              {categorySearch ? `Nothing in here matches "${categorySearch}".` : 'Nothing in this category yet.'}
+              {librarySearchQuery ? `Nothing here matches "${librarySearchQuery}".` : 'Nothing in this category yet.'}
             </p>
           ) : (
-            <div className="flex flex-col gap-2">
-              {openCategoryIngredients.map((ingredient, i) => {
-                // Letter headings only make sense while the list is alphabetical.
+            <div className="flex flex-col overflow-hidden rounded-[20px] border border-line bg-surface shadow-card">
+              {libraryList.map((ingredient, i) => {
                 const letter = ingredient.name.charAt(0).toUpperCase()
-                const previousLetter = i > 0 ? openCategoryIngredients[i - 1].name.charAt(0).toUpperCase() : null
+                const previousLetter = i > 0 ? libraryList[i - 1].name.charAt(0).toUpperCase() : null
+                // Letter headings help find your way in a long A–Z list; in a short one they're noise.
+                const heading = libraryFilter !== 'recent' && categorySort === 'az' && libraryList.length > 15 && letter !== previousLetter
                 return (
                   <div key={ingredient.id}>
-                    {categorySort === 'az' && letter !== previousLetter && (
-                      <p className={`text-xs font-semibold text-ink-muted ${i > 0 ? 'mt-2.5' : ''} mb-2`}>{letter}</p>
+                    {heading && (
+                      <p className={`bg-page px-3.5 py-1 text-[11px] font-semibold text-ink-muted ${i > 0 ? 'border-t border-line' : ''}`}>{letter}</p>
                     )}
-                    {renderIngredientRow(ingredient, false)}
+                    {renderIngredientRow(ingredient, libraryFilter === 'all' || libraryFilter === 'recent', i > 0 && !heading)}
                   </div>
                 )
               })}
             </div>
           )}
+
+          <p className="text-[11px] text-ink-disabled">Nutrition data via Livsmedelsverket's Livsmedelsdatabasen (CC BY 4.0).</p>
         </>
       )}
 
@@ -1840,9 +1719,19 @@ export function Food() {
                     setViewingRecipe(null)
                     openEditRecipe(recipe)
                   }}
-                  className="flex-1 rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white"
+                  className="flex-1 rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 font-semibold text-pine"
                 >
                   Edit recipe
+                </button>
+                <button
+                  onClick={() => {
+                    const recipe = viewingRecipe
+                    setViewingRecipe(null)
+                    logFromList('recipe', recipe.id, recipe.name)
+                  }}
+                  className="flex-1 rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white"
+                >
+                  + Log
                 </button>
               </div>
             </div>
@@ -1971,6 +1860,60 @@ export function Food() {
             </div>
           )
         })()}
+
+      {/* Daily macro targets. Each optional; the hero shows plain grams for any left blank. */}
+      {macroGoalsOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40" onClick={() => setMacroGoalsOpen(false)}>
+          <form
+            onSubmit={saveMacroGoals}
+            onClick={(e) => e.stopPropagation()}
+            className="flex flex-col gap-3 rounded-t-[28px] bg-surface px-5 pb-[26px] pt-3 safe-bottom"
+            style={{ boxShadow: '0 -12px 32px rgba(35,36,31,.18)' }}
+          >
+            <span className="mx-auto h-1 w-[38px] rounded-full bg-line-strong" />
+            <div>
+              <h2 className="text-lg font-bold text-ink">Daily macro targets</h2>
+              <p className="mt-0.5 text-xs text-ink-muted">Grams per day. Leave one blank to just track it.</p>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {MACRO_KEYS.map((key) => (
+                <label key={key} className="flex flex-col gap-1">
+                  <span className="flex items-center gap-1.5 text-xs font-semibold text-ink-3">
+                    <span className="h-2 w-2 rounded-full" style={{ background: MACRO_COLOR[key] }} />
+                    {MACRO_LABEL[key]}
+                  </span>
+                  <input
+                    value={macroGoalDraft[key]}
+                    onChange={(e) => setMacroGoalDraft((d) => ({ ...d, [key]: e.target.value }))}
+                    inputMode="numeric"
+                    placeholder={suggestedMacros[key] != null ? String(suggestedMacros[key]) : 'g'}
+                    className="w-full rounded-2xl border border-line-strong bg-page px-3 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
+                  />
+                </label>
+              ))}
+            </div>
+            {suggestedMacros.protein != null && (
+              <button
+                type="button"
+                onClick={() =>
+                  setMacroGoalDraft({
+                    protein: String(suggestedMacros.protein),
+                    carbs: suggestedMacros.carbs != null ? String(suggestedMacros.carbs) : macroGoalDraft.carbs,
+                    fat: suggestedMacros.fat != null ? String(suggestedMacros.fat) : macroGoalDraft.fat,
+                  })
+                }
+                className="self-start text-left text-xs font-semibold text-pine"
+              >
+                Use suggestion — {suggestedMacros.protein} g protein (1.8 g/kg at {latestWeight} kg)
+                {suggestedMacros.carbs != null && `, ${suggestedMacros.carbs} g carbs, ${suggestedMacros.fat} g fat`}
+              </button>
+            )}
+            <button type="submit" className="rounded-[20px] bg-pine py-3 font-semibold text-white">
+              Save targets
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* Quantity sheet — presets rather than a keypad, because almost every log is one
           of four amounts. The ⌨ cell is the escape for the rest. */}

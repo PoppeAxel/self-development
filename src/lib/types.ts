@@ -109,6 +109,10 @@ export interface UserSettings {
   step_goal: number | null
   /** The maintenance estimate ignores food logs before this date. Null = no reset. */
   maintenance_reset_date: string | null
+  /** Daily macro targets in grams (Food tab overview); null = no target. */
+  protein_goal: number | null
+  carbs_goal: number | null
+  fat_goal: number | null
 }
 
 export interface Workout {
