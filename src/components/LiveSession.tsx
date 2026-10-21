@@ -529,9 +529,14 @@ export function LiveSession({
             <div className="flex items-end justify-between gap-3">
               <h2 className="text-[26px] font-semibold leading-tight text-ink">{ex.name}</h2>
               {ex.sets.every((s) => !s.done) && (
-                <button onClick={() => setSwapIndex(state.index)} className="shrink-0 pb-1 text-xs font-medium text-ink-3">
-                  Swap
-                </button>
+                <span className="flex shrink-0 gap-3 pb-1">
+                  <button onClick={() => setSwapIndex(state.index)} className="text-xs font-medium text-ink-3">
+                    Swap
+                  </button>
+                  <button onClick={() => removeExercise(state.index)} className="text-xs font-medium text-ink-3">
+                    Remove
+                  </button>
+                </span>
               )}
             </div>
             <span className="text-xs text-ink-3">
@@ -638,9 +643,14 @@ export function LiveSession({
                 </span>
               </button>
               {next.sets.every((s) => !s.done) && (
-                <button onClick={() => setSwapIndex(state.index + 1)} className="text-xs font-medium text-ink-3">
-                  Swap
-                </button>
+                <>
+                  <button onClick={() => setSwapIndex(state.index + 1)} className="text-xs font-medium text-ink-3">
+                    Swap
+                  </button>
+                  <button onClick={() => removeExercise(state.index + 1)} className="text-xs font-medium text-ink-3">
+                    Remove
+                  </button>
+                </>
               )}
               <button onClick={() => goTo(state.index + 1)} className="text-base text-ink-muted" aria-label="Next exercise">
                 ›
@@ -651,6 +661,15 @@ export function LiveSession({
               Finish workout
             </button>
           )}
+
+          <div className="flex justify-center gap-5">
+            <button onClick={() => setAdding(true)} className="text-xs font-medium text-pine">
+              + Add exercise
+            </button>
+            <button onClick={() => setListOpen(true)} className="text-xs font-medium text-ink-3">
+              All exercises
+            </button>
+          </div>
         </div>
       )}
 
