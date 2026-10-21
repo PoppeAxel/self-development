@@ -2,11 +2,9 @@ import { addDays, format, getDay } from 'date-fns'
 import type { DailyTask } from './types'
 
 // The Today page as a planner: recurring tasks ("habits") can repeat on chosen weekdays,
-// one-time tasks ("to-dos") sit on a date and carry over until done, and finishing either
-// earns XP toward a level. Everything here is a pure function of tasks + completion dates,
-// so the page, and scripts/planner.check.ts, read the same rules.
-
-export const XP_PER_TASK = 10
+// and one-time tasks ("to-dos") sit on a date and carry over until done. Everything here is
+// a pure function of tasks + completion dates, so the page, and scripts/planner.check.ts,
+// read the same rules.
 
 /** Display order for weekday pickers: Monday first. Values are getDay()'s 0 = Sunday. */
 export const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0]
@@ -36,17 +34,6 @@ export function repeatLabel(days: number[] | null | undefined): string {
   return WEEK_ORDER.filter((d) => set.has(d))
     .map((d) => SHORT[d])
     .join(' · ')
-}
-
-/**
- * Levels get steadily longer: level L starts at 50·L·(L−1) XP, so 1→2 takes 100 XP
- * (ten tasks), 2→3 takes 200, and so on — early levels come quickly, later ones mean more.
- */
-export function levelFor(xp: number): { level: number; into: number; span: number } {
-  let level = 1
-  while (50 * (level + 1) * level <= xp) level++
-  const start = 50 * level * (level - 1)
-  return { level, into: xp - start, span: 100 * level }
 }
 
 /**

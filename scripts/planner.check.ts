@@ -1,7 +1,7 @@
 // Asserts the pure planner helpers in src/lib/planner.ts. Run:
 //   npx rolldown scripts/planner.check.ts --platform node -f esm -o <tmp>/pc.mjs && node <tmp>/pc.mjs
 import assert from 'node:assert/strict'
-import { habitHistory, isScheduledOn, levelFor, repeatLabel } from '../src/lib/planner'
+import { habitHistory, isScheduledOn, repeatLabel } from '../src/lib/planner'
 
 // Scheduling. 2026-10-21 is a Wednesday (getDay 3).
 const daily = { recurring: true, scheduled_date: null, repeat_days: null }
@@ -23,13 +23,6 @@ assert.equal(repeatLabel([5, 1, 2, 3, 4]), 'Weekdays')
 assert.equal(repeatLabel([6, 0]), 'Weekends')
 assert.equal(repeatLabel([5, 1, 3]), 'Mon · Wed · Fri')
 assert.equal(repeatLabel([0, 1]), 'Mon · Sun')
-
-// Levels: 1 at 0, 2 at 100, 3 at 300, 4 at 600, 5 at 1000.
-assert.deepEqual(levelFor(0), { level: 1, into: 0, span: 100 })
-assert.deepEqual(levelFor(99), { level: 1, into: 99, span: 100 })
-assert.deepEqual(levelFor(100), { level: 2, into: 0, span: 200 })
-assert.deepEqual(levelFor(710), { level: 4, into: 110, span: 400 })
-assert.deepEqual(levelFor(1000), { level: 5, into: 0, span: 500 })
 
 // Habit history. Daily habit started 2026-10-15, done on 16, 18, 19, 20.
 const habit = { ...daily, created_at: '2026-10-15T08:00:00Z' }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { format, addDays, getDay } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import {
@@ -27,7 +27,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { MorningCheckIn } from '../components/MorningCheckIn'
 import { DailyCheckin } from '../components/DailyCheckin'
 import { checkinDateISO } from '../lib/dailyCheckin'
-import { WEEK_ORDER, XP_PER_TASK, habitHistory, isScheduledOn, levelFor, repeatLabel } from '../lib/planner'
+import { WEEK_ORDER, habitHistory, isScheduledOn, repeatLabel } from '../lib/planner'
 import type { Category, DailyTask, Goal, Reminder, RecipeIngredient } from '../lib/types'
 
 // A task whose auto_metric is this sentinel auto-completes off today's Food-log total
@@ -46,8 +46,6 @@ const QUICK_WHEN: { id: QuickWhen; label: string }[] = [
   { id: 'daily', label: 'Every day' },
   { id: 'weekdays', label: 'Weekdays' },
 ]
-/** A finished task's moment: the floating "+10 XP", or the bigger day-cleared / level-up card. */
-type Celebration = { kind: 'xp'; key: number } | { kind: 'cleared' | 'level'; key: number; level: number; dayXp: number }
 
 export function Today() {
   // Daily check-in: red until tonight's row exists, green after. The 22:00 push opens
@@ -70,12 +68,8 @@ export function Today() {
   const [upcoming, setUpcoming] = useState<DailyTask[]>([])
   // Completion dates per task over the last nine weeks — habit dots and the week strip.
   const [history, setHistory] = useState<Map<string, Set<string>>>(new Map())
-  // Every completion ever, ×XP_PER_TASK, is the XP total behind the level.
-  const [totalDone, setTotalDone] = useState(0)
   const [quickTitle, setQuickTitle] = useState('')
   const [quickWhen, setQuickWhen] = useState<QuickWhen>('today')
-  const [celebration, setCelebration] = useState<Celebration | null>(null)
-  const celebrationTimer = useRef<number | undefined>(undefined)
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set())
   const [categories, setCategories] = useState<Category[]>([])
   const { openGoalDetail } = useNav()
@@ -138,7 +132,6 @@ export function Today() {
       { data: recipeIngredientRows },
       { data: ingredientRows },
       { data: historyRows },
-      { count: completionCount },
       { data: upcomingRows },
     ] = await Promise.all([
       supabase
@@ -178,7 +171,6 @@ export function Today() {
       supabase.from('recipe_ingredients').select('*'),
       supabase.from('ingredients').select('*'),
       supabase.from('task_completions').select('task_id, date').gte('date', historyFrom).lte('date', shiftISO(weekStart, 6)),
-      supabase.from('task_completions').select('id', { count: 'exact', head: true }),
       supabase
         .from('daily_tasks')
         .select('*')
@@ -191,7 +183,7 @@ export function Today() {
     const activeTasks = (taskRows ?? []) as DailyTask[]
     // A finished one-time task is archived (active = false) the moment it's ticked, so on a
     // reload it would vanish from the day it was done — fetch those back so the day keeps
-    // its record (and its XP) on screen.
+    // its record on screen.
     const doneIds = (completionRows ?? []).map((r) => r.task_id as string)
     const missing = doneIds.filter((id) => !activeTasks.some((t) => t.id === id))
     const archivedDone = missing.length
@@ -271,7 +263,6 @@ export function Today() {
     }
     for (const t of toAutoComplete) (byTask.get(t.id) ?? byTask.set(t.id, new Set()).get(t.id)!).add(date)
     setHistory(byTask)
-    setTotalDone((completionCount ?? 0) + toAutoComplete.length)
     setCompletedIds(completed)
     setCategories(categoryRows ?? [])
     setWeekGoals(goalRows ?? [])
@@ -350,11 +341,6 @@ export function Today() {
     load()
   }
 
-  function celebrate(c: Celebration) {
-    window.clearTimeout(celebrationTimer.current)
-    setCelebration(c)
-    celebrationTimer.current = window.setTimeout(() => setCelebration(null), c.kind === 'xp' ? 1100 : 2600)
-  }
 
   function openEditForm(task: DailyTask) {
     setEditingTask(task)
@@ -465,7 +451,6 @@ export function Today() {
       next.delete(task.id)
       setCompletedIds(next)
       markHistory(false)
-      setTotalDone((n) => Math.max(0, n - 1))
       await supabase.from('task_completions').delete().eq('task_id', task.id).eq('date', date)
       await bumpLinkedGoal(task, -1)
       if (!task.recurring) {
@@ -476,14 +461,6 @@ export function Today() {
       next.add(task.id)
       setCompletedIds(next)
       markHistory(true)
-      setTotalDone(totalDone + 1)
-      // The last open task of the day gets the big moment; a level boundary gets its own;
-      // anything else just the floating +XP.
-      const left = tasks.filter((t) => t.id !== task.id && !(t.auto_metric === CALORIE_BUDGET_METRIC ? isTaskDone(t) : next.has(t.id)))
-      const newLevel = levelFor((totalDone + 1) * XP_PER_TASK).level
-      if (newLevel > levelFor(totalDone * XP_PER_TASK).level) celebrate({ kind: 'level', key: Date.now(), level: newLevel, dayXp: next.size * XP_PER_TASK })
-      else if (left.length === 0) celebrate({ kind: 'cleared', key: Date.now(), level: newLevel, dayXp: next.size * XP_PER_TASK })
-      else celebrate({ kind: 'xp', key: Date.now() })
       const {
         data: { user },
       } = await supabase.auth.getUser()
@@ -557,15 +534,10 @@ export function Today() {
     : [getDay(new Date((newScheduledDate || viewDate) + 'T00:00:00'))]
   const activeReminderDays = reminderDays.length ? reminderDays : defaultReminderDays
 
-  // --- the game: XP for every completion ever, a level from that, and today's share.
-  const xp = totalDone * XP_PER_TASK
-  const level = levelFor(xp)
-  const dayXp = completedIds.size * XP_PER_TASK
   const dayPct = tasks.length ? (doneCount / tasks.length) * 100 : 0
 
   // The week strip: each day's ring is completions over what was due — the habits planned
-  // for that weekday plus any one-time task finished on it. A day with every habit done
-  // earns a star.
+  // for that weekday plus any one-time task finished on it.
   const weekDays = Array.from({ length: 7 }, (_, i) => shiftISO(weekStart, i))
   const doneOn = (d: string) => [...history.values()].filter((set) => set.has(d)).length
   const habitsOn = (d: string) =>
@@ -574,8 +546,8 @@ export function Today() {
     ).length
   const thisWeek = weekStart === weekStartISO(new Date())
 
-  // One task row: the check on the left, title and one line of detail, XP on the right.
-  // Tapping the text opens it for editing; the check (or for a metric task, its value).
+  // One task row: the check on the left, then title and a line of detail. Tapping the text
+  // opens it for editing; the check ticks it (or, for a metric task, enters its value).
   function renderTask(task: DailyTask) {
     const isBudget = task.auto_metric === CALORIE_BUDGET_METRIC
     const done = isTaskDone(task)
@@ -663,14 +635,6 @@ export function Today() {
             </span>
           )}
         </button>
-        {!isBudget && (
-          <span
-            className="shrink-0 rounded-full px-2 py-1 text-[10px] font-bold"
-            style={done ? { background: style.tint, color: style.ink } : { background: THEME.line, color: THEME.inkDisabled }}
-          >
-            +{XP_PER_TASK}
-          </span>
-        )}
       </li>
     )
   }
@@ -702,17 +666,11 @@ export function Today() {
         </ProgressRing>
         <div className="min-w-0 flex-1">
           <p className="text-[17px] font-semibold text-white">
-            {tasks.length === 0 ? 'Nothing planned' : remainingCount === 0 ? 'Day cleared 🎉' : `${remainingCount} left${isToday ? ' today' : ''}`}
+            {tasks.length === 0 ? 'Nothing planned' : remainingCount === 0 ? 'All done' : `${remainingCount} left${isToday ? ' today' : ''}`}
           </p>
-          <div className="mt-1.5 flex items-center gap-2">
-            <span className="shrink-0 rounded-full bg-white/18 px-2 py-0.5 text-[11px] font-bold text-white">Lv {level.level}</span>
-            <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/20">
-              <span className="block h-full rounded-full bg-[#f3d98b]" style={{ width: `${(level.into / level.span) * 100}%` }} />
-            </span>
-          </div>
-          <p className="mt-1 text-[11px] font-medium text-white/70">
-            {level.span - level.into} XP to level {level.level + 1}
-            {dayXp > 0 && <span className="font-semibold text-[#f3d98b]"> · +{dayXp} today</span>}
+          <p className="mt-0.5 text-xs font-medium text-white/75">
+            {habits.length} habit{habits.length === 1 ? '' : 's'} · {todos.length} to-do{todos.length === 1 ? '' : 's'}
+            {upcoming.length > 0 && ` · ${upcoming.length} coming up`}
           </p>
         </div>
       </div>
@@ -745,16 +703,15 @@ export function Today() {
           const done = doneOn(d)
           const past = d <= todayISO()
           const pct = !past ? 0 : due ? Math.min(100, (done / due) * 100) : done ? 100 : 0
-          const star = past && due > 0 && done >= due
           const selected = d === viewDate
           return (
             <button key={d} onClick={() => setViewDate(d)} className="flex flex-1 flex-col items-center gap-1">
               <span className={`text-[10px] font-semibold ${selected ? 'text-white' : 'text-white/65'}`}>
                 {format(new Date(d + 'T00:00:00'), 'EEEEE')}
               </span>
-              <ProgressRing percent={pct} size={32} strokeWidth={3} color={star ? '#f3d98b' : '#fff'} trackColor="rgba(255,255,255,.18)" disc={selected ? '#fdfbf6' : undefined}>
+              <ProgressRing percent={pct} size={32} strokeWidth={3} color="#fff" trackColor="rgba(255,255,255,.18)" disc={selected ? '#fdfbf6' : undefined}>
                 <span className={`text-[11px] font-semibold ${selected ? 'text-pine' : d === todayISO() ? 'text-white underline' : 'text-white'}`}>
-                  {star && !selected ? '★' : format(new Date(d + 'T00:00:00'), 'd')}
+                  {format(new Date(d + 'T00:00:00'), 'd')}
                 </span>
               </ProgressRing>
             </button>
@@ -893,7 +850,7 @@ export function Today() {
         <div className="rounded-[20px] border border-dashed border-line-strong px-4 py-5 text-center">
           <p className="text-sm font-semibold text-ink-2">A blank {isToday ? 'day' : 'page'}</p>
           <p className="mt-1 text-xs text-ink-muted">
-            Add a to-do above, or a habit that comes back every day — each one you finish is +{XP_PER_TASK} XP.
+            Add a to-do above, or a habit that comes back every day.
           </p>
         </div>
       ) : (
@@ -925,28 +882,6 @@ export function Today() {
             ))}
           </div>
         </>
-      )}
-
-      {/* The reward moments. A floating +XP for any tick; a card for clearing the day or a
-          new level. Pointer-transparent so it never blocks the next tap. */}
-      {celebration?.kind === 'xp' && (
-        <div key={celebration.key} className="xp-float pointer-events-none fixed inset-x-0 z-40 flex justify-center" style={{ bottom: 'calc(var(--tabbar-space) + 24px)' }}>
-          <span className="rounded-full bg-[#f3d98b] px-3.5 py-1.5 text-sm font-bold text-[#5c4216] shadow-card">+{XP_PER_TASK} XP</span>
-        </div>
-      )}
-      {celebration && celebration.kind !== 'xp' && (
-        <div key={celebration.key} className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center px-10">
-          <div className="confetti" aria-hidden>
-            {Array.from({ length: 18 }, (_, i) => (
-              <span key={i} style={{ left: `${(i * 37) % 100}%`, animationDelay: `${(i % 6) * 0.06}s`, background: ['#f3d98b', '#a8cfc0', '#e6b39f', '#c9b6e4'][i % 4] }} />
-            ))}
-          </div>
-          <div className="pop-in flex flex-col items-center rounded-[26px] bg-pine-deep px-7 py-5 text-center text-white shadow-tabbar">
-            <span className="text-[34px] leading-none">{celebration.kind === 'level' ? '⭐' : '🎉'}</span>
-            <span className="mt-2 text-lg font-semibold">{celebration.kind === 'level' ? `Level ${celebration.level}!` : 'Day cleared!'}</span>
-            <span className="mt-0.5 text-xs font-medium text-white/75">+{celebration.dayXp} XP today</span>
-          </div>
-        </div>
       )}
 
       {addFormOpen && (
