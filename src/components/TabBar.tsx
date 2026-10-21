@@ -11,22 +11,23 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
 ]
 
 // A floating pine bar rather than a white one flush to the screen edge. All five tabs keep
-// equal width — no centre FAB, which would displace one of them.
+// equal width — no centre FAB, which would displace one of them. Fixed over the content
+// (which scrolls behind it, see --tabbar-space) and set down into the home-indicator zone.
 export function TabBar({ active, onChange }: { active: Tab; onChange: (tab: Tab) => void }) {
   return (
-    <nav className="tabbar-pad">
-      <div className="flex items-center gap-1 rounded-[24px] bg-pine-deep px-2.5 py-2 shadow-tabbar">
+    <nav className="tabbar-pad pointer-events-none fixed inset-x-0 bottom-0 z-30">
+      <div className="pointer-events-auto flex items-center gap-1 rounded-[22px] bg-pine-deep px-2 py-1.5 shadow-tabbar">
         {TABS.map((tab) => {
           const isActive = active === tab.id
           return (
             <button
               key={tab.id}
               onClick={() => onChange(tab.id)}
-              className={`flex min-h-14 flex-1 flex-col items-center justify-center gap-1 rounded-[18px] text-xs text-white transition ${
+              className={`flex min-h-[50px] flex-1 flex-col items-center justify-center gap-[3px] rounded-[16px] text-[11px] text-white transition ${
                 isActive ? 'bg-white/20 font-semibold' : 'font-medium'
               }`}
             >
-              <span className="text-[19px] leading-none">{tab.icon}</span>
+              <span className="text-[18px] leading-none">{tab.icon}</span>
               {tab.label}
             </button>
           )

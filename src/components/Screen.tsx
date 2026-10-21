@@ -1,11 +1,13 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNav } from '../contexts/NavContext'
 import { TopIcons } from './TopIcons'
 
-// Every screen is the same three-part stack: a pine gradient hero that stays put, a
-// scrolling off-white body, and the floating tab bar (owned by the shell). `hero` is
-// whatever that screen puts under its title — summary chips, a date navigator, segmented
-// period pills — rendered on the gradient rather than as another card below it.
+// Every screen is the same stack: a pine title bar, the screen's `hero` on the gradient
+// under it (summary chips, a date navigator, segmented period pills), then the off-white
+// body — all in one scroll. The title bar is pinned and goes solid once you scroll, while
+// the hero scrolls away with the content, so a long list gets the whole screen rather than
+// sitting under a fixed slab of green. The floating tab bar (owned by the shell) overlays
+// the bottom, so the body leaves --tabbar-space free at its end.
 export function Screen({
   title,
   subtitle,
@@ -27,37 +29,38 @@ export function Screen({
   children: React.ReactNode
 }) {
   const { tab, setTab } = useNav()
+  const [scrolled, setScrolled] = useState(false)
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="hero shrink-0">
+    <div className="h-full overflow-y-auto overscroll-y-none" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 4)}>
+      <div className={`screen-head ${scrolled ? 'solid' : ''}`}>
         {onBack ? (
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <button
               onClick={onBack}
               aria-label="Back"
-              className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[14px] bg-white/16 text-base leading-none text-white"
+              className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[12px] bg-white/16 text-base leading-none text-white"
             >
               ‹
             </button>
             <div className="min-w-0">
-              <h1 className="truncate text-[22px] font-semibold">{title}</h1>
-              {subtitle && <p className="mt-0.5 text-xs font-medium text-white">{subtitle}</p>}
+              <h1 className="truncate text-xl font-semibold">{title}</h1>
+              {subtitle && <p className="truncate text-xs font-medium text-white/85">{subtitle}</p>}
             </div>
           </div>
         ) : (
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex w-full items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2.5">
-              <h1 className="text-2xl font-semibold">{title}</h1>
+              <h1 className="text-[22px] font-semibold">{title}</h1>
               {titleAside}
             </div>
             <TopIcons active={tab} onChange={setTab} onRefresh={onRefresh} />
           </div>
         )}
-        {hero}
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="flex flex-col gap-3 px-5 pt-5 pb-2">{children}</div>
+      </div>
+      <header className="screen-hero">{hero}</header>
+      <div className="flex flex-col gap-3 px-5 pt-4" style={{ paddingBottom: 'calc(var(--tabbar-space) + 14px)' }}>
+        {children}
       </div>
     </div>
   )
@@ -87,7 +90,7 @@ export function HeroSegments<T extends string>({
     // `min-w-fit` on top of `flex-1 basis-0`: pills share the track evenly when there's
     // room, but never shrink below their own label — six would otherwise each get ~49px
     // and truncate "Strength". Past that the row scrolls sideways rather than squeezing.
-    <div className="no-scrollbar mt-[18px] flex gap-1 overflow-x-auto rounded-[18px] bg-white/14 p-[5px]">
+    <div className="no-scrollbar mt-1 flex gap-1 overflow-x-auto rounded-[16px] bg-white/14 p-1">
       {options.map((option) => (
         <button
           key={option.id}

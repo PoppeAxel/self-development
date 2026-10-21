@@ -33,8 +33,8 @@ function Shell() {
     if (goalId) setTabState('goals')
   }
 
-  // Each page owns its own scroll area below a fixed hero (see `Screen`), so the shell
-  // just hands it the full height between the top of the screen and the tab bar.
+  // Each page owns its own scroll (see `Screen`), so the shell hands it the full screen;
+  // the tab bar is fixed over the bottom of it.
   return (
     <NavContext value={{ tab, setTab, goalDetailId, openGoalDetail }}>
       <div className="flex h-full flex-col">

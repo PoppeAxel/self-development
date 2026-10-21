@@ -41,7 +41,7 @@ export function TopIcons({
           onClick={refresh}
           disabled={spinning}
           aria-label="Refresh"
-          className="flex h-[38px] w-[38px] items-center justify-center rounded-[14px] bg-white/14 text-base leading-none text-white transition active:bg-white/25 disabled:opacity-60"
+          className="flex h-[34px] w-[34px] items-center justify-center rounded-[12px] bg-white/14 text-base leading-none text-white transition active:bg-white/25 disabled:opacity-60"
         >
           <span className={`inline-block ${spinning ? 'animate-spin' : ''}`}>↻</span>
         </button>
@@ -53,7 +53,7 @@ export function TopIcons({
             key={item.id}
             onClick={() => onChange(item.id)}
             aria-label={item.label}
-            className={`flex h-[38px] w-[38px] items-center justify-center rounded-[14px] text-base leading-none transition ${
+            className={`flex h-[34px] w-[34px] items-center justify-center rounded-[12px] text-base leading-none transition ${
               isActive ? 'bg-surface text-pine' : 'bg-white/14 text-white active:bg-white/25'
             }`}
           >

@@ -94,12 +94,25 @@ body {
   }
 }
 
+:root {
+  /* The safe-area insets as variables, so a desktop preview can stand in a phone's. */
+  --safe-top: env(safe-area-inset-top);
+  --safe-bottom: env(safe-area-inset-bottom);
+  /* The floating tab bar sits down in the home-indicator zone rather than above it (the
+     indicator is a thin line ~8px off the edge; the inset is 34px of mostly nothing).
+     --tabbar-space is what scroll content leaves free underneath so its end clears it. */
+  --tabbar-gap: max(8px, calc(var(--safe-bottom) - 14px));
+  --tabbar-space: calc(var(--tabbar-gap) + 62px);
+  /* Height of a screen's pinned title bar, safe area included. */
+  --head-h: calc(var(--safe-top) + 52px);
+}
+
 .safe-top {
-  padding-top: env(safe-area-inset-top);
+  padding-top: var(--safe-top);
 }
 
 .safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: var(--safe-bottom);
 }
 
 /* Per-screen pine hero block. The design calls for 56px of top padding; on a device the
@@ -111,9 +124,38 @@ body {
   color: #fff;
 }
 
-/* Floating tab bar gutter — 10px above the home indicator, not on top of it. */
+/* A screen's header, in two parts (see Screen). The title bar is pinned and keeps a fixed
+   height, so going solid on scroll never shifts the content under it. The hero block below
+   carries the gradient up behind the bar (negative margin) and scrolls away with the page. */
+.screen-head {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  height: var(--head-h);
+  padding: calc(var(--safe-top) + 4px) 20px 0;
+  display: flex;
+  align-items: center;
+  color: #fff;
+  border-radius: 0 0 24px 24px;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.screen-head.solid {
+  background: #285449;
+  box-shadow: 0 6px 18px rgba(39, 81, 74, 0.25);
+}
+
+.screen-hero {
+  background: linear-gradient(168deg, #27514a 0%, #2f6b5a 60%, #3b806b 100%);
+  border-radius: 0 0 28px 28px;
+  margin-top: calc(-1 * var(--head-h));
+  padding: var(--head-h) 20px 16px;
+  color: #fff;
+}
+
+/* The floating tab bar's gutter: content scrolls behind it, so the bar can sit low. */
 .tabbar-pad {
-  padding: 0 20px calc(10px + env(safe-area-inset-bottom));
+  padding: 0 20px var(--tabbar-gap);
 }
 
 /* A sideways-scrolling row that shouldn't show a scrollbar over the hero gradient. */
