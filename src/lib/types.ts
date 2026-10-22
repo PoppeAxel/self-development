@@ -202,6 +202,8 @@ export interface Recipe {
   servings: number
   meal_type: MealType | null
   created_at: string
+  /** The recipe this one was duplicated from as a variant; null for an original. */
+  variant_of: string | null
 }
 
 export interface RecipeIngredient {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { addDays, format, subDays } from 'date-fns'
 import { todayISO } from '../lib/dates'
@@ -81,6 +81,8 @@ interface RecipeIngredientRow {
   /** Plausible library rows for an unmatched imported line, offered as one-tap chips.
       Never auto-applied — that's the whole point (see resolveLine in recipeImport.ts). */
   suggestions?: { id: string; name: string }[]
+  /** In a variant: the ingredient this row replaced ("Blandfärs"), shown on the row. */
+  replaces?: string
 }
 
 interface IngredientFormState {
@@ -171,6 +173,12 @@ export function Food() {
   const [viewingRecipe, setViewingRecipe] = useState<Recipe | null>(null)
   const [recipeBuilderOpen, setRecipeBuilderOpen] = useState(false)
   const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null)
+  // Set while the builder makes a variant: the original it groups under, and whether the
+  // name is still ours to fill in from the swaps (it stops being once you type in it).
+  const [variantOf, setVariantOf] = useState<Recipe | null>(null)
+  const [variantAutoName, setVariantAutoName] = useState(false)
+  // Recipes list: originals whose variants are folded open.
+  const [openVariantGroups, setOpenVariantGroups] = useState<Set<string>>(new Set())
   const [recipeName, setRecipeName] = useState('')
   const [recipeServings, setRecipeServings] = useState('1')
   const [recipeMealType, setRecipeMealType] = useState<MealType | null>(null)
@@ -646,6 +654,7 @@ export function Food() {
 
   function openNewRecipe() {
     setEditingRecipe(null)
+    setVariantOf(null)
     setRecipeName('')
     setRecipeServings('1')
     setRecipeMealType(null)
@@ -657,6 +666,7 @@ export function Food() {
   function openEditRecipe(recipe: Recipe) {
     const lines = (recipeLines.get(recipe.id) ?? []).slice().sort((a, b) => a.position - b.position)
     setEditingRecipe(recipe)
+    setVariantOf(null)
     setRecipeName(recipe.name)
     setRecipeServings(String(recipe.servings))
     setRecipeMealType(recipe.meal_type)
@@ -669,6 +679,18 @@ export function Food() {
     )
     setImportedNutrition(null)
     setRecipeBuilderOpen(true)
+  }
+
+  // A variant starts as a copy of the recipe, filed under its original (a variant of a
+  // variant still groups under the first one, so a family stays one level deep). Tapping
+  // an ingredient swaps it with the grams kept; the name follows the swaps until edited.
+  function openVariant(recipe: Recipe) {
+    const root = (recipe.variant_of && recipesById.get(recipe.variant_of)) || recipe
+    openEditRecipe(recipe)
+    setEditingRecipe(null)
+    setVariantOf(root)
+    setVariantAutoName(true)
+    setRecipeName(`${root.name} – variant`)
   }
 
   // `rawUrl` comes from a saved link's Import button; without one this reads the sheet's
@@ -807,21 +829,27 @@ export function Food() {
       const defaultGrams = ingredient.portion_grams != null ? String(ingredient.portion_grams) : '100'
       setRecipeRows((rows) => [...rows, { ingredientId: ingredient.id, name: ingredient.name, grams: defaultGrams }])
     } else {
-      setRecipeRows((rows) =>
-        rows.map((r, i) =>
-          i === pickingIngredientFor
-            ? {
-                ...r,
-                ingredientId: ingredient.id,
-                name: ingredient.name,
-                // An imported row often arrives with no grams (a volume or count unit we
-                // couldn't convert). Once it has an ingredient, its portion is the best
-                // starting point available.
-                grams: r.grams || (ingredient.portion_grams != null ? String(ingredient.portion_grams) : ''),
-              }
-            : r,
-        ),
+      const next = recipeRows.map((r, i) =>
+        i === pickingIngredientFor
+          ? {
+              ...r,
+              // Remember what a variant row started as, once — swapping twice still says
+              // it replaced the original's ingredient.
+              replaces: variantOf && r.ingredientId && r.ingredientId !== ingredient.id ? (r.replaces ?? r.name) : r.replaces,
+              ingredientId: ingredient.id,
+              name: ingredient.name,
+              // An imported row often arrives with no grams (a volume or count unit we
+              // couldn't convert). Once it has an ingredient, its portion is the best
+              // starting point available.
+              grams: r.grams || (ingredient.portion_grams != null ? String(ingredient.portion_grams) : ''),
+            }
+          : r,
       )
+      setRecipeRows(next)
+      if (variantOf && variantAutoName) {
+        const swappedIn = next.filter((r) => r.replaces).map((r) => r.name)
+        if (swappedIn.length) setRecipeName(`${variantOf.name} – ${swappedIn.join(' & ')}`)
+      }
     }
     setPickingIngredientFor(null)
     setIngredientPickQuery('')
@@ -846,7 +874,7 @@ export function Food() {
     } else {
       const { data, error } = await supabase
         .from('recipes')
-        .insert({ name, servings, meal_type: recipeMealType, user_id: user.id })
+        .insert({ name, servings, meal_type: recipeMealType, user_id: user.id, variant_of: variantOf?.id ?? null })
         .select()
         .single()
       if (error || !data) return
@@ -865,6 +893,9 @@ export function Food() {
 
     setRecipeBuilderOpen(false)
     setEditingRecipe(null)
+    // Land on the new variant's family, folded open, so it's visible where it was filed.
+    if (variantOf) setOpenVariantGroups((open) => new Set(open).add(variantOf.id))
+    setVariantOf(null)
     load()
   }
 
@@ -1428,22 +1459,38 @@ export function Food() {
             // A compact list: one row per recipe with what matters for picking one — energy
             // and macros per serving, how often it's logged — and + to log it. Tap the row
             // for ingredients and editing.
-            <div className="flex flex-col overflow-hidden rounded-[20px] border border-line bg-surface shadow-card">
-              {sortedRecipes.map((recipe, i) => {
+            (() => {
+              // Variants sit under their original: an original whose variants are also in
+              // view shows a "N variants" fold; a variant whose original is filtered out
+              // stands on its own. A search opens every fold, since you're looking for one.
+              const visibleIds = new Set(sortedRecipes.map((r) => r.id))
+              const variantsOf = new Map<string, Recipe[]>()
+              for (const r of sortedRecipes) {
+                if (r.variant_of && visibleIds.has(r.variant_of)) variantsOf.set(r.variant_of, [...(variantsOf.get(r.variant_of) ?? []), r])
+              }
+              const top = sortedRecipes.filter((r) => !(r.variant_of && visibleIds.has(r.variant_of)))
+              const row = (recipe: Recipe, divider: boolean, variant: boolean) => {
                 const perServing = recipeMacros(recipe)
                 const logged = counts.byRecipe.get(recipe.id) ?? 0
                 const look = recipe.meal_type ? MEAL_LOOK[recipe.meal_type] : null
+                const family = variantsOf.get(recipe.id) ?? []
+                const open = openVariantGroups.has(recipe.id) || !!recipeSearchQuery.trim()
+                // A variant's name usually repeats its original's ("Köttfärssås – Kyckling");
+                // under the original, the part after the dash is what tells it apart.
+                const parent = recipe.variant_of ? recipesById.get(recipe.variant_of) : undefined
+                const label =
+                  variant && parent && recipe.name.startsWith(`${parent.name} – `) ? recipe.name.slice(parent.name.length + 3) : recipe.name
                 return (
-                  <div key={recipe.id} className={`flex items-center gap-3 px-3 py-2.5 ${i > 0 ? 'border-t border-line' : ''}`}>
+                  <div key={recipe.id} className={`flex items-center gap-3 py-2.5 pr-3 ${variant ? 'bg-page/60 pl-8' : 'pl-3'} ${divider ? 'border-t border-line' : ''}`}>
                     <button onClick={() => setViewingRecipe(recipe)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
                       <span
-                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] text-base"
+                        className={`flex shrink-0 items-center justify-center text-base ${variant ? 'h-8 w-8 rounded-[11px] text-sm' : 'h-10 w-10 rounded-[13px]'}`}
                         style={{ background: look?.tint ?? THEME.track }}
                       >
-                        {look?.icon ?? '🍽'}
+                        {variant ? '⇄' : (look?.icon ?? '🍽')}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-semibold text-ink">{recipe.name}</span>
+                        <span className="block truncate text-sm font-semibold text-ink">{label}</span>
                         <span className="block truncate text-[11px] font-medium text-ink-muted">
                           <span className="font-semibold text-ink-2">{round(perServing.kcal)} kcal</span> · P {round(perServing.protein)} · C{' '}
                           {round(perServing.carbs)} · F {round(perServing.fat)}
@@ -1451,6 +1498,22 @@ export function Food() {
                         </span>
                       </span>
                     </button>
+                    {family.length > 0 && (
+                      <button
+                        onClick={() =>
+                          setOpenVariantGroups((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(recipe.id)) next.delete(recipe.id)
+                            else next.add(recipe.id)
+                            return next
+                          })
+                        }
+                        className="shrink-0 rounded-full bg-track px-2.5 py-1 text-[11px] font-semibold text-ink-2"
+                        aria-expanded={open}
+                      >
+                        {family.length} variant{family.length === 1 ? '' : 's'} {open ? '⌃' : '⌄'}
+                      </button>
+                    )}
                     <button
                       onClick={() => logFromList('recipe', recipe.id, recipe.name)}
                       aria-label={`Log ${recipe.name}`}
@@ -1460,8 +1523,19 @@ export function Food() {
                     </button>
                   </div>
                 )
-              })}
-            </div>
+              }
+              return (
+                <div className="flex flex-col overflow-hidden rounded-[20px] border border-line bg-surface shadow-card">
+                  {top.map((recipe, i) => (
+                    <Fragment key={recipe.id}>
+                      {row(recipe, i > 0, false)}
+                      {(openVariantGroups.has(recipe.id) || !!recipeSearchQuery.trim()) &&
+                        (variantsOf.get(recipe.id) ?? []).map((v) => row(v, true, true))}
+                    </Fragment>
+                  ))}
+                </div>
+              )
+            })()
           )}
         </>
       )}
@@ -1675,7 +1749,12 @@ export function Food() {
           return (
             <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
               <div className="flex items-center justify-between px-4 pt-4">
-                <h2 className="text-lg font-bold text-ink">{viewingRecipe.name}</h2>
+                <span className="min-w-0">
+                  <h2 className="text-lg font-bold text-ink">{viewingRecipe.name}</h2>
+                  {viewingRecipe.variant_of && recipesById.get(viewingRecipe.variant_of) && (
+                    <p className="text-xs font-medium text-ink-muted">Variant of {recipesById.get(viewingRecipe.variant_of)!.name}</p>
+                  )}
+                </span>
                 <button
                   onClick={() => setViewingRecipe(null)}
                   className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2"
@@ -1717,11 +1796,21 @@ export function Food() {
                   onClick={() => {
                     const recipe = viewingRecipe
                     setViewingRecipe(null)
+                    openVariant(recipe)
+                  }}
+                  className="shrink-0 rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 font-semibold text-pine"
+                >
+                  ⧉ Variant
+                </button>
+                <button
+                  onClick={() => {
+                    const recipe = viewingRecipe
+                    setViewingRecipe(null)
                     openEditRecipe(recipe)
                   }}
                   className="flex-1 rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 font-semibold text-pine"
                 >
-                  Edit recipe
+                  Edit
                 </button>
                 <button
                   onClick={() => {
@@ -2147,11 +2236,12 @@ export function Food() {
       {recipeBuilderOpen && (
         <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
           <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-ink">{editingRecipe ? 'Edit recipe' : 'New recipe'}</h2>
+            <h2 className="text-lg font-bold text-ink">{editingRecipe ? 'Edit recipe' : variantOf ? 'New variant' : 'New recipe'}</h2>
             <button
               onClick={() => {
                 setRecipeBuilderOpen(false)
                 setEditingRecipe(null)
+                setVariantOf(null)
               }}
               className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2"
             >
@@ -2162,7 +2252,10 @@ export function Food() {
             <input
               autoFocus
               value={recipeName}
-              onChange={(e) => setRecipeName(e.target.value)}
+              onChange={(e) => {
+                setRecipeName(e.target.value)
+                setVariantAutoName(false)
+              }}
               placeholder="Recipe name"
               className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
             />
@@ -2183,6 +2276,13 @@ export function Food() {
               <MealTypePicker value={recipeMealType} onChange={setRecipeMealType} />
             </div>
 
+            {variantOf && (
+              <div className="rounded-[20px] bg-cat-emerald-tint px-4 py-3 text-xs text-cat-emerald-ink">
+                <p className="font-semibold">Variant of {variantOf.name}</p>
+                <p className="mt-0.5">Tap an ingredient to swap it — the grams stay. Everything else is copied.</p>
+              </div>
+            )}
+
             {/* What the rows currently add up to. For an imported recipe the site's own
                 figure sits beside it — a cross-check on whether the ingredient matching
                 came out sane, not something that gets stored. */}
@@ -2195,6 +2295,13 @@ export function Food() {
                   )}
                 </div>
                 {builderPerServing && <MacroRow macros={builderPerServing} />}
+                {/* A variant's whole point is the difference — show the original beside it. */}
+                {variantOf && builderPerServing && (
+                  <p className="mt-1.5 border-t border-line pt-1.5 text-[11px] text-ink-muted">
+                    {variantOf.name}: {round(recipeMacros(variantOf).kcal)} kcal · P {round(recipeMacros(variantOf).protein)} · C{' '}
+                    {round(recipeMacros(variantOf).carbs)} · F {round(recipeMacros(variantOf).fat)} per serving
+                  </p>
+                )}
                 {importedNutrition?.kcal != null && (
                   <p className="mt-1.5 border-t border-line pt-1.5 text-[11px] text-ink-muted">
                     The site states {round(importedNutrition.kcal)} kcal/serving
@@ -2224,6 +2331,9 @@ export function Food() {
                   >
                     {/* An imported line keeps its original text: unresolved, it's the only
                         clue what the row should be; resolved, it's how you check the match. */}
+                    {row.replaces && (
+                      <p className="text-[11px] font-semibold text-cat-emerald-ink">⇄ Swapped from {row.replaces}</p>
+                    )}
                     {row.importedFrom && (
                       <p className="text-[11px] text-ink-muted">
                         {row.ingredientId ? 'From: ' : 'Unmatched: '}
@@ -2272,7 +2382,7 @@ export function Food() {
                         }}
                         className={`min-w-0 flex-1 text-left font-medium ${rowName ? 'text-ink' : 'text-pine'}`}
                       >
-                        {rowName || 'Choose ingredient…'}
+                        {rowName ? (variantOf ? `${rowName}  ⇄` : rowName) : 'Choose ingredient…'}
                       </button>
                       {/* Edit the ingredient itself without leaving the recipe — fix wrong
                           macros, rename it, or give it a portion ("1 klyfta = 5 g"). The
