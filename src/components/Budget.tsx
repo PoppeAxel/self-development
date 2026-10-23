@@ -7,6 +7,8 @@ import {
   BUDGET_CATEGORIES,
   CATEGORY_INFO,
   GROUP_LABEL,
+  PLANNABLE,
+  daysLeft,
   decodeCsv,
   guessCategory,
   merchantKey,
@@ -14,17 +16,19 @@ import {
   payMonthOf,
   payPeriod,
   periodBudget,
+  planRows,
   shiftMonth,
   type BankTransaction,
   type BudgetCategory,
   type BudgetGroup,
+  type BudgetTargets,
   type SplitRules,
 } from '../lib/budget'
 
-// Journal → Finance → Budget: import Nordea's CSV export (no bank API), see income, saved,
-// fixed costs, variable spending and left over per pay period (salary day → day before the
-// next). Categories are guessed on import; changing one applies to every transaction from
-// that merchant and to future imports — no rules to maintain.
+// Economy → Budget: import Nordea's CSV export (no bank API), see income, saved, fixed costs,
+// variable spending and left over per pay period (salary day → day before the next), each
+// category against its monthly plan. Categories are guessed on import; changing one applies to
+// every transaction from that merchant and to future imports — no rules to maintain.
 
 const PICKER_GROUPS: BudgetGroup[] = ['income', 'saved', 'fixed', 'variable', 'shared', 'ignored']
 
@@ -50,10 +54,29 @@ export function Budget() {
   const [message, setMessage] = useState<string | null>(null)
   const [rules, setRules] = useState<SplitRules>({ bufferPerMonth: 0, amortizationPerMonth: 0 })
   const [editingRules, setEditingRules] = useState(false)
+  const [targets, setTargets] = useState<BudgetTargets>({})
+  const [editingPlan, setEditingPlan] = useState(false)
 
   useEffect(() => {
     loadBudgetRules().then(setRules)
+    supabase
+      .from('user_settings')
+      .select('budget_targets')
+      .maybeSingle()
+      .then(({ data }) => setTargets((data?.budget_targets ?? {}) as BudgetTargets))
   }, [])
+
+  async function saveTarget(category: BudgetCategory, raw: string) {
+    const value = Number(raw.replace(/\s/g, '').replace(',', '.') || 0)
+    if (!Number.isFinite(value) || value < 0 || value === (targets[category] ?? 0)) return
+    const next = { ...targets, [category]: value }
+    setTargets(next)
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    await supabase.from('user_settings').upsert({ user_id: user.id, budget_targets: next })
+  }
 
   async function saveRule(key: keyof SplitRules, raw: string) {
     const value = Number(raw.replace(/\s/g, '').replace(',', '.'))
@@ -127,6 +150,11 @@ export function Budget() {
   const txs = loaded.filter((t) => t.date >= start && t.date <= end)
   const b = periodBudget(txs, start, end, rules)
   const maxSpend = Math.max(...b.byCategory.map((c) => c.amount), 1)
+  const plan = planRows(b, targets)
+  const planned = PLANNABLE.reduce((s, c) => s + (targets[c] ?? 0), 0)
+  // Only categories with a plan count here — unplanned spending would make "of planned" lie.
+  const plannedSpent = plan.filter((r) => r.target != null).reduce((s, r) => s + r.actual, 0)
+  const remainingDays = daysLeft(format(new Date(), 'yyyy-MM-dd'), end, start)
   const day = (iso: string) => format(new Date(iso + 'T00:00:00'), 'd MMM')
   const step = (n: number) => setMonth(shiftMonth(month, n))
 
@@ -193,27 +221,46 @@ export function Budget() {
             ))}
           </div>
         )}
+        {planned > 0 && (
+          <p className={`mt-1 text-[11px] font-medium ${plannedSpent > planned ? 'text-cat-rose-ink' : 'text-ink-muted'}`}>
+            Planned categories: {formatKr(plannedSpent)} of {formatKr(planned)}
+            {remainingDays != null && ` · ${remainingDays} ${remainingDays === 1 ? 'day' : 'days'} left`}
+          </p>
+        )}
         {(['fixed', 'variable'] as const).map((group) => {
-          const rows = b.byCategory.filter((c) => CATEGORY_INFO[c.category].group === group)
+          const rows = plan.filter((r) => CATEGORY_INFO[r.category].group === group)
           if (!rows.length) return null
           return (
             <div key={group} className="flex flex-col gap-2.5">
               <p className="mt-1 text-[11px] font-semibold tracking-[0.1em] text-ink-3">{GROUP_LABEL[group].toUpperCase()}</p>
-              {rows.map(({ category, amount }) => (
-                <div key={category} className="flex flex-col gap-1">
-                  <div className="flex items-baseline justify-between text-[13px]">
-                    <span className="text-ink-2">
-                      {CATEGORY_INFO[category].icon} {category === 'mortgage' ? 'Mortgage interest' : CATEGORY_INFO[category].label}
+              {rows.map(({ category, actual, target }) => {
+                const over = target != null && actual > target
+                const width = target != null ? Math.min(Math.max(actual, 0) / target, 1) : Math.max(actual, 0) / maxSpend
+                return (
+                  <div key={category} className="flex flex-col gap-1">
+                    <div className="flex items-baseline justify-between gap-2 text-[13px]">
+                      <span className="min-w-0 truncate text-ink-2">
+                        {CATEGORY_INFO[category].icon} {category === 'mortgage' ? 'Mortgage interest' : CATEGORY_INFO[category].label}
+                      </span>
+                      <span className={`shrink-0 font-semibold ${over ? 'text-cat-rose-ink' : actual < 0 ? 'text-pine' : 'text-ink'}`}>
+                        {actual < 0 ? `+${formatKr(-actual)} back` : formatKr(actual)}
+                        {target != null && <span className="font-medium text-ink-muted"> / {formatKr(target)}</span>}
+                      </span>
+                    </div>
+                    <span className="block h-1.5 overflow-hidden rounded-full bg-[#ece5d7]">
+                      <span
+                        className="block h-full rounded-full"
+                        style={{ width: `${width * 100}%`, background: over ? 'var(--color-cat-rose)' : CATEGORY_INFO[category].color }}
+                      />
                     </span>
-                    <span className={`font-semibold ${amount < 0 ? 'text-pine' : 'text-ink'}`}>
-                      {amount < 0 ? `+${formatKr(-amount)} back` : formatKr(amount)}
-                    </span>
+                    {target != null && (
+                      <span className={`text-[11px] ${over ? 'font-medium text-cat-rose-ink' : 'text-ink-muted'}`}>
+                        {over ? `${formatKr(actual - target)} over` : `${formatKr(target - actual)} left`}
+                      </span>
+                    )}
                   </div>
-                  <span className="block h-1.5 overflow-hidden rounded-full bg-[#ece5d7]">
-                    <span className="block h-full rounded-full" style={{ width: `${(Math.max(amount, 0) / maxSpend) * 100}%`, background: CATEGORY_INFO[category].color }} />
-                  </span>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )
         })}
@@ -225,6 +272,37 @@ export function Budget() {
             <span className={`font-semibold ${b.sharedBack > 0 ? 'text-pine' : 'text-ink'}`}>
               {b.sharedBack > 0 ? `+${formatKr(b.sharedBack)} back` : formatKr(-b.sharedBack)}
             </span>
+          </div>
+        )}
+        <button
+          onClick={() => setEditingPlan((v) => !v)}
+          className="mt-1 rounded-xl border border-line bg-page py-2 text-[13px] font-semibold text-pine"
+        >
+          {editingPlan ? 'Done' : planned > 0 ? '✏️ Edit monthly plan' : '✏️ Plan your month'}
+        </button>
+        {editingPlan && (
+          <div className="flex flex-col gap-1.5">
+            <p className="text-[11px] text-ink-muted">What you plan to spend per pay period. Leave a category empty for no plan.</p>
+            {(['fixed', 'variable'] as const).map((group) => (
+              <div key={group} className="flex flex-col gap-1.5">
+                <p className="mt-1 text-[11px] font-semibold tracking-[0.1em] text-ink-3">{GROUP_LABEL[group].toUpperCase()}</p>
+                {PLANNABLE.filter((c) => CATEGORY_INFO[c].group === group).map((c) => (
+                  <label key={c} className="flex items-center gap-3 rounded-xl border border-line bg-page px-3 py-2">
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink-2">
+                      {CATEGORY_INFO[c].icon} {c === 'mortgage' ? 'Mortgage interest' : CATEGORY_INFO[c].label}
+                    </span>
+                    <input
+                      defaultValue={targets[c] || ''}
+                      onBlur={(e) => saveTarget(c, e.target.value)}
+                      inputMode="decimal"
+                      placeholder="—"
+                      className="w-20 shrink-0 bg-transparent text-right text-sm font-semibold text-ink outline-none placeholder:text-ink-faint"
+                    />
+                    <span className="text-xs text-ink-muted">kr</span>
+                  </label>
+                ))}
+              </div>
+            ))}
           </div>
         )}
         <button onClick={() => setEditingRules((v) => !v)} className="self-start text-[11px] font-medium text-ink-muted">

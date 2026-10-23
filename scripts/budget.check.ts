@@ -3,7 +3,9 @@
 import assert from 'node:assert/strict'
 import {
   bankSavingsEntries,
+  daysLeft,
   guessCategory,
+  planRows,
   merchantKey,
   parseAmount,
   parseNordeaCsv,
@@ -133,5 +135,24 @@ assert.equal(p.fixed, 4850) // 6236 − 1386 interest
 assert.deepEqual(p.byCategory, [{ category: 'mortgage', amount: 4850 }])
 assert.equal(p.left, 34117 - 11386 - 4850)
 assert.equal(guessCategory('Omsättning lån 3990 12 34567', -6236, none), 'mortgage')
+
+// Plan: targets show even with no spending yet; spending without a target keeps target null;
+// income/savings/shared never become plan rows; fixed comes before variable.
+const plan = planRows(
+  { byCategory: [{ category: 'groceries', amount: 3200 }, { category: 'shopping', amount: 2001 }, { category: 'mortgage', amount: 4850 }] },
+  { groceries: 5000, eating_out: 1500, mortgage: 5000, savings: 9999 } as Parameters<typeof planRows>[1],
+)
+assert.deepEqual(plan, [
+  { category: 'mortgage', actual: 4850, target: 5000 },
+  { category: 'groceries', actual: 3200, target: 5000 },
+  { category: 'eating_out', actual: 0, target: 1500 },
+  { category: 'shopping', actual: 2001, target: null },
+])
+assert.deepEqual(planRows({ byCategory: [] }, { groceries: 0 }), []) // a cleared target is no target
+
+assert.equal(daysLeft('2026-10-23', '2026-11-22', '2026-10-22'), 31)
+assert.equal(daysLeft('2026-11-22', '2026-11-22', '2026-10-22'), 1) // last day counts
+assert.equal(daysLeft('2026-11-23', '2026-11-22', '2026-10-22'), null) // a past period
+assert.equal(daysLeft('2026-03-29', '2026-04-21', '2026-03-23'), 24) // across the DST switch
 
 console.log('budget.check: ok')

@@ -278,3 +278,34 @@ export function periodBudget(transactions: Pick<BankTransaction, 'date' | 'amoun
   const saved = savedByAccount.buffer + savedByAccount.mortgage + savedByAccount.investments
   return { income, saved, savedByAccount, fixed, variable, sharedBack, left: income - saved - fixed - variable + sharedBack, byCategory }
 }
+
+// --- Plan: one monthly target per fixed/variable category (user_settings.budget_targets).
+
+export type BudgetTargets = Partial<Record<BudgetCategory, number>>
+
+/** Categories a target can be set for: what a pay period spends on. */
+export const PLANNABLE = BUDGET_CATEGORIES.filter((c) => ['fixed', 'variable'].includes(CATEGORY_INFO[c].group))
+
+export interface PlanRow {
+  category: BudgetCategory
+  actual: number
+  /** Null = no target set; shown as before, without a plan. */
+  target: number | null
+}
+
+/**
+ * One row per fixed/variable category that has spending or a target, in picker order (fixed
+ * first), so planned-but-untouched categories show as "0 / 5 000" instead of vanishing.
+ * ponytail: one set of targets for every period — changing a target re-judges past periods
+ * too. Store targets per period if he ever wants history of the plan itself.
+ */
+export function planRows(b: Pick<PeriodBudget, 'byCategory'>, targets: BudgetTargets): PlanRow[] {
+  const actual = new Map(b.byCategory.map((c) => [c.category, c.amount]))
+  return PLANNABLE.filter((c) => actual.has(c) || (targets[c] ?? 0) > 0).map((c) => ({ category: c, actual: actual.get(c) ?? 0, target: (targets[c] ?? 0) > 0 ? targets[c]! : null }))
+}
+
+/** Days left in start..end counting today, or null when today is outside it. */
+export function daysLeft(today: string, end: string, start: string): number | null {
+  if (today < start || today > end) return null
+  return Math.round((Date.parse(end + 'T00:00:00Z') - Date.parse(today + 'T00:00:00Z')) / 86400000) + 1
+}
