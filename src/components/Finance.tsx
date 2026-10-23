@@ -6,6 +6,7 @@ import { ACCOUNT_INFO, SAVINGS_ACCOUNTS, formatKr, periodTotals, type SavingsAcc
 import { ChipRail, Screen } from './Screen'
 import { ConfirmDialog } from './ConfirmDialog'
 import { Pots } from './Pots'
+import { Budget } from './Budget'
 import type { PeriodType } from '../lib/types'
 
 // Journal → Finance. Savings logged by hand: what went to the buffer, the house loan and
@@ -33,7 +34,7 @@ export function Finance({ segments }: { segments: React.ReactNode }) {
   const [showAll, setShowAll] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<SavingsEntry | null>(null)
   // Long-term savings (counts toward totals/goals) vs short-term pots (kept apart).
-  const [view, setView] = useState<'long' | 'pots'>('long')
+  const [view, setView] = useState<'long' | 'pots' | 'budget'>('long')
 
   async function load() {
     const { data } = await supabase.from('savings_entries').select('*').order('date', { ascending: false }).order('created_at', { ascending: false })
@@ -100,6 +101,7 @@ export function Finance({ segments }: { segments: React.ReactNode }) {
       </div>
       )}
       {view === 'pots' && <p className="mt-4 text-sm font-medium leading-snug text-white">Short-term saving for one thing at a time — a ring, a watch, a trip.</p>}
+      {view === 'budget' && <p className="mt-4 text-sm font-medium leading-snug text-white">Where the money went each month, from Nordea's CSV export.</p>}
     </>
   )
 
@@ -109,12 +111,15 @@ export function Finance({ segments }: { segments: React.ReactNode }) {
         options={[
           { id: 'long', label: 'Long-term savings' },
           { id: 'pots', label: 'Pots' },
+          { id: 'budget', label: 'Budget' },
         ]}
         value={view}
         onChange={setView}
       />
       {view === 'pots' ? (
         <Pots />
+      ) : view === 'budget' ? (
+        <Budget />
       ) : (
       <>
       {/* Log form */}
