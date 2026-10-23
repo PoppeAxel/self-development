@@ -35,7 +35,7 @@ export function Finance() {
   const [showAll, setShowAll] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<SavingsEntry | null>(null)
   // Long-term savings (counts toward totals/goals) vs short-term pots (kept apart).
-  const [view, setView] = useState<'long' | 'pots' | 'budget'>('budget')
+  const [view, setView] = useState<'long' | 'pots' | 'budget' | 'plan'>('budget')
 
   async function load() {
     const [{ data }, bank] = await Promise.all([
@@ -96,6 +96,7 @@ export function Finance() {
       <HeroSegments
         options={[
           { id: 'budget', label: 'Budget' },
+          { id: 'plan', label: 'Plan' },
           { id: 'long', label: 'Savings' },
           { id: 'pots', label: 'Pots' },
         ]}
@@ -118,6 +119,7 @@ export function Finance() {
       )}
       {view === 'pots' && <p className="mt-4 text-sm font-medium leading-snug text-white">Short-term saving for one thing at a time — a ring, a watch, a trip.</p>}
       {view === 'budget' && <p className="mt-4 text-sm font-medium leading-snug text-white">Where the money went each pay period, from Nordea's CSV export.</p>}
+      {view === 'plan' && <p className="mt-4 text-sm font-medium leading-snug text-white">What you mean to spend each pay period, against what you did.</p>}
     </>
   )
 
@@ -125,8 +127,8 @@ export function Finance() {
     <Screen title="Economy" onRefresh={load} hero={hero}>
       {view === 'pots' ? (
         <Pots />
-      ) : view === 'budget' ? (
-        <Budget />
+      ) : view === 'budget' || view === 'plan' ? (
+        <Budget view={view === 'plan' ? 'plan' : 'actual'} />
       ) : (
       <>
       {/* Log form */}
