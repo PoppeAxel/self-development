@@ -1,22 +1,46 @@
 // Finance → Budget: Nordea CSV export → bank_transactions. Pure — no supabase import —
 // so scripts/budget.check.ts can run it under node.
 
-export const BUDGET_CATEGORIES = ['income', 'savings', 'housing', 'groceries', 'eating_out', 'transport', 'shopping', 'bills', 'health', 'other', 'transfer'] as const
+// Order = how the category picker lists them, grouped. Ids are stored in bank_transactions.category.
+export const BUDGET_CATEGORIES = [
+  'income',
+  'savings',
+  'housing',
+  'loans',
+  'bills',
+  'subscriptions',
+  'groceries',
+  'eating_out',
+  'transport',
+  'shopping',
+  'health',
+  'shared',
+  'other',
+  'transfer',
+] as const
 export type BudgetCategory = (typeof BUDGET_CATEGORIES)[number]
+export type BudgetGroup = 'income' | 'saved' | 'fixed' | 'variable' | 'shared' | 'ignored'
 
-export const CATEGORY_INFO: Record<BudgetCategory, { label: string; icon: string; color: string }> = {
-  income: { label: 'Income', icon: '💰', color: '#2f6b5a' },
-  savings: { label: 'Savings', icon: '🏦', color: '#46608f' },
-  housing: { label: 'Housing', icon: '🏠', color: '#8a5a44' },
-  groceries: { label: 'Groceries', icon: '🛒', color: '#3f9a6b' },
-  eating_out: { label: 'Eating out', icon: '🍔', color: '#c0703a' },
-  transport: { label: 'Transport', icon: '🚗', color: '#5b7fa6' },
-  shopping: { label: 'Shopping', icon: '🛍️', color: '#a8842f' },
-  bills: { label: 'Bills & subscriptions', icon: '📱', color: '#7a6aa8' },
-  health: { label: 'Health & training', icon: '💪', color: '#b45a6e' },
-  other: { label: 'Other', icon: '📦', color: '#8c8577' },
+export const GROUP_LABEL: Record<BudgetGroup, string> = { income: 'Income', saved: 'Saved', fixed: 'Fixed costs', variable: 'Variable', shared: 'Shared', ignored: 'Ignored' }
+
+export const CATEGORY_INFO: Record<BudgetCategory, { label: string; icon: string; color: string; group: BudgetGroup }> = {
+  income: { label: 'Income', icon: '💰', color: '#2f6b5a', group: 'income' },
+  savings: { label: 'Savings', icon: '🏦', color: '#46608f', group: 'saved' },
+  housing: { label: 'Housing', icon: '🏠', color: '#8a5a44', group: 'fixed' },
+  loans: { label: 'Loans & CSN', icon: '🎓', color: '#6b5a8a', group: 'fixed' },
+  bills: { label: 'Bills (power, phone, insurance)', icon: '💡', color: '#7a6aa8', group: 'fixed' },
+  subscriptions: { label: 'Subscriptions', icon: '📺', color: '#5b7fa6', group: 'fixed' },
+  groceries: { label: 'Groceries & household', icon: '🛒', color: '#3f9a6b', group: 'variable' },
+  eating_out: { label: 'Eating out', icon: '🍔', color: '#c0703a', group: 'variable' },
+  transport: { label: 'Transport', icon: '🚗', color: '#4f7f8c', group: 'variable' },
+  shopping: { label: 'Shopping', icon: '🛍️', color: '#a8842f', group: 'variable' },
+  health: { label: 'Health & training', icon: '💪', color: '#b45a6e', group: 'variable' },
+  // Swish to/from his partner for split costs. Her share covers rent as well as food, so it
+  // nets against the total (left over), not against any one group.
+  shared: { label: 'Shared costs', icon: '🤝', color: '#9a7b5f', group: 'shared' },
+  other: { label: 'Other', icon: '📦', color: '#8c8577', group: 'variable' },
   // Moves between his own accounts: counted nowhere.
-  transfer: { label: 'Own transfer (ignored)', icon: '↔️', color: '#b9b2a4' },
+  transfer: { label: 'Own transfer (ignored)', icon: '↔️', color: '#b9b2a4', group: 'ignored' },
 }
 
 export interface BankTransaction {
@@ -39,23 +63,26 @@ export interface ParsedRow {
 export const merchantKey = (description: string) => description.toLowerCase().replace(/[\d/.,:-]+/g, ' ').replace(/\s+/g, ' ').trim()
 
 const GUESSES: [RegExp, BudgetCategory][] = [
-  [/\b(lön|lon|salary|försäkringskassan|csn)\b/, 'income'],
+  [/\b(lön|lon|salary|försäkringskassan)\b/, 'income'],
   [/(avanza|nordnet|sparkonto|\bisk\b)/, 'savings'],
-  [/(hyra|\bbrf\b|bolån|ränta|avgift lån|hemförsäkring)/, 'housing'],
-  [/(\bica\b|coop|willys|hemköp|lidl|city gross|mathem|\bspar\b|tempo)/, 'groceries'],
-  [/(restaurang|mcdonald|\bmax\b|burger|pizz|sushi|foodora|wolt|espresso house|pressbyrån|7-eleven|cafe|café|\bbar\b)/, 'eating_out'],
-  [/(\bsl\b|\bsj\b|circle k|preem|okq8|\bingo\b|\bst1\b|uber|\bbolt\b|easypark|parkering|biltema|\bvy\b)/, 'transport'],
-  [/(spotify|netflix|\bhbo\b|viaplay|disney|youtube|apple\.com|telia|tele2|comviq|telenor|\btre\b|ellevio|vattenfall|e\.on|försäkring|if skade|folksam|trygg-hansa)/, 'bills'],
+  [/(hyra|\bbrf\b|\bhsb\b|hemförsäkring)/, 'housing'],
+  [/(\bcsn\b|bolån|omsättning lån|ränta|avgift lån|nordea bank\b)/, 'loans'],
+  [/(telia|tele2|comviq|telenor|\btre\b|ellevio|vattenfall|e\.on|försäkring|if skade|folksam|trygg-hansa|akademike|a-kassa)/, 'bills'],
+  [/(spotify|netflix|\bhbo\b|viaplay|disney|youtube|apple\.com|anthropic|claude)/, 'subscriptions'],
+  // Revolut is his food/household card — topping it up is the grocery spend.
+  [/(\bica\b|coop|willys|hemköp|lidl|city gross|mathem|\bspar\b|tempo|revolut)/, 'groceries'],
+  [/(restaurang|brasserie|\bpub\b|liffey|mcdonald|\bmax\b|burger|pizz|sushi|foodora|wolt|espresso house|pressbyrån|7-eleven|cafe|café|\bbar\b)/, 'eating_out'],
+  [/(\bsl\b|\bsj\b|ruter|a train|trafikkon|circle k|preem|okq8|\bingo\b|\bst1\b|uber|\bbolt\b|easypark|parkering|biltema|\bvy\b)/, 'transport'],
   [/(apotek|sats|nordic wellness|friskis|vårdcentral|tandläk)/, 'health'],
-  [/(h&m|zalando|ikea|clas ohlson|elgiganten|amazon|systembolaget|åhléns|stadium)/, 'shopping'],
+  [/(h&m|zalando|boozt|vinted|klarna|johnhenric|ikea|clas ohlson|elgiganten|amazon|systembolaget|åhléns|ahlens|stadium)/, 'shopping'],
 ]
 
-/** Last category he chose for this merchant wins; otherwise a keyword guess. */
+/** Last category he chose for this merchant wins; otherwise a keyword guess. Money in is only ever income or a refund. */
 export function guessCategory(description: string, amount: number, learned: Map<string, BudgetCategory>): BudgetCategory {
   const known = learned.get(merchantKey(description))
   if (known) return known
   const text = ` ${description.toLowerCase()} `
-  for (const [re, category] of GUESSES) if (re.test(text)) return category
+  for (const [re, category] of GUESSES) if (re.test(text) && (category !== 'income' || amount > 0)) return category
   return amount > 0 ? 'income' : 'other'
 }
 
@@ -136,28 +163,65 @@ export function decodeCsv(buffer: ArrayBuffer): string {
   }
 }
 
-export interface MonthBudget {
+// --- Pay periods: the budget runs from one salary to the day before the next, not by calendar month.
+
+const isSalary = (t: Pick<BankTransaction, 'description' | 'amount'>) => t.amount > 0 && /\b(lön|lon|salary)\b/i.test(t.description)
+
+/** The day his salary landed in `month` ('yyyy-MM'), else the usual payday: the 22nd, or the 23rd when that's a Sunday. */
+export function payday(month: string, transactions: Pick<BankTransaction, 'date' | 'description' | 'amount'>[]): string {
+  const paid = transactions.filter((t) => t.date.startsWith(month) && isSalary(t)).map((t) => t.date).sort()[0]
+  if (paid) return paid
+  const [y, m] = month.split('-').map(Number)
+  return `${month}-${new Date(Date.UTC(y, m - 1, 22)).getUTCDay() === 0 ? '23' : '22'}`
+}
+
+export const shiftMonth = (month: string, n: number) => {
+  const [y, m] = month.split('-').map(Number)
+  const d = new Date(Date.UTC(y, m - 1 + n, 1))
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
+}
+
+/** Calendar month whose payday opens the period `date` falls in (before the 22nd → the month before). */
+export const payMonthOf = (date: string) => (Number(date.slice(8, 10)) < 22 ? shiftMonth(date.slice(0, 7), -1) : date.slice(0, 7))
+
+/** The period opened by `month`'s salary: [start, end] inclusive, yyyy-MM-dd. */
+export function payPeriod(month: string, transactions: Pick<BankTransaction, 'date' | 'description' | 'amount'>[]): { start: string; end: string } {
+  const next = payday(shiftMonth(month, 1), transactions)
+  const end = new Date(next + 'T00:00:00Z')
+  end.setUTCDate(end.getUTCDate() - 1)
+  return { start: payday(month, transactions), end: end.toISOString().slice(0, 10) }
+}
+
+export interface PeriodBudget {
   income: number
   saved: number
-  spent: number
+  fixed: number
+  variable: number
+  /** Net Swished back for shared costs (positive = got more back than sent). */
+  sharedBack: number
   left: number
-  /** Money out per spending category (positive), largest first. */
+  /** Net money out per fixed/variable category, largest first (a refund-heavy one can go negative). */
   byCategory: { category: BudgetCategory; amount: number }[]
 }
 
-/** `month` = 'yyyy-MM'. Refunds net against their category; own transfers count nowhere. */
-export function monthBudget(transactions: Pick<BankTransaction, 'date' | 'amount' | 'category'>[], month: string): MonthBudget {
+/** Totals for start..end (inclusive). Refunds net against their category; own transfers count nowhere. */
+export function periodBudget(transactions: Pick<BankTransaction, 'date' | 'amount' | 'category'>[], start: string, end: string): PeriodBudget {
   let income = 0
   let saved = 0
+  let sharedBack = 0
   const spend = new Map<BudgetCategory, number>()
   for (const t of transactions) {
-    if (!t.date.startsWith(month) || t.category === 'transfer') continue
+    const group = CATEGORY_INFO[t.category]?.group ?? 'variable'
+    if (t.date < start || t.date > end || group === 'ignored') continue
     const amount = Number(t.amount)
-    if (t.category === 'income') income += amount
-    else if (t.category === 'savings') saved -= amount
+    if (group === 'income') income += amount
+    else if (group === 'saved') saved -= amount
+    else if (group === 'shared') sharedBack += amount
     else spend.set(t.category, (spend.get(t.category) ?? 0) - amount)
   }
   const byCategory = [...spend].map(([category, amount]) => ({ category, amount })).filter((c) => c.amount !== 0).sort((a, b) => b.amount - a.amount)
-  const spent = byCategory.reduce((s, c) => s + c.amount, 0)
-  return { income, saved, spent, left: income - saved - spent, byCategory }
+  const sum = (g: BudgetGroup) => byCategory.filter((c) => CATEGORY_INFO[c.category].group === g).reduce((s, c) => s + c.amount, 0)
+  const fixed = sum('fixed')
+  const variable = sum('variable')
+  return { income, saved, fixed, variable, sharedBack, left: income - saved - fixed - variable + sharedBack, byCategory }
 }

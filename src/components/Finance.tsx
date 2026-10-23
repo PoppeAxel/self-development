@@ -101,7 +101,7 @@ export function Finance({ segments }: { segments: React.ReactNode }) {
       </div>
       )}
       {view === 'pots' && <p className="mt-4 text-sm font-medium leading-snug text-white">Short-term saving for one thing at a time — a ring, a watch, a trip.</p>}
-      {view === 'budget' && <p className="mt-4 text-sm font-medium leading-snug text-white">Where the money went each month, from Nordea's CSV export.</p>}
+      {view === 'budget' && <p className="mt-4 text-sm font-medium leading-snug text-white">Where the money went each pay period, from Nordea's CSV export.</p>}
     </>
   )
 

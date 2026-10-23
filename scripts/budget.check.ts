@@ -1,7 +1,7 @@
 // Asserts src/lib/budget.ts. Run:
 //   npx rolldown scripts/budget.check.ts --platform node -f esm -o <tmp>/bc.mjs && node <tmp>/bc.mjs
 import assert from 'node:assert/strict'
-import { guessCategory, merchantKey, monthBudget, parseAmount, parseNordeaCsv, type BudgetCategory } from '../src/lib/budget'
+import { guessCategory, merchantKey, parseAmount, parseNordeaCsv, payday, payMonthOf, payPeriod, periodBudget, type BudgetCategory } from '../src/lib/budget'
 
 assert.equal(parseAmount('-1 234,50'), -1234.5)
 assert.equal(parseAmount('-1.234,50'), -1234.5)
@@ -38,12 +38,36 @@ assert.equal(guessCategory('Kortköp SPAR KVARNEN', -100, none), 'groceries')
 assert.equal(guessCategory('MUSICA MEDICA', -100, none), 'other')
 assert.equal(guessCategory('Överföring Avanza', -5000, none), 'savings')
 assert.equal(guessCategory('ARBETSGIVAREN AB', 32000, none), 'income')
+assert.equal(guessCategory('Betalning BG CSN Centrala', -1707, none), 'loans') // a repayment, not income
+assert.equal(guessCategory('Betalning PG 4173300-7 Nordea Bank', -924, none), 'loans')
+assert.equal(guessCategory('Kortköp 261022 Revolut**6942*', -5000, none), 'groceries') // his food card
+assert.equal(guessCategory('Betalning BG 5552-2635 Ellevio (pub', -265, none), 'bills')
+assert.equal(guessCategory('Kortköp ANTHROPIC* CLAUDE SU', -260, none), 'subscriptions')
+assert.equal(guessCategory('Lön', -500, none), 'other') // money out is never income
+assert.equal(guessCategory('Open Banking BG HSB Stockh', -4463, none), 'housing')
+assert.equal(guessCategory('Swish återbetalning Boozt Fashion A', 839, none), 'shopping') // refund nets shopping
 assert.equal(merchantKey('Kortköp 261003 ICA NARA'), merchantKey('Kortköp 261117 ICA NARA'))
 const learned = new Map<string, BudgetCategory>([[merchantKey('Kortköp 261003 ICA NARA'), 'eating_out']])
 assert.equal(guessCategory('Kortköp 261117 ICA NARA', -50, learned), 'eating_out')
 
-// Month: income − saved − spent; refunds net; transfers ignored; other months ignored.
-const b = monthBudget(
+// Payday: the salary row's date wins; without one, the 22nd, or the 23rd when that's a Sunday.
+const salary = (date: string) => ({ date, description: 'Lön', amount: 36000 })
+assert.equal(payday('2026-10', [salary('2026-10-22')]), '2026-10-22')
+assert.equal(payday('2026-11', [salary('2026-11-20')]), '2026-11-20') // paid early before a weekend
+assert.equal(payday('2026-11', []), '2026-11-23') // 22 Nov 2026 is a Sunday
+assert.equal(payday('2026-10', []), '2026-10-22') // a Thursday
+assert.equal(payday('2026-12', [{ date: '2026-12-05', description: 'Swish Lönnberg', amount: 100 }]), '2026-12-22') // \b keeps "Lönnberg" out
+// Period = payday → day before next payday (next one known from data, else the default).
+assert.deepEqual(payPeriod('2026-10', [salary('2026-10-22'), salary('2026-11-20')]), { start: '2026-10-22', end: '2026-11-19' })
+assert.deepEqual(payPeriod('2026-10', [salary('2026-10-22')]), { start: '2026-10-22', end: '2026-11-22' }) // 23 Nov default
+assert.deepEqual(payPeriod('2026-12', []), { start: '2026-12-22', end: '2027-01-21' }) // year wrap
+assert.equal(payMonthOf('2026-10-23'), '2026-10')
+assert.equal(payMonthOf('2026-11-05'), '2026-10')
+assert.equal(payMonthOf('2026-01-10'), '2025-12')
+
+// Period: income − saved − fixed − variable; refunds net; shared costs paid back net (can go
+// negative); transfers ignored; outside dates ignored.
+const b = periodBudget(
   [
     { date: '2026-10-25', amount: 32000, category: 'income' },
     { date: '2026-10-26', amount: -5000, category: 'savings' },
@@ -51,15 +75,24 @@ const b = monthBudget(
     { date: '2026-10-06', amount: -800, category: 'shopping' },
     { date: '2026-10-07', amount: 300, category: 'shopping' }, // refund
     { date: '2026-10-08', amount: -10000, category: 'transfer' },
+    { date: '2026-10-09', amount: -4463, category: 'housing' },
+    { date: '2026-10-10', amount: -1707, category: 'loans' },
+    { date: '2026-10-11', amount: 2500, category: 'shared' }, // Swish back
+    { date: '2026-10-12', amount: -200, category: 'shared' },
     { date: '2026-09-30', amount: -999, category: 'groceries' },
   ],
-  '2026-10',
+  '2026-10-01',
+  '2026-10-31',
 )
 assert.equal(b.income, 32000)
 assert.equal(b.saved, 5000)
-assert.equal(b.spent, 1700)
-assert.equal(b.left, 25300)
+assert.equal(b.fixed, 6170)
+assert.equal(b.variable, 1700) // shared money back doesn't hide inside one group
+assert.equal(b.sharedBack, 2300)
+assert.equal(b.left, 32000 - 5000 - 6170 - 1700 + 2300)
 assert.deepEqual(b.byCategory, [
+  { category: 'housing', amount: 4463 },
+  { category: 'loans', amount: 1707 },
   { category: 'groceries', amount: 1200 },
   { category: 'shopping', amount: 500 },
 ])
