@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { ACCOUNT_INFO, BUFFER_ACCOUNTS, SAVINGS_ACCOUNTS, formatKr, type BufferAccount } from '../lib/finance'
 import { loadBudgetRules } from '../lib/bankSavings'
 import {
+  CARD_SUBS,
   CATEGORY_INFO,
   HEADS,
   NO_RULES,
@@ -39,6 +40,7 @@ import {
 const PICKER: { label: string; options: BudgetCategory[] }[] = [
   { label: 'Income', options: ['income'] },
   { label: 'Saved', options: ['savings'] },
+  { label: 'Spending card', options: ['card'] },
   ...HEADS.map((h) => ({ label: `${h.icon} ${h.label}`, options: [...h.subs] as BudgetCategory[] })),
   { label: 'Shared', options: ['shared'] },
   { label: 'Ignored', options: ['transfer'] },
@@ -108,6 +110,18 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
     } = await supabase.auth.getUser()
     if (!user) return
     await supabase.from('user_settings').upsert({ user_id: user.id, budget_targets: next })
+  }
+
+  async function saveCardSplit(sub: (typeof CARD_SUBS)[number], raw: string) {
+    const value = Number(raw.replace(/\s/g, '').replace(',', '.') || 0)
+    if (!Number.isFinite(value) || value < 0 || value === (rules.card[sub] ?? 0)) return
+    const card = { ...rules.card, [sub]: value }
+    setRules({ ...rules, card })
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    await supabase.from('user_settings').upsert({ user_id: user.id, budget_card_split: card })
   }
 
   async function saveRule(key: BufferAccount | 'amortization', raw: string) {
@@ -387,7 +401,7 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
         <button onClick={() => setEditingRules((v) => !v)} className="self-start text-[11px] font-medium text-ink-muted">
           {editingRules
             ? 'Done'
-            : `Split rules · buffers ${formatKr(BUFFER_ACCOUNTS.reduce((s, a) => s + rules.buffers[a], 0))}/mo · amortization ${formatKr(rules.amortizationPerMonth)}/mo`}
+            : `Split rules · buffers ${formatKr(BUFFER_ACCOUNTS.reduce((s, a) => s + rules.buffers[a], 0))} · card ${formatKr(CARD_SUBS.reduce((s, c) => s + (rules.card[c] ?? 0), 0))} · amortization ${formatKr(rules.amortizationPerMonth)}`}
         </button>
         {editingRules && (
           <div className="flex flex-col gap-1.5">
@@ -400,6 +414,24 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
                 <input
                   defaultValue={(key === 'amortization' ? rules.amortizationPerMonth : rules.buffers[key]) || ''}
                   onBlur={(e) => saveRule(key, e.target.value)}
+                  inputMode="decimal"
+                  placeholder="0"
+                  className="w-20 shrink-0 bg-transparent text-right text-sm font-semibold text-ink outline-none"
+                />
+                <span className="text-xs text-ink-muted">kr</span>
+              </label>
+            ))}
+            <p className="mt-2 text-[11px] text-ink-muted">
+              💳 Revolut card: each pay period, top-ups count as spent on these, in order; anything above them counts as Other.
+            </p>
+            {CARD_SUBS.map((c) => (
+              <label key={c} className="flex items-center gap-3 rounded-xl border border-line bg-page px-3 py-2">
+                <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink-2">
+                  {CATEGORY_INFO[c].icon} {CATEGORY_INFO[c].label}
+                </span>
+                <input
+                  defaultValue={rules.card[c] || ''}
+                  onBlur={(e) => saveCardSplit(c, e.target.value)}
                   inputMode="decimal"
                   placeholder="0"
                   className="w-20 shrink-0 bg-transparent text-right text-sm font-semibold text-ink outline-none"

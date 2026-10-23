@@ -13,6 +13,7 @@ import {
   NO_RULES,
   PLANNABLE,
   planRows,
+  splitCard,
   merchantKey,
   parseAmount,
   parseNordeaCsv,
@@ -60,7 +61,7 @@ assert.equal(guessCategory('Överföring Avanza', -5000, none), 'savings')
 assert.equal(guessCategory('ARBETSGIVAREN AB', 32000, none), 'income')
 assert.equal(guessCategory('Betalning BG CSN Centrala', -1707, none), 'csn') // a repayment, not income
 assert.equal(guessCategory('Betalning PG 4173300-7 Nordea Bank', -924, none), 'other_loans')
-assert.equal(guessCategory('Kortköp 261022 Revolut**6942*', -5000, none), 'groceries') // his food card
+assert.equal(guessCategory('Kortköp 261022 Revolut**6942*', -5000, none), 'card') // his spending card
 assert.equal(guessCategory('Betalning BG 5552-2635 Ellevio (pub', -265, none), 'electricity')
 assert.equal(guessCategory('Betalning PG 4746003-5 Comviq', -134, none), 'phone')
 assert.equal(guessCategory('Open Banking BG 5862-8082 AKADEMIKE', -140, none), 'union')
@@ -133,7 +134,7 @@ assert.deepEqual(b.byCategory, [
 
 // Split rules — his real setup: Avanza autogiros 3000/2500/2500/1000/500/250/250 = 2 500 buffer
 // + 500 car + 1 000 travel + 6 000 ETF; mortgage 1 386 amortization + varying interest.
-const rules = { buffers: { buffer: 2500, car_buffer: 500, travel_buffer: 1000 }, amortizationPerMonth: 1386 }
+const rules = { buffers: { buffer: 2500, car_buffer: 500, travel_buffer: 1000 }, amortizationPerMonth: 1386, card: {} }
 const avanza = [3000, 2500, 2500, 1000, 500, 250, 250].map((a) => ({ date: '2026-10-23', amount: -a, category: 'savings' as const }))
 const sum = (es: { account: string; amount: number }[], account: string) => es.filter((e) => e.account === account).reduce((s, e) => s + e.amount, 0)
 const oct = bankSavingsEntries([...avanza, { date: '2026-10-28', amount: -6236, category: 'mortgage' as const }], rules)
@@ -196,5 +197,37 @@ assert.equal(daysLeft('2026-10-23', '2026-11-22', '2026-10-22'), 31)
 assert.equal(daysLeft('2026-11-22', '2026-11-22', '2026-10-22'), 1) // last day counts
 assert.equal(daysLeft('2026-11-23', '2026-11-22', '2026-10-22'), null) // a past period
 assert.equal(daysLeft('2026-03-29', '2026-04-21', '2026-03-23'), 24) // across the DST switch
+
+// Card top-ups: his 3 000 food / 1 500 fuel / 500 shopping. Exactly 5 000 fills all three; more
+// spills into Other; less fills in order; split is per period over the sum of top-ups.
+const card = { groceries: 3000, fuel_parking: 1500, shopping: 500 }
+assert.deepEqual(splitCard(5000, card), [
+  { category: 'groceries', amount: 3000 },
+  { category: 'fuel_parking', amount: 1500 },
+  { category: 'shopping', amount: 500 },
+])
+assert.deepEqual(splitCard(6200, card).at(-1), { category: 'other', amount: 1200 })
+assert.deepEqual(splitCard(3500, card), [
+  { category: 'groceries', amount: 3000 },
+  { category: 'fuel_parking', amount: 500 },
+])
+assert.deepEqual(splitCard(0, card), [])
+const withCard = periodBudget(
+  [
+    { date: '2026-10-22', amount: -3000, category: 'card' },
+    { date: '2026-11-05', amount: -2000, category: 'card' },
+    { date: '2026-10-25', amount: -400, category: 'groceries' }, // a Nordea-card ICA visit adds to the same sub
+  ],
+  '2026-10-22',
+  '2026-11-22',
+  { ...NO_RULES, card },
+)
+assert.deepEqual(withCard.byCategory, [
+  { category: 'groceries', amount: 3400 },
+  { category: 'fuel_parking', amount: 1500 },
+  { category: 'shopping', amount: 500 },
+])
+assert.equal(withCard.variable, 5400)
+assert.ok(!PLANNABLE.includes('card')) // the top-up itself is never planned — its subs are
 
 console.log('budget.check: ok')

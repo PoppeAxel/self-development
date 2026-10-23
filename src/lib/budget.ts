@@ -47,14 +47,22 @@ const SUB_INFO: Record<SubCategory, { label: string; group: 'fixed' | 'variable'
   other: { label: 'Other', group: 'variable' },
 }
 
-const SPECIAL = ['income', 'savings', 'shared', 'transfer'] as const
+const SPECIAL = ['income', 'savings', 'card', 'shared', 'transfer'] as const
 export type BudgetCategory = (typeof SPECIAL)[number] | SubCategory
-export type BudgetGroup = 'income' | 'saved' | 'fixed' | 'variable' | 'shared' | 'ignored'
+export type BudgetGroup = 'income' | 'saved' | 'card' | 'fixed' | 'variable' | 'shared' | 'ignored'
 
-/** Every category, in picker order: income, savings, then each head's subs, shared, transfer. */
-export const BUDGET_CATEGORIES: BudgetCategory[] = ['income', 'savings', ...HEADS.flatMap((h) => h.subs), 'shared', 'transfer']
+/** Every category, in picker order: income, savings, card, then each head's subs, shared, transfer. */
+export const BUDGET_CATEGORIES: BudgetCategory[] = ['income', 'savings', 'card', ...HEADS.flatMap((h) => h.subs), 'shared', 'transfer']
 
-export const GROUP_LABEL: Record<BudgetGroup, string> = { income: 'Income', saved: 'Saved', fixed: 'Fixed costs', variable: 'Variable', shared: 'Shared', ignored: 'Ignored' }
+export const GROUP_LABEL: Record<BudgetGroup, string> = {
+  income: 'Income',
+  saved: 'Saved',
+  card: 'Spending card',
+  fixed: 'Fixed costs',
+  variable: 'Variable',
+  shared: 'Shared',
+  ignored: 'Ignored',
+}
 
 export interface CategoryInfo {
   label: string
@@ -74,6 +82,10 @@ export const CATEGORY_INFO = {
   shared: { label: 'Shared costs', icon: '🤝', color: '#9a7b5f', group: 'shared' },
   // Moves between his own accounts: counted nowhere.
   transfer: { label: 'Own transfer (ignored)', icon: '↔️', color: '#b9b2a4', group: 'ignored' },
+  // Top-ups of his Revolut card, which he spends on food, fuel and odds and ends. Split by
+  // SplitRules.card into subcategories (see periodBudget) — the purchases themselves never
+  // reach this account.
+  card: { label: 'Revolut card (split)', icon: '💳', color: '#5b7fa6', group: 'card' },
   ...Object.fromEntries(HEADS.flatMap((h) => h.subs.map((s) => [s, { ...SUB_INFO[s], icon: h.icon, color: h.color, head: h.id }]))),
 } as Record<BudgetCategory, CategoryInfo>
 
@@ -114,7 +126,8 @@ const GUESSES: [RegExp, BudgetCategory][] = [
   [/(spotify|netflix|\bhbo\b|viaplay|disney|youtube|apple\.com|anthropic|claude|microsoft)/, 'streaming'],
   [/(akademike|a-kassa|unionen|\bsaco\b)/, 'union'],
   // Revolut is his food/household card — topping it up is the grocery spend.
-  [/(\bica\b|coop|willys|hemköp|lidl|city gross|mathem|\bspar\b|tempo|revolut)/, 'groceries'],
+  [/(revolut)/, 'card'],
+  [/(\bica\b|coop|willys|hemköp|lidl|city gross|mathem|\bspar\b|tempo)/, 'groceries'],
   [/(\bbar\b|\bpub\b|liffey|nattklubb|tickster|ticketmaster|filmstaden|biljett)/, 'going_out'],
   [/(restaurang|brasserie|mcdonald|\bmax\b|burger|pizz|sushi|foodora|wolt|espresso house|pressbyrån|7-eleven|cafe|café)/, 'eating_out'],
   [/(transportstyrelsen|fordonsskatt|bilförsäkring|besiktning|bilprovning|däck)/, 'car_costs'],
@@ -249,9 +262,14 @@ export interface SplitRules {
   /** How much of each pay period's savings goes to each buffer, filled in BUFFER_ACCOUNTS order. */
   buffers: Record<BufferAccount, number>
   amortizationPerMonth: number
+  /** How each pay period's card top-ups are spent, filled in CARD_SUBS order; the rest is Other. */
+  card: Partial<Record<SubCategory, number>>
 }
 
-export const NO_RULES: SplitRules = { buffers: { buffer: 0, car_buffer: 0, travel_buffer: 0 }, amortizationPerMonth: 0 }
+/** Subcategories a card top-up can be split into, in fill order. */
+export const CARD_SUBS = ['groceries', 'fuel_parking', 'shopping', 'eating_out'] as const satisfies readonly SubCategory[]
+
+export const NO_RULES: SplitRules = { buffers: { buffer: 0, car_buffer: 0, travel_buffer: 0 }, amortizationPerMonth: 0, card: {} }
 
 /**
  * What the bank rows saved, as savings-tab entries. Per pay period (`periodOf`) money into
@@ -310,8 +328,26 @@ export interface PeriodBudget {
 }
 
 /**
+ * A period's net card top-ups split into subcategories: each CARD_SUBS entry up to its amount
+ * in order, the rest Other. Money back from the card (net negative) reads as Other too.
+ */
+export function splitCard(topUps: number, split: SplitRules['card']): { category: SubCategory; amount: number }[] {
+  const out: { category: SubCategory; amount: number }[] = []
+  let rest = topUps
+  for (const c of CARD_SUBS) {
+    const take = Math.min(split[c] ?? 0, Math.max(rest, 0))
+    if (take <= 0) continue
+    out.push({ category: c, amount: take })
+    rest -= take
+  }
+  if (rest) out.push({ category: 'other', amount: rest })
+  return out
+}
+
+/**
  * Totals for start..end (inclusive). Refunds net against their category; own transfers count
- * nowhere; a mortgage payment's amortization is saved and only its interest is a fixed cost.
+ * nowhere; a mortgage payment's amortization is saved and only its interest is a fixed cost;
+ * card top-ups are spread over their subcategories by `rules.card`.
  */
 export function periodBudget(transactions: Pick<BankTransaction, 'date' | 'amount' | 'category'>[], start: string, end: string, rules: SplitRules): PeriodBudget {
   const inPeriod = transactions.filter((t) => t.date >= start && t.date <= end)
@@ -319,7 +355,9 @@ export function periodBudget(transactions: Pick<BankTransaction, 'date' | 'amoun
   for (const e of bankSavingsEntries(inPeriod, rules, () => '')) savedByAccount[e.account] += e.amount
   let income = 0
   let sharedBack = 0
+  let topUps = 0
   const spend = new Map<BudgetCategory, number>()
+  const addSpend = (c: BudgetCategory, cost: number) => spend.set(c, (spend.get(c) ?? 0) + cost)
   for (const t of inPeriod) {
     // An id that no longer exists (renamed category) counts as Other rather than vanishing.
     const category = t.category in CATEGORY_INFO ? t.category : 'other'
@@ -329,8 +367,10 @@ export function periodBudget(transactions: Pick<BankTransaction, 'date' | 'amoun
     const cost = category === 'mortgage' ? -amount - Math.min(rules.amortizationPerMonth, Math.max(-amount, 0)) : -amount
     if (group === 'income') income += amount
     else if (group === 'shared') sharedBack += amount
-    else spend.set(category, (spend.get(category) ?? 0) + cost)
+    else if (group === 'card') topUps += cost
+    else addSpend(category, cost)
   }
+  for (const s of splitCard(topUps, rules.card)) addSpend(s.category, s.amount)
   const byCategory = [...spend].map(([category, amount]) => ({ category, amount })).filter((c) => c.amount !== 0).sort((a, b) => b.amount - a.amount)
   const sum = (g: BudgetGroup) => byCategory.filter((c) => CATEGORY_INFO[c.category].group === g).reduce((s, c) => s + c.amount, 0)
   const fixed = sum('fixed')
@@ -344,7 +384,7 @@ export function periodBudget(transactions: Pick<BankTransaction, 'date' | 'amoun
 export type BudgetTargets = Partial<Record<BudgetCategory, number>>
 
 /** Categories a target can be set for: what a pay period spends on. */
-export const PLANNABLE = BUDGET_CATEGORIES.filter((c) => ['fixed', 'variable'].includes(CATEGORY_INFO[c].group))
+export const PLANNABLE: BudgetCategory[] = HEADS.flatMap((h) => h.subs)
 
 export interface PlanRow {
   category: BudgetCategory
