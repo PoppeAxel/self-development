@@ -1,4 +1,4 @@
-export type Tab = 'today' | 'calendar' | 'goals' | 'journal' | 'food' | 'training' | 'settings'
+export type Tab = 'today' | 'calendar' | 'goals' | 'journal' | 'economy' | 'food' | 'training' | 'settings'
 
 // Calendar and Settings are reachable from TopIcons instead of a bottom-bar slot — see there.
 const TABS: { id: Tab; label: string; icon: string }[] = [
@@ -6,11 +6,12 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'today', label: 'Today', icon: '☀️' },
   { id: 'goals', label: 'Goals', icon: '🎯' },
   { id: 'journal', label: 'Journal', icon: '📝' },
+  { id: 'economy', label: 'Economy', icon: '💰' },
   { id: 'food', label: 'Food', icon: '🥗' },
   { id: 'training', label: 'Training', icon: '🏋️' },
 ]
 
-// A floating pine bar rather than a white one flush to the screen edge. All five tabs keep
+// A floating pine bar rather than a white one flush to the screen edge. All six tabs keep
 // equal width — no centre FAB, which would displace one of them. Fixed over the content
 // (which scrolls behind it, see --tabbar-space) and set down into the home-indicator zone.
 export function TabBar({ active, onChange }: { active: Tab; onChange: (tab: Tab) => void }) {

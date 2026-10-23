@@ -3,17 +3,17 @@ import { format } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { periodEndISO, periodStartISO, todayISO } from '../lib/dates'
 import { ACCOUNT_INFO, SAVINGS_ACCOUNTS, formatKr, periodTotals, type SavingsAccount, type SavingsEntry } from '../lib/finance'
-import { ChipRail, Screen } from './Screen'
+import { ChipRail, HeroSegments, Screen } from './Screen'
 import { ConfirmDialog } from './ConfirmDialog'
 import { Pots } from './Pots'
 import { Budget } from './Budget'
 import { loadBankSavings } from '../lib/bankSavings'
 import type { PeriodType } from '../lib/types'
 
-// Journal → Finance. Savings logged by hand: what went to the buffer, the house loan and
-// ETFs/stocks, plus withdrawals (stored as negative amounts). A goal tracking "Saved
-// (Finance)" sums the same rows, so the Goals screen and this tab can't disagree.
-// Renders its own <Screen> (Journal hands over its tab pills), like Training used to.
+// The Economy tab: Budget (bank import), Savings and Pots, switched in the hero. Savings are
+// logged by hand — buffer, house loan, ETFs/stocks, withdrawals as negative amounts — plus
+// what the Budget import implies (lib/bankSavings). A goal tracking "Saved (Finance)" sums
+// the same rows, so the Goals screen and this tab can't disagree.
 
 type Mode = 'deposit' | 'withdraw'
 const PERIODS: { id: Exclude<PeriodType, 'week'>; label: string }[] = [
@@ -23,7 +23,7 @@ const PERIODS: { id: Exclude<PeriodType, 'week'>; label: string }[] = [
 ]
 const INPUT = 'min-w-0 flex-1 bg-transparent text-right text-sm font-semibold text-ink outline-none placeholder:font-medium placeholder:text-ink-faint'
 
-export function Finance({ segments }: { segments: React.ReactNode }) {
+export function Finance() {
   const [entries, setEntries] = useState<SavingsEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [mode, setMode] = useState<Mode>('deposit')
@@ -35,7 +35,7 @@ export function Finance({ segments }: { segments: React.ReactNode }) {
   const [showAll, setShowAll] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<SavingsEntry | null>(null)
   // Long-term savings (counts toward totals/goals) vs short-term pots (kept apart).
-  const [view, setView] = useState<'long' | 'pots' | 'budget'>('long')
+  const [view, setView] = useState<'long' | 'pots' | 'budget'>('budget')
 
   async function load() {
     const [{ data }, bank] = await Promise.all([
@@ -93,7 +93,15 @@ export function Finance({ segments }: { segments: React.ReactNode }) {
 
   const hero = (
     <>
-      {segments}
+      <HeroSegments
+        options={[
+          { id: 'budget', label: 'Budget' },
+          { id: 'long', label: 'Savings' },
+          { id: 'pots', label: 'Pots' },
+        ]}
+        value={view}
+        onChange={setView}
+      />
       {view === 'long' && (
       <div className="mt-5 flex items-end justify-between gap-3">
         <div>
@@ -114,16 +122,7 @@ export function Finance({ segments }: { segments: React.ReactNode }) {
   )
 
   return (
-    <Screen title="Journal" onRefresh={load} hero={hero}>
-      <ChipRail
-        options={[
-          { id: 'long', label: 'Long-term savings' },
-          { id: 'pots', label: 'Pots' },
-          { id: 'budget', label: 'Budget' },
-        ]}
-        value={view}
-        onChange={setView}
-      />
+    <Screen title="Economy" onRefresh={load} hero={hero}>
       {view === 'pots' ? (
         <Pots />
       ) : view === 'budget' ? (

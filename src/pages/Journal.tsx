@@ -31,7 +31,6 @@ import { ProgressRing } from '../components/ProgressRing'
 import { CATEGORY_STYLES } from '../lib/categories'
 import { THEME } from '../lib/theme'
 import { Screen, HeroSegments, HeroChip, ChipRail } from '../components/Screen'
-import { Finance } from '../components/Finance'
 import { Media } from '../components/Media'
 import { DiaryList } from '../components/DiaryList'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -57,8 +56,9 @@ import type {
 // 'review' is the cross-metric weekly view rather than one metric's tab — it's first in
 // the list because it's the one that answers "how did the week go" without picking a
 // metric first, which the per-metric tabs can't do.
-// Cardio and Strength live in their own bottom tab, Training (src/components/Training.tsx).
-type JournalTab = Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes' | 'mood' | 'note'> | 'review' | 'diary' | 'finance' | 'media'
+// Cardio and Strength live in their own bottom tab, Training (src/components/Training.tsx);
+// money in its own Economy tab (src/components/Finance.tsx).
+type JournalTab = Exclude<JournalEntryType, 'cardio_minutes' | 'strength_minutes' | 'mood' | 'note'> | 'review' | 'diary' | 'media'
 // Seven pills stopped fitting a phone-width track (design_handoff_journal_tabs), so the
 // hero has two levels: three group segments, then a chip rail with that group's tabs.
 // `tab` stays the single source of truth; the group is derived from it.
@@ -66,7 +66,7 @@ type JournalGroup = 'week' | 'body' | 'life'
 const GROUPS: { id: JournalGroup; label: string; tabs: JournalTab[] }[] = [
   { id: 'week', label: 'Week', tabs: ['review'] },
   { id: 'body', label: 'Body', tabs: ['weight', 'sleep_hours', 'steps'] },
-  { id: 'life', label: 'Life', tabs: ['diary', 'finance', 'media'] },
+  { id: 'life', label: 'Life', tabs: ['diary', 'media'] },
 ]
 const groupOf = (t: JournalTab) => GROUPS.find((g) => g.tabs.includes(t))!.id
 const TAB_LABELS: Record<JournalTab, string> = {
@@ -75,7 +75,6 @@ const TAB_LABELS: Record<JournalTab, string> = {
   weight: 'Weight',
   sleep_hours: 'Sleep',
   steps: 'Steps',
-  finance: 'Finance',
   media: 'Media',
 }
 const ENTRY_TYPE_LABELS: Partial<Record<JournalEntryType, string>> = {
@@ -93,7 +92,6 @@ const METRIC_HUE: Record<JournalTab, (typeof CATEGORY_STYLES)[keyof typeof CATEG
   weight: CATEGORY_STYLES.violet,
   sleep_hours: CATEGORY_STYLES.sky,
   steps: CATEGORY_STYLES.emerald,
-  finance: CATEGORY_STYLES.amber,
   media: CATEGORY_STYLES.sky,
 }
 
@@ -104,7 +102,6 @@ const CHIP_DOT: Partial<Record<JournalTab, string>> = {
   sleep_hours: '#a9bde0',
   steps: THEME.pineArc,
   diary: METRIC_HUE.diary.tint,
-  finance: METRIC_HUE.finance.tint,
   media: METRIC_HUE.media.tint,
 }
 
@@ -702,11 +699,9 @@ export function Journal() {
     </>
   )
 
-  // Finance owns its own data and screen; Journal just hands it the tab pills.
-  if (tab === 'finance' || tab === 'media' || tab === 'diary') {
-    if (tab === 'diary') return <DiaryList segments={segments} />
-    return tab === 'finance' ? <Finance segments={segments} /> : <Media segments={segments} />
-  }
+  // Diary and Media own their own data and screen; Journal just hands them the tab pills.
+  if (tab === 'diary') return <DiaryList segments={segments} />
+  if (tab === 'media') return <Media segments={segments} />
 
   return (
     <Screen title={tab === 'review' ? 'Your week' : 'Journal'} onRefresh={load} hero={hero}>

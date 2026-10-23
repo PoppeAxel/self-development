@@ -10,6 +10,7 @@ import { GoalDetail } from './pages/GoalDetail'
 import { Journal } from './pages/Journal'
 import { Food } from './pages/Food'
 import { Training } from './components/Training'
+import { Finance } from './components/Finance'
 import { Settings } from './pages/Settings'
 
 function Shell() {
@@ -48,6 +49,7 @@ function Shell() {
               <Goals />
             ))}
           {tab === 'journal' && <Journal />}
+          {tab === 'economy' && <Finance />}
           {tab === 'food' && <Food />}
           {tab === 'training' && <Training />}
           {tab === 'settings' && <Settings />}
