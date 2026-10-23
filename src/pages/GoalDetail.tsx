@@ -24,6 +24,7 @@ import { CATEGORY_STYLES } from '../lib/categories'
 import { AUTO_METRICS } from '../lib/metrics'
 import { MEDIA_METRICS } from '../lib/media'
 import { formatKr, periodTotals, type SavingsEntry } from '../lib/finance'
+import { loadBankSavings } from '../lib/bankSavings'
 import { formatGoalValue, isWeightGoal, milestoneState, parseGoalValue, type MilestoneResult } from '../lib/checkins'
 import { useNav } from '../contexts/NavContext'
 import { Screen } from '../components/Screen'
@@ -115,12 +116,12 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
     const { data: checkinRows } = await supabase.from('goal_checkins').select('*').in('goal_id', seriesIds).order('period_start', { ascending: false })
     setCheckinList((checkinRows ?? []) as GoalCheckin[])
     if (isFinanceMetric(loaded.auto_metric)) {
-      const { data: savingRows } = await supabase
-        .from('savings_entries')
-        .select('date, account, amount')
-        .gte('date', loaded.period_start)
-        .lte('date', periodEndISO(loaded.period_type, loaded.period_start))
-      setSavings((savingRows ?? []) as Pick<SavingsEntry, 'date' | 'account' | 'amount'>[])
+      const goalEnd = periodEndISO(loaded.period_type, loaded.period_start)
+      const [{ data: savingRows }, bank] = await Promise.all([
+        supabase.from('savings_entries').select('date, account, amount').gte('date', loaded.period_start).lte('date', goalEnd),
+        loadBankSavings(loaded.period_start, goalEnd),
+      ])
+      setSavings([...((savingRows ?? []) as Pick<SavingsEntry, 'date' | 'account' | 'amount'>[]), ...bank])
     }
 
     // The rollup chain upward. Walks parent_series_id, taking whichever instance of that

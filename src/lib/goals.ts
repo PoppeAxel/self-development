@@ -13,6 +13,7 @@ import { isStrengthWorkout } from './workouts'
 import { CATEGORY_STYLES } from './categories'
 import type { MilestoneResult } from './checkins'
 import { isMediaMetric, MEDIA_INFO, MEDIA_METRIC_KIND, type MediaMetric } from './media'
+import { loadBankSavings } from './bankSavings'
 import type { Category, Goal, PeriodType } from './types'
 
 // Counts workouts (not minutes) synced from Strava, e.g. "2x gym sessions/week" — distinct
@@ -71,8 +72,8 @@ async function mediaDates(metric: MediaMetric, start: string, end: string): Prom
 }
 
 async function savingsRows(start: string, end: string) {
-  const { data } = await supabase.from('savings_entries').select('date, amount').gte('date', start).lte('date', end)
-  return (data ?? []).map((r) => ({ date: r.date as string, amount: Number(r.amount) }))
+  const [{ data }, bank] = await Promise.all([supabase.from('savings_entries').select('date, amount').gte('date', start).lte('date', end), loadBankSavings(start, end)])
+  return [...(data ?? []).map((r) => ({ date: r.date as string, amount: Number(r.amount) })), ...bank]
 }
 
 /** What one workout adds to a session metric: 1 for the counts, its km for cardio_km. */

@@ -1,11 +1,14 @@
 // Finance → Budget: Nordea CSV export → bank_transactions. Pure — no supabase import —
 // so scripts/budget.check.ts can run it under node.
 
+import type { SavingsAccount } from './finance'
+
 // Order = how the category picker lists them, grouped. Ids are stored in bank_transactions.category.
 export const BUDGET_CATEGORIES = [
   'income',
   'savings',
   'housing',
+  'mortgage',
   'loans',
   'bills',
   'subscriptions',
@@ -25,8 +28,11 @@ export const GROUP_LABEL: Record<BudgetGroup, string> = { income: 'Income', save
 
 export const CATEGORY_INFO: Record<BudgetCategory, { label: string; icon: string; color: string; group: BudgetGroup }> = {
   income: { label: 'Income', icon: '💰', color: '#2f6b5a', group: 'income' },
-  savings: { label: 'Savings', icon: '🏦', color: '#46608f', group: 'saved' },
+  // Split by SplitRules into buffer / ETF & stocks (see bankSavingsEntries).
+  savings: { label: 'Savings (Avanza)', icon: '🏦', color: '#46608f', group: 'saved' },
   housing: { label: 'Housing', icon: '🏠', color: '#8a5a44', group: 'fixed' },
+  // The payment row; its amortization part counts as saved, only the interest as a cost.
+  mortgage: { label: 'Mortgage', icon: '🔑', color: '#a0674f', group: 'fixed' },
   loans: { label: 'Loans & CSN', icon: '🎓', color: '#6b5a8a', group: 'fixed' },
   bills: { label: 'Bills (power, phone, insurance)', icon: '💡', color: '#7a6aa8', group: 'fixed' },
   subscriptions: { label: 'Subscriptions', icon: '📺', color: '#5b7fa6', group: 'fixed' },
@@ -66,7 +72,8 @@ const GUESSES: [RegExp, BudgetCategory][] = [
   [/\b(lön|lon|salary|försäkringskassan)\b/, 'income'],
   [/(avanza|nordnet|sparkonto|\bisk\b)/, 'savings'],
   [/(hyra|\bbrf\b|\bhsb\b|hemförsäkring)/, 'housing'],
-  [/(\bcsn\b|bolån|omsättning lån|ränta|avgift lån|nordea bank\b)/, 'loans'],
+  [/(bolån|omsättning lån)/, 'mortgage'],
+  [/(\bcsn\b|ränta|avgift lån|nordea bank\b)/, 'loans'],
   [/(telia|tele2|comviq|telenor|\btre\b|ellevio|vattenfall|e\.on|försäkring|if skade|folksam|trygg-hansa|akademike|a-kassa)/, 'bills'],
   [/(spotify|netflix|\bhbo\b|viaplay|disney|youtube|apple\.com|anthropic|claude)/, 'subscriptions'],
   // Revolut is his food/household card — topping it up is the grocery spend.
@@ -192,9 +199,49 @@ export function payPeriod(month: string, transactions: Pick<BankTransaction, 'da
   return { start: payday(month, transactions), end: end.toISOString().slice(0, 10) }
 }
 
+// --- Bank rows → the savings tab's accounts.
+
+/** Set once in Budget (user_settings). Both are kr per month. */
+export interface SplitRules {
+  bufferPerMonth: number
+  amortizationPerMonth: number
+}
+
+/**
+ * What the bank rows saved, as savings-tab entries. Per pay period (`periodOf`) the first
+ * `bufferPerMonth` into 'savings' is buffer and the rest ETF & stocks — his Avanza autogiros
+ * share amounts (two of 2 500) so they can't be told apart row by row, only by total. Money
+ * taken back out of savings comes off the buffer. Of each mortgage payment the first
+ * `amortizationPerMonth` is loan paid; the rest is interest (a cost, not here).
+ */
+export function bankSavingsEntries(
+  transactions: Pick<BankTransaction, 'date' | 'amount' | 'category'>[],
+  rules: SplitRules,
+  periodOf: (date: string) => string = payMonthOf,
+): { date: string; account: SavingsAccount; amount: number }[] {
+  const out: { date: string; account: SavingsAccount; amount: number }[] = []
+  const bufferLeft = new Map<string, number>()
+  for (const t of [...transactions].sort((a, b) => a.date.localeCompare(b.date))) {
+    const amount = -Number(t.amount) // money out of the bank account = saved
+    if (t.category === 'mortgage') {
+      const paid = Math.min(rules.amortizationPerMonth, Math.max(amount, 0))
+      if (paid) out.push({ date: t.date, account: 'mortgage', amount: paid })
+    } else if (t.category === 'savings') {
+      const key = periodOf(t.date)
+      const left = bufferLeft.get(key) ?? rules.bufferPerMonth
+      const toBuffer = amount < 0 ? amount : Math.min(left, amount)
+      bufferLeft.set(key, left - Math.max(toBuffer, 0))
+      if (toBuffer) out.push({ date: t.date, account: 'buffer', amount: toBuffer })
+      if (amount - toBuffer) out.push({ date: t.date, account: 'investments', amount: amount - toBuffer })
+    }
+  }
+  return out
+}
+
 export interface PeriodBudget {
   income: number
   saved: number
+  savedByAccount: Record<SavingsAccount, number>
   fixed: number
   variable: number
   /** Net Swished back for shared costs (positive = got more back than sent). */
@@ -204,24 +251,30 @@ export interface PeriodBudget {
   byCategory: { category: BudgetCategory; amount: number }[]
 }
 
-/** Totals for start..end (inclusive). Refunds net against their category; own transfers count nowhere. */
-export function periodBudget(transactions: Pick<BankTransaction, 'date' | 'amount' | 'category'>[], start: string, end: string): PeriodBudget {
+/**
+ * Totals for start..end (inclusive). Refunds net against their category; own transfers count
+ * nowhere; a mortgage payment's amortization is saved and only its interest is a fixed cost.
+ */
+export function periodBudget(transactions: Pick<BankTransaction, 'date' | 'amount' | 'category'>[], start: string, end: string, rules: SplitRules): PeriodBudget {
+  const inPeriod = transactions.filter((t) => t.date >= start && t.date <= end)
+  const savedByAccount = { buffer: 0, mortgage: 0, investments: 0 }
+  for (const e of bankSavingsEntries(inPeriod, rules, () => '')) savedByAccount[e.account] += e.amount
   let income = 0
-  let saved = 0
   let sharedBack = 0
   const spend = new Map<BudgetCategory, number>()
-  for (const t of transactions) {
+  for (const t of inPeriod) {
     const group = CATEGORY_INFO[t.category]?.group ?? 'variable'
-    if (t.date < start || t.date > end || group === 'ignored') continue
+    if (group === 'ignored' || group === 'saved') continue
     const amount = Number(t.amount)
+    const cost = t.category === 'mortgage' ? -amount - Math.min(rules.amortizationPerMonth, Math.max(-amount, 0)) : -amount
     if (group === 'income') income += amount
-    else if (group === 'saved') saved -= amount
     else if (group === 'shared') sharedBack += amount
-    else spend.set(t.category, (spend.get(t.category) ?? 0) - amount)
+    else spend.set(t.category, (spend.get(t.category) ?? 0) + cost)
   }
   const byCategory = [...spend].map(([category, amount]) => ({ category, amount })).filter((c) => c.amount !== 0).sort((a, b) => b.amount - a.amount)
   const sum = (g: BudgetGroup) => byCategory.filter((c) => CATEGORY_INFO[c.category].group === g).reduce((s, c) => s + c.amount, 0)
   const fixed = sum('fixed')
   const variable = sum('variable')
-  return { income, saved, fixed, variable, sharedBack, left: income - saved - fixed - variable + sharedBack, byCategory }
+  const saved = savedByAccount.buffer + savedByAccount.mortgage + savedByAccount.investments
+  return { income, saved, savedByAccount, fixed, variable, sharedBack, left: income - saved - fixed - variable + sharedBack, byCategory }
 }

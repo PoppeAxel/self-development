@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { supabase } from '../lib/supabase'
-import { formatKr } from '../lib/finance'
+import { ACCOUNT_INFO, SAVINGS_ACCOUNTS, formatKr } from '../lib/finance'
+import { loadBudgetRules } from '../lib/bankSavings'
 import {
   BUDGET_CATEGORIES,
   CATEGORY_INFO,
@@ -17,6 +18,7 @@ import {
   type BankTransaction,
   type BudgetCategory,
   type BudgetGroup,
+  type SplitRules,
 } from '../lib/budget'
 
 // Journal → Finance → Budget: import Nordea's CSV export (no bank API), see income, saved,
@@ -46,6 +48,25 @@ export function Budget() {
   const [loading, setLoading] = useState(true)
   const [importing, setImporting] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const [rules, setRules] = useState<SplitRules>({ bufferPerMonth: 0, amortizationPerMonth: 0 })
+  const [editingRules, setEditingRules] = useState(false)
+
+  useEffect(() => {
+    loadBudgetRules().then(setRules)
+  }, [])
+
+  async function saveRule(key: keyof SplitRules, raw: string) {
+    const value = Number(raw.replace(/\s/g, '').replace(',', '.'))
+    if (!Number.isFinite(value) || value < 0 || value === rules[key]) return
+    setRules((r) => ({ ...r, [key]: value }))
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    await supabase
+      .from('user_settings')
+      .upsert({ user_id: user.id, [key === 'bufferPerMonth' ? 'budget_buffer_per_month' : 'mortgage_amortization_per_month']: value })
+  }
 
   async function load() {
     const { data } = await supabase
@@ -104,7 +125,7 @@ export function Budget() {
 
   const { start, end } = payPeriod(month, loaded)
   const txs = loaded.filter((t) => t.date >= start && t.date <= end)
-  const b = periodBudget(txs, start, end)
+  const b = periodBudget(txs, start, end, rules)
   const maxSpend = Math.max(...b.byCategory.map((c) => c.amount), 1)
   const day = (iso: string) => format(new Date(iso + 'T00:00:00'), 'd MMM')
   const step = (n: number) => setMonth(shiftMonth(month, n))
@@ -159,6 +180,19 @@ export function Budget() {
             </span>
           ))}
         </div>
+        {b.saved !== 0 && (
+          <div className="flex flex-col gap-1.5">
+            <p className="mt-1 text-[11px] font-semibold tracking-[0.1em] text-ink-3">SAVED</p>
+            {SAVINGS_ACCOUNTS.filter((a) => b.savedByAccount[a] !== 0).map((a) => (
+              <div key={a} className="flex items-baseline justify-between text-[13px]">
+                <span className="text-ink-2">
+                  {ACCOUNT_INFO[a].icon} {ACCOUNT_INFO[a].label}
+                </span>
+                <span className="font-semibold text-ink">{formatKr(b.savedByAccount[a])}</span>
+              </div>
+            ))}
+          </div>
+        )}
         {(['fixed', 'variable'] as const).map((group) => {
           const rows = b.byCategory.filter((c) => CATEGORY_INFO[c.category].group === group)
           if (!rows.length) return null
@@ -169,7 +203,7 @@ export function Budget() {
                 <div key={category} className="flex flex-col gap-1">
                   <div className="flex items-baseline justify-between text-[13px]">
                     <span className="text-ink-2">
-                      {CATEGORY_INFO[category].icon} {CATEGORY_INFO[category].label}
+                      {CATEGORY_INFO[category].icon} {category === 'mortgage' ? 'Mortgage interest' : CATEGORY_INFO[category].label}
                     </span>
                     <span className={`font-semibold ${amount < 0 ? 'text-pine' : 'text-ink'}`}>
                       {amount < 0 ? `+${formatKr(-amount)} back` : formatKr(amount)}
@@ -193,6 +227,31 @@ export function Budget() {
             </span>
           </div>
         )}
+        <button onClick={() => setEditingRules((v) => !v)} className="self-start text-[11px] font-medium text-ink-muted">
+          {editingRules ? 'Done' : `Split rules · buffer ${formatKr(rules.bufferPerMonth)}/mo · amortization ${formatKr(rules.amortizationPerMonth)}/mo`}
+        </button>
+        {editingRules &&
+          (
+            [
+              ['bufferPerMonth', '🛟 Buffer per month', 'The first part of what goes into savings; the rest counts as ETF & stocks.'],
+              ['amortizationPerMonth', '🏠 Amortization per month', 'Of each mortgage payment; the rest counts as interest.'],
+            ] as const
+          ).map(([key, label, hint]) => (
+            <label key={key} className="flex flex-col gap-1">
+              <span className="flex items-center gap-3 rounded-xl border border-line bg-page px-3 py-2">
+                <span className="shrink-0 text-[13px] font-medium text-ink-2">{label}</span>
+                <input
+                  defaultValue={rules[key] || ''}
+                  onBlur={(e) => saveRule(key, e.target.value)}
+                  inputMode="decimal"
+                  placeholder="0"
+                  className="min-w-0 flex-1 bg-transparent text-right text-sm font-semibold text-ink outline-none"
+                />
+                <span className="text-xs text-ink-muted">kr</span>
+              </span>
+              <span className="text-[11px] text-ink-muted">{hint}</span>
+            </label>
+          ))}
       </div>
 
       {/* Transactions */}

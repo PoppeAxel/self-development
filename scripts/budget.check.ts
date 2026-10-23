@@ -1,7 +1,18 @@
 // Asserts src/lib/budget.ts. Run:
 //   npx rolldown scripts/budget.check.ts --platform node -f esm -o <tmp>/bc.mjs && node <tmp>/bc.mjs
 import assert from 'node:assert/strict'
-import { guessCategory, merchantKey, parseAmount, parseNordeaCsv, payday, payMonthOf, payPeriod, periodBudget, type BudgetCategory } from '../src/lib/budget'
+import {
+  bankSavingsEntries,
+  guessCategory,
+  merchantKey,
+  parseAmount,
+  parseNordeaCsv,
+  payday,
+  payMonthOf,
+  payPeriod,
+  periodBudget,
+  type BudgetCategory,
+} from '../src/lib/budget'
 
 assert.equal(parseAmount('-1 234,50'), -1234.5)
 assert.equal(parseAmount('-1.234,50'), -1234.5)
@@ -83,6 +94,7 @@ const b = periodBudget(
   ],
   '2026-10-01',
   '2026-10-31',
+  { bufferPerMonth: 0, amortizationPerMonth: 0 },
 )
 assert.equal(b.income, 32000)
 assert.equal(b.saved, 5000)
@@ -96,5 +108,30 @@ assert.deepEqual(b.byCategory, [
   { category: 'groceries', amount: 1200 },
   { category: 'shopping', amount: 500 },
 ])
+
+// Split rules — his real setup: Avanza autogiros 3000/2500/2500/1000/500/250/250 (4 000 of it
+// buffer, 6 000 ETF), mortgage 1 386 amortization + varying interest.
+const rules = { bufferPerMonth: 4000, amortizationPerMonth: 1386 }
+const avanza = [3000, 2500, 2500, 1000, 500, 250, 250].map((a) => ({ date: '2026-10-23', amount: -a, category: 'savings' as const }))
+const sum = (es: { account: string; amount: number }[], account: string) => es.filter((e) => e.account === account).reduce((s, e) => s + e.amount, 0)
+const oct = bankSavingsEntries([...avanza, { date: '2026-10-28', amount: -6236, category: 'mortgage' as const }], rules)
+assert.equal(sum(oct, 'buffer'), 4000)
+assert.equal(sum(oct, 'investments'), 6000)
+assert.equal(sum(oct, 'mortgage'), 1386)
+// Each pay period gets its own buffer share; an extra deposit later in a period is ETF.
+const two = bankSavingsEntries([...avanza, ...avanza.map((t) => ({ ...t, date: '2026-11-23' })), { date: '2026-11-30', amount: -700, category: 'savings' as const }], rules)
+assert.equal(sum(two, 'buffer'), 8000)
+assert.equal(sum(two, 'investments'), 12700)
+// Money taken back out of savings comes off the buffer.
+assert.equal(sum(bankSavingsEntries([{ date: '2026-12-01', amount: 2000, category: 'savings' }], rules), 'buffer'), -2000)
+
+// Budget with the rules: amortization is saved, only interest is a fixed cost.
+const p = periodBudget([...avanza, { date: '2026-10-28', amount: -6236, category: 'mortgage' }, { date: '2026-10-22', amount: 34117, category: 'income' }], '2026-10-22', '2026-11-22', rules)
+assert.deepEqual(p.savedByAccount, { buffer: 4000, mortgage: 1386, investments: 6000 })
+assert.equal(p.saved, 11386)
+assert.equal(p.fixed, 4850) // 6236 − 1386 interest
+assert.deepEqual(p.byCategory, [{ category: 'mortgage', amount: 4850 }])
+assert.equal(p.left, 34117 - 11386 - 4850)
+assert.equal(guessCategory('Omsättning lån 3990 12 34567', -6236, none), 'mortgage')
 
 console.log('budget.check: ok')

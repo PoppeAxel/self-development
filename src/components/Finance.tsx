@@ -7,6 +7,7 @@ import { ChipRail, Screen } from './Screen'
 import { ConfirmDialog } from './ConfirmDialog'
 import { Pots } from './Pots'
 import { Budget } from './Budget'
+import { loadBankSavings } from '../lib/bankSavings'
 import type { PeriodType } from '../lib/types'
 
 // Journal → Finance. Savings logged by hand: what went to the buffer, the house loan and
@@ -37,8 +38,15 @@ export function Finance({ segments }: { segments: React.ReactNode }) {
   const [view, setView] = useState<'long' | 'pots' | 'budget'>('long')
 
   async function load() {
-    const { data } = await supabase.from('savings_entries').select('*').order('date', { ascending: false }).order('created_at', { ascending: false })
-    setEntries((data ?? []).map((e) => ({ ...e, amount: Number(e.amount) })) as SavingsEntry[])
+    const [{ data }, bank] = await Promise.all([
+      supabase.from('savings_entries').select('*').order('date', { ascending: false }).order('created_at', { ascending: false }),
+      loadBankSavings('2000-01-01', '9999-12-31'),
+    ])
+    // Bank-derived rows (Budget → Avanza autogiros, amortization) count like logged ones but
+    // can't be deleted here — they change with the import and the split rules.
+    const fromBank = bank.map((e, i) => ({ ...e, id: `bank:${i}`, user_id: '', note: 'From bank (Budget)' }))
+    const all = [...((data ?? []).map((e) => ({ ...e, amount: Number(e.amount) })) as SavingsEntry[]), ...fromBank]
+    setEntries(all.sort((a, b) => b.date.localeCompare(a.date)))
     setLoading(false)
   }
 
@@ -218,9 +226,15 @@ export function Finance({ segments }: { segments: React.ReactNode }) {
                 {e.amount > 0 ? '+' : '−'}
                 {formatKr(Math.abs(e.amount))}
               </span>
-              <button onClick={() => setConfirmDelete(e)} className="shrink-0 text-ink-faint" aria-label="Delete entry">
-                ✕
-              </button>
+              {e.id.startsWith('bank:') ? (
+                <span className="shrink-0 text-xs" title="From the bank import">
+                  🏦
+                </span>
+              ) : (
+                <button onClick={() => setConfirmDelete(e)} className="shrink-0 text-ink-faint" aria-label="Delete entry">
+                  ✕
+                </button>
+              )}
             </div>
           ))}
         </div>
