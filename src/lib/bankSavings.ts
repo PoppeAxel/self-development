@@ -1,12 +1,17 @@
 import { supabase } from './supabase'
-import { bankSavingsEntries, shiftMonth, type SplitRules } from './budget'
+import { bankSavingsEntries, NO_RULES, shiftMonth, type SplitRules } from './budget'
+import { BUFFER_ACCOUNTS } from './finance'
 
 // Savings implied by imported bank rows (Avanza autogiros, mortgage amortization), shaped like
 // savings_entries so the Finance savings tab and 'savings' goals add them to what's logged by hand.
 
 export async function loadBudgetRules(): Promise<SplitRules> {
-  const { data } = await supabase.from('user_settings').select('budget_buffer_per_month, mortgage_amortization_per_month').maybeSingle()
-  return { bufferPerMonth: Number(data?.budget_buffer_per_month ?? 0), amortizationPerMonth: Number(data?.mortgage_amortization_per_month ?? 0) }
+  const { data } = await supabase.from('user_settings').select('budget_savings_split, mortgage_amortization_per_month').maybeSingle()
+  const split = (data?.budget_savings_split ?? {}) as Record<string, number>
+  return {
+    buffers: Object.fromEntries(BUFFER_ACCOUNTS.map((b) => [b, Number(split[b] ?? 0)])) as SplitRules['buffers'],
+    amortizationPerMonth: Number(data?.mortgage_amortization_per_month ?? NO_RULES.amortizationPerMonth),
+  }
 }
 
 /** Bank-derived savings dated start..end (inclusive). */

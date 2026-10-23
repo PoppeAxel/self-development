@@ -3,8 +3,15 @@
 import assert from 'node:assert/strict'
 import {
   bankSavingsEntries,
+  BUDGET_CATEGORIES,
+  CATEGORY_INFO,
+  categoryInfo,
   daysLeft,
   guessCategory,
+  HEADS,
+  headRows,
+  NO_RULES,
+  PLANNABLE,
   planRows,
   merchantKey,
   parseAmount,
@@ -51,14 +58,25 @@ assert.equal(guessCategory('Kortköp SPAR KVARNEN', -100, none), 'groceries')
 assert.equal(guessCategory('MUSICA MEDICA', -100, none), 'other')
 assert.equal(guessCategory('Överföring Avanza', -5000, none), 'savings')
 assert.equal(guessCategory('ARBETSGIVAREN AB', 32000, none), 'income')
-assert.equal(guessCategory('Betalning BG CSN Centrala', -1707, none), 'loans') // a repayment, not income
-assert.equal(guessCategory('Betalning PG 4173300-7 Nordea Bank', -924, none), 'loans')
+assert.equal(guessCategory('Betalning BG CSN Centrala', -1707, none), 'csn') // a repayment, not income
+assert.equal(guessCategory('Betalning PG 4173300-7 Nordea Bank', -924, none), 'other_loans')
 assert.equal(guessCategory('Kortköp 261022 Revolut**6942*', -5000, none), 'groceries') // his food card
-assert.equal(guessCategory('Betalning BG 5552-2635 Ellevio (pub', -265, none), 'bills')
-assert.equal(guessCategory('Kortköp ANTHROPIC* CLAUDE SU', -260, none), 'subscriptions')
+assert.equal(guessCategory('Betalning BG 5552-2635 Ellevio (pub', -265, none), 'electricity')
+assert.equal(guessCategory('Betalning PG 4746003-5 Comviq', -134, none), 'phone')
+assert.equal(guessCategory('Open Banking BG 5862-8082 AKADEMIKE', -140, none), 'union')
+assert.equal(guessCategory('Kortköp ANTHROPIC* CLAUDE SU', -260, none), 'streaming')
+assert.equal(guessCategory('Open Banking PG 4809603-6 TRAFIKKON', -500, none), 'fuel_parking')
+assert.equal(guessCategory('Kortköp RUTERAPPEN', -40, none), 'public_transport')
+assert.equal(guessCategory('Kortköp THE LIFFEY', -255, none), 'going_out')
+assert.equal(guessCategory('Kortköp BRASSERIE ASTORIA', -1209, none), 'eating_out')
 assert.equal(guessCategory('Lön', -500, none), 'other') // money out is never income
 assert.equal(guessCategory('Open Banking BG HSB Stockh', -4463, none), 'housing')
-assert.equal(guessCategory('Swish återbetalning Boozt Fashion A', 839, none), 'shopping') // refund nets shopping
+assert.equal(guessCategory('Swish återbetalning Boozt Fashion A', 839, none), 'clothes') // refund nets clothes
+// Every subcategory sits in exactly one head and is fixed or variable.
+for (const h of HEADS) for (const s of h.subs) assert.equal(CATEGORY_INFO[s].head, h.id)
+assert.ok(PLANNABLE.every((c) => ['fixed', 'variable'].includes(CATEGORY_INFO[c].group)))
+assert.equal(new Set(BUDGET_CATEGORIES).size, BUDGET_CATEGORIES.length)
+assert.equal(categoryInfo('bills').label, 'Other') // an id from before the split reads as Other
 assert.equal(merchantKey('Kortköp 261003 ICA NARA'), merchantKey('Kortköp 261117 ICA NARA'))
 const learned = new Map<string, BudgetCategory>([[merchantKey('Kortköp 261003 ICA NARA'), 'eating_out']])
 assert.equal(guessCategory('Kortköp 261117 ICA NARA', -50, learned), 'eating_out')
@@ -89,47 +107,54 @@ const b = periodBudget(
     { date: '2026-10-07', amount: 300, category: 'shopping' }, // refund
     { date: '2026-10-08', amount: -10000, category: 'transfer' },
     { date: '2026-10-09', amount: -4463, category: 'housing' },
-    { date: '2026-10-10', amount: -1707, category: 'loans' },
+    { date: '2026-10-10', amount: -1707, category: 'csn' },
     { date: '2026-10-11', amount: 2500, category: 'shared' }, // Swish back
     { date: '2026-10-12', amount: -200, category: 'shared' },
+    { date: '2026-10-13', amount: -99, category: 'bills' as BudgetCategory }, // pre-split id → Other
     { date: '2026-09-30', amount: -999, category: 'groceries' },
   ],
   '2026-10-01',
   '2026-10-31',
-  { bufferPerMonth: 0, amortizationPerMonth: 0 },
+  NO_RULES,
 )
 assert.equal(b.income, 32000)
 assert.equal(b.saved, 5000)
 assert.equal(b.fixed, 6170)
-assert.equal(b.variable, 1700) // shared money back doesn't hide inside one group
+assert.equal(b.variable, 1799) // shared money back doesn't hide inside one group
 assert.equal(b.sharedBack, 2300)
-assert.equal(b.left, 32000 - 5000 - 6170 - 1700 + 2300)
+assert.equal(b.left, 32000 - 5000 - 6170 - 1799 + 2300)
 assert.deepEqual(b.byCategory, [
   { category: 'housing', amount: 4463 },
-  { category: 'loans', amount: 1707 },
+  { category: 'csn', amount: 1707 },
   { category: 'groceries', amount: 1200 },
   { category: 'shopping', amount: 500 },
+  { category: 'other', amount: 99 },
 ])
 
-// Split rules — his real setup: Avanza autogiros 3000/2500/2500/1000/500/250/250 (4 000 of it
-// buffer, 6 000 ETF), mortgage 1 386 amortization + varying interest.
-const rules = { bufferPerMonth: 4000, amortizationPerMonth: 1386 }
+// Split rules — his real setup: Avanza autogiros 3000/2500/2500/1000/500/250/250 = 2 500 buffer
+// + 500 car + 1 000 travel + 6 000 ETF; mortgage 1 386 amortization + varying interest.
+const rules = { buffers: { buffer: 2500, car_buffer: 500, travel_buffer: 1000 }, amortizationPerMonth: 1386 }
 const avanza = [3000, 2500, 2500, 1000, 500, 250, 250].map((a) => ({ date: '2026-10-23', amount: -a, category: 'savings' as const }))
 const sum = (es: { account: string; amount: number }[], account: string) => es.filter((e) => e.account === account).reduce((s, e) => s + e.amount, 0)
 const oct = bankSavingsEntries([...avanza, { date: '2026-10-28', amount: -6236, category: 'mortgage' as const }], rules)
-assert.equal(sum(oct, 'buffer'), 4000)
+assert.equal(sum(oct, 'buffer'), 2500)
+assert.equal(sum(oct, 'car_buffer'), 500)
+assert.equal(sum(oct, 'travel_buffer'), 1000)
 assert.equal(sum(oct, 'investments'), 6000)
 assert.equal(sum(oct, 'mortgage'), 1386)
-// Each pay period gets its own buffer share; an extra deposit later in a period is ETF.
+// Each pay period fills its buffers again; an extra deposit later in a period is ETF.
 const two = bankSavingsEntries([...avanza, ...avanza.map((t) => ({ ...t, date: '2026-11-23' })), { date: '2026-11-30', amount: -700, category: 'savings' as const }], rules)
-assert.equal(sum(two, 'buffer'), 8000)
+assert.equal(sum(two, 'buffer') + sum(two, 'car_buffer') + sum(two, 'travel_buffer'), 8000)
 assert.equal(sum(two, 'investments'), 12700)
-// Money taken back out of savings comes off the buffer.
+// Less in than the buffers take: they fill in order (buffer, car, travel), nothing to ETF.
+const short = bankSavingsEntries([{ date: '2026-10-23', amount: -2800, category: 'savings' }], rules)
+assert.deepEqual([sum(short, 'buffer'), sum(short, 'car_buffer'), sum(short, 'travel_buffer'), sum(short, 'investments')], [2500, 300, 0, 0])
+// Money taken back out of savings comes off the main buffer.
 assert.equal(sum(bankSavingsEntries([{ date: '2026-12-01', amount: 2000, category: 'savings' }], rules), 'buffer'), -2000)
 
 // Budget with the rules: amortization is saved, only interest is a fixed cost.
 const p = periodBudget([...avanza, { date: '2026-10-28', amount: -6236, category: 'mortgage' }, { date: '2026-10-22', amount: 34117, category: 'income' }], '2026-10-22', '2026-11-22', rules)
-assert.deepEqual(p.savedByAccount, { buffer: 4000, mortgage: 1386, investments: 6000 })
+assert.deepEqual(p.savedByAccount, { buffer: 2500, car_buffer: 500, travel_buffer: 1000, investments: 6000, mortgage: 1386 })
 assert.equal(p.saved, 11386)
 assert.equal(p.fixed, 4850) // 6236 − 1386 interest
 assert.deepEqual(p.byCategory, [{ category: 'mortgage', amount: 4850 }])
@@ -137,7 +162,7 @@ assert.equal(p.left, 34117 - 11386 - 4850)
 assert.equal(guessCategory('Omsättning lån 3990 12 34567', -6236, none), 'mortgage')
 
 // Plan: targets show even with no spending yet; spending without a target keeps target null;
-// income/savings/shared never become plan rows; fixed comes before variable.
+// income/savings/shared never become plan rows; rows come in head order.
 const plan = planRows(
   { byCategory: [{ category: 'groceries', amount: 3200 }, { category: 'shopping', amount: 2001 }, { category: 'mortgage', amount: 4850 }] },
   { groceries: 5000, eating_out: 1500, mortgage: 5000, savings: 9999 } as Parameters<typeof planRows>[1],
@@ -149,6 +174,23 @@ assert.deepEqual(plan, [
   { category: 'shopping', actual: 2001, target: null },
 ])
 assert.deepEqual(planRows({ byCategory: [] }, { groceries: 0 }), []) // a cleared target is no target
+
+// Heads roll up their subs; a head's target sums only the subs that have one, null if none.
+const heads = headRows([
+  { category: 'housing', actual: 4463, target: 4500 },
+  { category: 'household', actual: 300, target: null },
+  { category: 'groceries', actual: 3200, target: 5000 },
+  { category: 'eating_out', actual: 800, target: 1500 },
+  { category: 'clothes', actual: 600, target: null },
+])
+assert.deepEqual(
+  heads.map((h) => [h.head, h.actual, h.target, h.subs.length]),
+  [
+    ['home', 4763, 4500, 2],
+    ['food', 4000, 6500, 2],
+    ['shopping', 600, null, 1],
+  ],
+)
 
 assert.equal(daysLeft('2026-10-23', '2026-11-22', '2026-10-22'), 31)
 assert.equal(daysLeft('2026-11-22', '2026-11-22', '2026-10-22'), 1) // last day counts

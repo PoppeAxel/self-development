@@ -1,14 +1,21 @@
 // Journal → Finance: savings logged by hand (savings_entries). Pure — no supabase import —
 // so scripts/finance.check.ts can run it under node.
 
-export const SAVINGS_ACCOUNTS = ['buffer', 'mortgage', 'investments'] as const
+export const SAVINGS_ACCOUNTS = ['buffer', 'car_buffer', 'travel_buffer', 'investments', 'mortgage'] as const
 export type SavingsAccount = (typeof SAVINGS_ACCOUNTS)[number]
+/** The buffers his Avanza autogiros fill, in fill order; whatever's left over is ETF & stocks. */
+export const BUFFER_ACCOUNTS = ['buffer', 'car_buffer', 'travel_buffer'] as const satisfies readonly SavingsAccount[]
+export type BufferAccount = (typeof BUFFER_ACCOUNTS)[number]
 
 export const ACCOUNT_INFO: Record<SavingsAccount, { label: string; icon: string; color: string }> = {
   buffer: { label: 'Buffer', icon: '🛟', color: '#2f6b5a' },
-  mortgage: { label: 'House loan paid', icon: '🏠', color: '#46608f' },
+  car_buffer: { label: 'Car buffer', icon: '🚗', color: '#4f7f8c' },
+  travel_buffer: { label: 'Travel buffer', icon: '✈️', color: '#6a8fb0' },
   investments: { label: 'ETF & stocks', icon: '📈', color: '#a8842f' },
+  mortgage: { label: 'House loan paid', icon: '🏠', color: '#46608f' },
 }
+
+const zeroAccounts = () => Object.fromEntries(SAVINGS_ACCOUNTS.map((a) => [a, 0])) as Record<SavingsAccount, number>
 
 export interface SavingsEntry {
   id: string
@@ -29,7 +36,7 @@ export interface PeriodTotals {
 
 /** Totals for entries dated from `start` to `end`, both inclusive (yyyy-MM-dd). */
 export function periodTotals(entries: Pick<SavingsEntry, 'date' | 'account' | 'amount'>[], start: string, end: string): PeriodTotals {
-  const byAccount = { buffer: 0, mortgage: 0, investments: 0 }
+  const byAccount = zeroAccounts()
   let withdrawn = 0
   for (const e of entries) {
     if (e.date < start || e.date > end) continue
@@ -37,7 +44,7 @@ export function periodTotals(entries: Pick<SavingsEntry, 'date' | 'account' | 'a
     byAccount[e.account] += amount
     if (amount < 0) withdrawn -= amount
   }
-  return { byAccount, withdrawn, net: byAccount.buffer + byAccount.mortgage + byAccount.investments }
+  return { byAccount, withdrawn, net: SAVINGS_ACCOUNTS.reduce((s, a) => s + byAccount[a], 0) }
 }
 
 // --- Pots: short-term saving for one thing (ring, watch, trip). Separate from the totals above.

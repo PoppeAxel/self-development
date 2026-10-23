@@ -13,7 +13,7 @@ const entries = [
 ]
 
 const oct = periodTotals(entries, '2026-10-01', '2026-10-31')
-assert.deepEqual(oct.byAccount, { buffer: 1500, mortgage: 2000, investments: 4000 })
+assert.deepEqual(oct.byAccount, { buffer: 1500, car_buffer: 0, travel_buffer: 0, investments: 4000, mortgage: 2000 })
 assert.equal(oct.withdrawn, 1500)
 assert.equal(oct.net, 7500)
 

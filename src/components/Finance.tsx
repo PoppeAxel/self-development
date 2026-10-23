@@ -21,6 +21,7 @@ const PERIODS: { id: Exclude<PeriodType, 'week'>; label: string }[] = [
   { id: 'quarter', label: 'This quarter' },
   { id: 'year', label: 'This year' },
 ]
+const emptyAmounts = () => Object.fromEntries(SAVINGS_ACCOUNTS.map((a) => [a, ''])) as Record<SavingsAccount, string>
 const INPUT = 'min-w-0 flex-1 bg-transparent text-right text-sm font-semibold text-ink outline-none placeholder:font-medium placeholder:text-ink-faint'
 
 export function Finance() {
@@ -28,7 +29,7 @@ export function Finance() {
   const [loading, setLoading] = useState(true)
   const [mode, setMode] = useState<Mode>('deposit')
   const [date, setDate] = useState(todayISO())
-  const [amounts, setAmounts] = useState<Record<SavingsAccount, string>>({ buffer: '', mortgage: '', investments: '' })
+  const [amounts, setAmounts] = useState<Record<SavingsAccount, string>>(emptyAmounts)
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
   const [period, setPeriod] = useState<Exclude<PeriodType, 'week'>>('month')
@@ -71,7 +72,7 @@ export function Finance() {
     await supabase.from('savings_entries').insert(
       parsed.map((r) => ({ user_id: user.id, date, account: r.account, amount: mode === 'withdraw' ? -r.value : r.value, note: note.trim() || null })),
     )
-    setAmounts({ buffer: '', mortgage: '', investments: '' })
+    setAmounts(emptyAmounts())
     setNote('')
     setSaving(false)
     load()
