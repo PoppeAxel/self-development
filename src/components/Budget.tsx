@@ -32,6 +32,7 @@ import {
 import { useEdit } from '../contexts/EditContext'
 import { EditDots, Pressable } from './ItemMenu'
 import { HeadSheet, SpecialSheet, SubSheet } from './BudgetCategorySheets'
+import { SettingChips } from './SettingChips'
 
 // Economy → Budget / Plan: import Nordea's CSV export (no bank API), see income, saved, fixed
 // costs, variable spending and left over per pay period (salary day → day before the next),
@@ -339,6 +340,7 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
       )}
 
       {/* Month */}
+      <SettingChips keys={['payday']} />
       <div className="flex items-center justify-between">
         <button onClick={() => step(-1)} className="px-2 text-lg text-ink-3" aria-label="Previous pay period">
           ‹

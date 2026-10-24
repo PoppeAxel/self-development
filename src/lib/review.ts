@@ -1,4 +1,5 @@
 import { formatSleepDuration } from './sleep'
+import { setting } from './settings'
 import type { WeekBucket } from './weekly'
 import { byAvg, byTotal, weekAt, weekBefore, type WeekMeasure } from './weekly'
 
@@ -137,14 +138,9 @@ const SECONDARY_PHRASE: Record<Exclude<ReviewMetric, 'weight'>, (size: number, u
   intake: (size, up) => `ate ${Math.round(size).toLocaleString()} kcal ${up ? 'more' : 'less'} a day`,
 }
 
-/** How big a change has to be before it's worth a sentence, per metric. */
-const NOTABLE: Record<Exclude<ReviewMetric, 'weight'>, number> = {
-  sleep: 1 / 6, // 10 minutes
-  steps: 400,
-  cardio: 1.5,
-  strength: 15,
-  intake: 150,
-}
+/** How big a change has to be before it's worth a sentence, per metric ('setting' rows, edited on the Week tab). */
+const notable = (metric: Exclude<ReviewMetric, 'weight'>): number =>
+  setting(({ sleep: 'notable_sleep_hours', steps: 'notable_steps', cardio: 'notable_cardio_km', strength: 'notable_strength_min', intake: 'notable_intake_kcal' } as const)[metric])
 
 export interface WeekSentence {
   /** Plain text with `**bold**` spans the view renders as emphasis. */
@@ -189,7 +185,7 @@ export function weekSentence(
     const before = weekBefore(buckets, weekStart)
     if (!now || !before) continue
     const change = METRIC_MEASURE[metric](now) - METRIC_MEASURE[metric](before)
-    const score = Math.abs(change) / NOTABLE[metric]
+    const score = Math.abs(change) / notable(metric)
     if (score < 1) continue
     if (!best || score > best.score) best = { metric, change, score }
   }

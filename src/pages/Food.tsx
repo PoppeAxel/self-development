@@ -1,3 +1,4 @@
+import { useRemembered } from '../lib/useRemembered'
 import { Fragment, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { addDays, format, subDays } from 'date-fns'
@@ -175,7 +176,7 @@ const CATEGORY_SORT_LABELS: Record<CategorySort, string> = {
 }
 
 export function Food() {
-  const [subTab, setSubTab] = useState<FoodSubTab>('log')
+  const [subTab, setSubTab] = useRemembered<FoodSubTab>('food', 'log', SUB_TABS)
   const [recipeSearchQuery, setRecipeSearchQuery] = useState('')
   const [librarySearchQuery, setLibrarySearchQuery] = useState('')
   const [ingredients, setIngredients] = useState<Ingredient[]>([])

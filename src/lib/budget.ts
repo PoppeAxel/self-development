@@ -3,6 +3,7 @@
 
 import { bufferAccounts, zeroAccounts, type SavingsAccount } from './finance'
 import { liveOptions, type OptionRow } from './editable'
+import { setting } from './settings'
 
 // Head categories → subcategories → keyword guesses live in the `options` table (kinds
 // budget_head / budget_sub / budget_keyword, migration 0048) and are edited in place in Budget
@@ -219,12 +220,14 @@ export function decodeCsv(buffer: ArrayBuffer): string {
 
 const isSalary = (t: Pick<BankTransaction, 'description' | 'amount'>) => t.amount > 0 && /\b(lön|lon|salary)\b/i.test(t.description)
 
-/** The day his salary landed in `month` ('yyyy-MM'), else the usual payday: the 22nd, or the 23rd when that's a Sunday. */
+/** The day his salary landed in `month` ('yyyy-MM'), else the usual payday (the 'payday' setting, edited by the period row), a day later when that's a Sunday. */
 export function payday(month: string, transactions: Pick<BankTransaction, 'date' | 'description' | 'amount'>[]): string {
   const paid = transactions.filter((t) => t.date.startsWith(month) && isSalary(t)).map((t) => t.date).sort()[0]
   if (paid) return paid
   const [y, m] = month.split('-').map(Number)
-  return `${month}-${new Date(Date.UTC(y, m - 1, 22)).getUTCDay() === 0 ? '23' : '22'}`
+  const day = setting('payday')
+  const usual = new Date(Date.UTC(y, m - 1, day)).getUTCDay() === 0 ? day + 1 : day
+  return `${month}-${String(usual).padStart(2, '0')}`
 }
 
 export const shiftMonth = (month: string, n: number) => {
@@ -233,8 +236,8 @@ export const shiftMonth = (month: string, n: number) => {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
 }
 
-/** Calendar month whose payday opens the period `date` falls in (before the 22nd → the month before). */
-export const payMonthOf = (date: string) => (Number(date.slice(8, 10)) < 22 ? shiftMonth(date.slice(0, 7), -1) : date.slice(0, 7))
+/** Calendar month whose payday opens the period `date` falls in (before the payday → the month before). */
+export const payMonthOf = (date: string) => (Number(date.slice(8, 10)) < setting('payday') ? shiftMonth(date.slice(0, 7), -1) : date.slice(0, 7))
 
 /** The period opened by `month`'s salary: [start, end] inclusive, yyyy-MM-dd. */
 export function payPeriod(month: string, transactions: Pick<BankTransaction, 'date' | 'description' | 'amount'>[]): { start: string; end: string } {

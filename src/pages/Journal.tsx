@@ -1,3 +1,4 @@
+import { useRemembered } from '../lib/useRemembered'
 import { useEffect, useState } from 'react'
 import {
   AreaChart,
@@ -34,8 +35,11 @@ import { Screen, HeroSegments, HeroChip, ChipRail } from '../components/Screen'
 import { Media } from '../components/Media'
 import { DiaryList } from '../components/DiaryList'
 import { ConfirmDialog } from '../components/ConfirmDialog'
-import { RECOMMENDED_SLEEP_HOURS, formatSleepDuration } from '../lib/sleep'
-import { dailyKcalTotals, MIN_LOGGED_KCAL } from '../lib/food'
+import { recommendedSleepHours, formatSleepDuration } from '../lib/sleep'
+import { setting } from '../lib/settings'
+import { NumberSheet, SettingChips } from '../components/SettingChips'
+import { useEdit } from '../contexts/EditContext'
+import { dailyKcalTotals, minLoggedKcal } from '../lib/food'
 import type {
   Category,
   Goal,
@@ -159,6 +163,49 @@ const TOOLTIP_STYLE = {
   color: THEME.ink,
 } as const
 
+/** Edit mode only: one body goal from user_settings (goal weight / step goal), empty = no goal. */
+function GoalChip({ label, value, unit, column, max, step, onSaved }: {
+  label: string
+  value: number | null
+  unit: string
+  column: 'goal_weight' | 'step_goal'
+  max: number
+  step: number
+  onSaved: (value: number | null) => void
+}) {
+  const { editing } = useEdit()
+  const [open, setOpen] = useState(false)
+  if (!editing) return null
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} className="rounded-full border border-dashed border-line-strong bg-surface px-3 py-1 text-xs font-medium text-ink-2">
+        {label} · <span className="font-semibold text-pine">{value ?? 'not set'}</span> {value != null ? unit : ''} ✎
+      </button>
+      {open && (
+        <NumberSheet
+          title={label}
+          value={value}
+          min={0}
+          max={max}
+          step={step}
+          unit={unit}
+          allowEmpty
+          onClose={() => setOpen(false)}
+          onSave={async (v) => {
+            const {
+              data: { user },
+            } = await supabase.auth.getUser()
+            if (!user) return
+            // Upsert sets only this column; the rest of user_settings is left alone.
+            await supabase.from('user_settings').upsert({ user_id: user.id, [column]: v }).throwOnError()
+            onSaved(v)
+          }}
+        />
+      )}
+    </>
+  )
+}
+
 function WeightChart({ data, goalWeight, height }: { data: { date: string; value: number }[]; goalWeight: number | null; height: number }) {
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -233,7 +280,7 @@ function StepsChart({ data, stepGoal, height }: { data: { date: string; value: n
 export function Journal() {
   const [entries, setEntries] = useState<JournalEntry[]>([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTabState] = useState<JournalTab>('weight')
+  const [tab, setTabState] = useRemembered<JournalTab>('journal', 'weight', GROUPS.flatMap((g) => g.tabs))
   // Tapping a group reopens the sub-tab you were last on in it (Body → Life → Body = Sleep).
   const [lastInGroup, setLastInGroup] = useState<Record<JournalGroup, JournalTab>>({ week: 'review', body: 'weight', life: 'diary' })
   function setTab(t: JournalTab) {
@@ -461,7 +508,7 @@ export function Journal() {
 
   // Force whole-hour Y-axis ticks — recharts' auto ticks land on awkward
   // fractional-hour values otherwise, which reads as misleading for a duration.
-  const sleepYMax = Math.ceil(Math.max(RECOMMENDED_SLEEP_HOURS, ...sleepSeries.map((s) => s.value))) + 1
+  const sleepYMax = Math.ceil(Math.max(recommendedSleepHours(), ...sleepSeries.map((s) => s.value))) + 1
 
   // Weekly aggregation lives in src/lib/weekly.ts — Journal and the Weekly review read
   // the same buckets rather than each re-implementing this.
@@ -519,14 +566,14 @@ export function Journal() {
   // Days under MIN_LOGGED_KCAL are dropped, not averaged in: a 300 kcal day is a day a meal
   // never got logged, and counting it drags the estimate down exactly like a zero would.
   const recentDailyKcal = [...kcalByDate.entries()]
-    .filter(([date, kcal]) => date >= calorieWindowStartStr && kcal >= MIN_LOGGED_KCAL)
+    .filter(([date, kcal]) => date >= calorieWindowStartStr && kcal >= minLoggedKcal())
     .map(([, kcal]) => kcal)
   const avgDailyKcal =
     recentDailyKcal.length > 0 ? recentDailyKcal.reduce((a, b) => a + b, 0) / recentDailyKcal.length : null
 
   // Require a handful of logged days and an established weight trend before showing
   // this — a couple of data points either way would make the estimate meaningless.
-  const MIN_LOGGED_DAYS_FOR_ESTIMATE = 5
+  const MIN_LOGGED_DAYS_FOR_ESTIMATE = setting('min_logged_days')
   const showCalorieEstimate = avgDailyKcal != null && recentDailyKcal.length >= MIN_LOGGED_DAYS_FOR_ESTIMATE && weightTrendPerWeek != null
   const estimatedMaintenanceKcal = showCalorieEstimate ? avgDailyKcal! - (weightTrendPerWeek! * 7700) / 7 : null
   const dailyDeficitOrSurplus = showCalorieEstimate ? avgDailyKcal! - estimatedMaintenanceKcal! : null
@@ -705,6 +752,16 @@ export function Journal() {
 
   return (
     <Screen title={tab === 'review' ? 'Your week' : 'Journal'} onRefresh={load} hero={hero}>
+      {/* Edit mode only: the values this tab runs on, editable right here. */}
+      {tab === 'review' && <SettingChips keys={['notable_sleep_hours', 'notable_steps', 'notable_cardio_km', 'notable_strength_min', 'notable_intake_kcal']} />}
+      {tab === 'weight' && (
+        <div className="flex flex-wrap gap-[7px]">
+          <GoalChip label="Goal weight" value={goalWeight} unit="kg" column="goal_weight" max={300} step={0.1} onSaved={setGoalWeight} />
+          <SettingChips keys={['min_logged_kcal', 'min_logged_days']} />
+        </div>
+      )}
+      {tab === 'sleep_hours' && <SettingChips keys={['sleep_target_hours']} />}
+      {tab === 'steps' && <GoalChip label="Daily step goal" value={stepGoal} unit="steps" column="step_goal" max={100000} step={500} onSaved={setStepGoal} />}
       {tab === 'review' && (
         <>
           {reviewFigures.length === 0 ? (
@@ -929,7 +986,7 @@ export function Journal() {
             {dailyDeficitOrSurplus! < 0 ? 'deficit' : 'surplus'}
           </p>
           <p className="mt-1.5 text-[11px] text-ink-disabled">
-            Days under {MIN_LOGGED_KCAL.toLocaleString()} kcal are treated as half-logged and left out.
+            Days under {minLoggedKcal().toLocaleString()} kcal are treated as half-logged and left out.
           </p>
         </div>
       )}
@@ -1039,12 +1096,12 @@ export function Journal() {
               <YAxis {...AXIS} domain={[0, sleepYMax]} tickCount={sleepYMax + 1} allowDecimals={false} />
               <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(value) => [formatSleepDuration(Number(value)), 'Slept']} />
               <ReferenceLine
-                y={RECOMMENDED_SLEEP_HOURS}
+                y={recommendedSleepHours()}
                 stroke={THEME.pine}
                 strokeWidth={2}
                 strokeDasharray="6 5"
                 ifOverflow="extendDomain"
-                label={{ value: `${RECOMMENDED_SLEEP_HOURS}h recommended`, fontSize: 10, fontWeight: 600, fill: '#1f6b5c', position: 'insideTopLeft' }}
+                label={{ value: `${recommendedSleepHours()}h recommended`, fontSize: 10, fontWeight: 600, fill: '#1f6b5c', position: 'insideTopLeft' }}
               />
               <Bar dataKey="value" fill={METRIC_HUE.sleep_hours.accent} radius={[4, 4, 0, 0]} isAnimationActive={false} />
             </BarChart>
@@ -1057,7 +1114,7 @@ export function Journal() {
           <h2 className="mb-2 text-sm font-semibold text-ink-3">Weekly average</h2>
           <ul className="flex flex-col gap-2">
             {weeklySleep.map((week) => {
-              const metGoal = week.avg >= RECOMMENDED_SLEEP_HOURS
+              const metGoal = week.avg >= recommendedSleepHours()
               return (
                 <li
                   key={week.weekStart}

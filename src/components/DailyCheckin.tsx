@@ -20,6 +20,7 @@ import type { OptionRow } from '../lib/editable'
 import { useEdit } from '../contexts/EditContext'
 import { EditDots, Pressable } from './ItemMenu'
 import { OptionSheet } from './OptionSheet'
+import { SettingChips } from './SettingChips'
 
 // The evening check-in, full screen over Today (design_handoff_daily_checkin_diary):
 //   grade    — all six ratings on one screen as drag sliders
@@ -208,6 +209,8 @@ export function DailyCheckin({ date, onClose, onSaved }: { date: string; onClose
               + New question
             </button>
           )}
+          {/* Checking in after midnight still counts for the day before, until this hour. */}
+          <SettingChips keys={['checkin_day_starts_hour']} />
         </div>
         {sheetView}
         <div className="shrink-0 px-5 pt-3 pb-10 safe-bottom">

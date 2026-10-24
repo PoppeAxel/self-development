@@ -1,6 +1,6 @@
 import { addDays, format, parseISO } from 'date-fns'
 import { weekStartISO } from './dates'
-import { dailyKcalTotals, MIN_LOGGED_KCAL } from './food'
+import { dailyKcalTotals, minLoggedKcal } from './food'
 import { isStrengthWorkout } from './workouts'
 import type { FoodLogEntry, Ingredient, JournalEntry, JournalEntryType, Recipe, RecipeIngredient, Workout } from './types'
 
@@ -129,7 +129,7 @@ export function intakeKcalWeeks(
   const kcalByDate = dailyKcalTotals(foodEntries, recipes, recipeLines, ingredients)
   return bucketByWeek(
     [...kcalByDate.entries()]
-      .filter(([, value]) => value >= MIN_LOGGED_KCAL)
+      .filter(([, value]) => value >= minLoggedKcal())
       .map(([date, value]) => ({ date, value })),
   )
 }

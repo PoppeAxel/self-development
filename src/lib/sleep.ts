@@ -1,4 +1,7 @@
-export const RECOMMENDED_SLEEP_HOURS = 8
+import { setting } from './settings'
+
+// The sleep target (a 'setting' row, edited next to the Sleep chart).
+export const recommendedSleepHours = () => setting('sleep_target_hours')
 
 export function formatSleepDuration(hoursDecimal: number): string {
   const totalMinutes = Math.round(hoursDecimal * 60)

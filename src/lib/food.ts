@@ -1,6 +1,7 @@
 import { differenceInCalendarDays, format, parseISO } from 'date-fns'
 import { CATEGORY_STYLES } from './categories'
 import { findOption, getOptionRows, live } from './optionStore'
+import { setting } from './settings'
 import type { OptionRow } from './editable'
 import { CATEGORY_COLORS, type CategoryColor, type FoodLogEntry, type Ingredient, type MealType, type Recipe, type RecipeIngredient } from './types'
 
@@ -473,7 +474,7 @@ export function groupByCategory(ingredients: Ingredient[]): Map<string, Ingredie
  * The logs themselves are untouched: the Food tab's day list and daily-calorie chart still
  * show what was actually logged. This only governs what an average is allowed to average.
  */
-export const MIN_LOGGED_KCAL = 1000
+export const minLoggedKcal = () => setting('min_logged_kcal')
 
 /**
  * kcal per date across a set of log entries. Journal's maintenance estimate and

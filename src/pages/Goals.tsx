@@ -1,3 +1,4 @@
+import { useRemembered } from '../lib/useRemembered'
 import { Fragment, useEffect, useState } from 'react'
 import { addDays, addMonths, differenceInCalendarDays, format, getISOWeek } from 'date-fns'
 import { supabase } from '../lib/supabase'
@@ -88,7 +89,7 @@ const Circle = ({ done, color, onClick, size = 26 }: { done: boolean; color: str
 
 export function Goals() {
   const { openGoalDetail } = useNav()
-  const [tab, setTab] = useState<GoalTab>('long')
+  const [tab, setTab] = useRemembered<GoalTab>('goals', 'long', ['long', 'month', 'week'])
   const [label, setLabel] = useState('all')
   const [all, setAll] = useState<Goal[]>([])
   const [rowsById, setRowsById] = useState<Map<string, GoalRow>>(new Map())

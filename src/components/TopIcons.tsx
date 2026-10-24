@@ -4,11 +4,11 @@ import type { Tab } from './TabBar'
 
 const ICONS: { id: Tab; icon: string; label: string }[] = [
   { id: 'calendar', icon: '📅', label: 'Calendar' },
-  { id: 'settings', icon: '⚙', label: 'Settings' },
 ]
 
-// Calendar and Settings don't get their own slot in the bottom TabBar since they're used
-// far less than the other tabs — instead they're reachable from this small icon row,
+// Calendar doesn't get its own slot in the bottom TabBar since it's used
+// far less than the other tabs — it's reachable from this small icon row (there is no Settings
+// page: everything is edited in place, ✎ below), 
 // which sits inside every screen's pine hero block. Getting back to them from elsewhere
 // in the app still just means tapping any bottom tab, same as before.
 //

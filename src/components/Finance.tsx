@@ -1,3 +1,4 @@
+import { useRemembered } from '../lib/useRemembered'
 import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { supabase } from '../lib/supabase'
@@ -68,7 +69,7 @@ export function Finance() {
   const [showAll, setShowAll] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<SavingsEntry | null>(null)
   // Long-term savings (counts toward totals/goals) vs short-term pots (kept apart).
-  const [view, setView] = useState<'long' | 'pots' | 'budget' | 'plan'>('budget')
+  const [view, setView] = useRemembered<'long' | 'pots' | 'budget' | 'plan'>('economy', 'budget', ['long', 'pots', 'budget', 'plan'])
 
   async function load() {
     const [{ data }, bank] = await Promise.all([

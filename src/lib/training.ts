@@ -2,6 +2,7 @@ import { addDays, format, parseISO } from 'date-fns'
 import { estimatedOneRepMax, type LiftPoint, type MuscleGroup } from './exercises'
 import { isStrengthWorkout } from './workouts'
 import { live } from './optionStore'
+import { setting } from './settings'
 import type { GoalPace } from './goals'
 import type { Exercise, GymProgram, GymSession, GymSessionSet, Workout } from './types'
 
@@ -20,7 +21,8 @@ export const balanceRegions = (): BalanceRegion[] => {
   const muscles = live('muscle_group')
   return live('balance_region').map((r) => ({ key: r.key, label: r.label, muscles: muscles.filter((m) => m.meta.region === r.key).map((m) => m.label) }))
 }
-export const SET_TARGET = { min: 10, max: 20 } as const
+// The sets-a-week band each region should land in ('setting' rows, edited on Training).
+export const setTarget = () => ({ min: setting('set_target_min'), max: setting('set_target_max') })
 
 export type BalanceStatus = 'under' | 'in' | 'over'
 export interface RegionBalance {
@@ -74,7 +76,7 @@ export function regionBalance(
   return regions.map(({ label: region }) => {
     // Rounded here so the shown number and its "N under" always add up to the target.
     const perWeek = Math.round(((totals.get(region) ?? 0) / weeks) * 10) / 10
-    const status: BalanceStatus = perWeek < SET_TARGET.min ? 'under' : perWeek > SET_TARGET.max ? 'over' : 'in'
+    const status: BalanceStatus = perWeek < setTarget().min ? 'under' : perWeek > setTarget().max ? 'over' : 'in'
     return { region, perWeek, direct: Math.round(((direct.get(region) ?? 0) / weeks) * 10) / 10, status }
   })
 }

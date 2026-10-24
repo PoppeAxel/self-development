@@ -1,3 +1,5 @@
+import { useRemembered } from '../lib/useRemembered'
+import { connectStrava, handleStravaOAuthRedirect, stravaConnected } from '../lib/strava'
 import { useEffect, useRef, useState } from 'react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { addDays, differenceInCalendarDays, format, getISOWeek, parseISO } from 'date-fns'
@@ -18,7 +20,7 @@ import {
   planCaption,
   regionBalance,
   weekStrip,
-  SET_TARGET,
+  setTarget,
 } from '../lib/training'
 import { THEME } from '../lib/theme'
 import { Screen, HeroChip, HeroSegments } from './Screen'
@@ -26,6 +28,7 @@ import { CLOSE_BTN, GymPrograms, INPUT, SHEET, type GymProgramsHandle } from './
 import { LiveSession, newLiveState, savedLiveState, SectionLabel, type LiveState } from './LiveSession'
 import { ConfirmDialog } from './ConfirmDialog'
 import { EditDots } from './ItemMenu'
+import { SettingChips } from './SettingChips'
 import { OptionSheet, type RefMover } from './OptionSheet'
 import { useEdit } from '../contexts/EditContext'
 import { live as liveRows, setOptionRows } from '../lib/optionStore'
@@ -203,10 +206,18 @@ export function Training() {
   const [goals, setGoals] = useState<Goal[]>([])
   const [loading, setLoading] = useState(true)
   const [live, setLive] = useState<LiveState | null>(() => savedLiveState())
-  const [view, setView] = useState<'strength' | 'cardio'>('strength')
+  const [view, setView] = useRemembered<'strength' | 'cardio'>('training', 'strength', ['strength', 'cardio'])
   const [otherOpen, setOtherOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [liftOpen, setLiftOpen] = useState<string | null>(null)
+  const [stravaOn, setStravaOn] = useState<boolean | null>(null)
+  const [stravaStatus, setStravaStatus] = useState<string | null>(null)
+  useEffect(() => {
+    handleStravaOAuthRedirect().then(async (result) => {
+      if (result.handled) setStravaStatus(result.ok ? 'Strava connected — workouts sync every few hours.' : (result.reason ?? 'Failed to connect Strava.'))
+      setStravaOn(await stravaConnected())
+    })
+  }, [])
   // Tracked lifts, balance regions and sport styles are edited in place (✎ edit mode).
   const { editing } = useEdit()
   const [trainingSheet, setTrainingSheet] = useState<{ kind: 'tracked_lift' | 'balance_region' | 'sport_style'; row: OptionRow | null; sportType?: string } | null>(null)
@@ -382,6 +393,18 @@ export function Training() {
 
   return (
     <Screen title="Training" onRefresh={load} hero={hero}>
+      {/* Strava: connect here (and land here after Strava redirects back with ?code=). Shown only
+          when not connected yet, or right after a connect attempt. */}
+      {(stravaOn === false || stravaStatus) && (
+        <div className="flex flex-col gap-2 rounded-[20px] border border-line bg-surface p-3.5">
+          <p className="text-[13px] text-ink-2">{stravaStatus ?? 'Connect Strava to sync your workouts here automatically.'}</p>
+          {stravaOn === false && (
+            <button onClick={connectStrava} className="self-start rounded-[16px] bg-cat-amber-ink px-3.5 py-2 text-xs font-semibold text-white">
+              Connect Strava
+            </button>
+          )}
+        </div>
+      )}
       {/* 1 · week strip */}
       <div className="grid grid-cols-7 gap-[5px]">
         {strip.map((d) => (
@@ -477,6 +500,8 @@ export function Training() {
           newLabel="+ Track a lift"
         />
       )}
+      {/* Live workout mode runs on these (rest timer, KG stepper). */}
+      <SettingChips keys={['rest_timer_seconds', 'kg_step_small', 'kg_step_large', 'kg_step_threshold']} className="-mt-1" />
       {lifts.length === 0 ? (
         <p className="-mt-1 text-sm text-ink-disabled">Log squat, bench, deadlift or overhead press with weight and reps to see them here.</p>
       ) : (
@@ -513,7 +538,7 @@ export function Training() {
 
       {/* 4 · muscle balance */}
       <SectionLabel>
-        MUSCLE BALANCE · TARGET {SET_TARGET.min}–{SET_TARGET.max}
+        MUSCLE BALANCE · TARGET {setTarget().min}–{setTarget().max}
       </SectionLabel>
       {editing && (
         <EditChips
@@ -523,6 +548,7 @@ export function Training() {
           newLabel="+ New region"
         />
       )}
+      <SettingChips keys={['set_target_min', 'set_target_max']} className="-mt-1" />
       {!hasBalance ? (
         <p className="-mt-1 text-sm text-ink-disabled">Tag exercises with muscles in the program editor to see your balance.</p>
       ) : (
@@ -545,8 +571,8 @@ export function Training() {
                     {inRange
                       ? 'IN RANGE'
                       : r.status === 'under'
-                        ? `${formatSets(SET_TARGET.min - r.perWeek)} UNDER`
-                        : `${formatSets(r.perWeek - SET_TARGET.max)} OVER`}
+                        ? `${formatSets(setTarget().min - r.perWeek)} UNDER`
+                        : `${formatSets(r.perWeek - setTarget().max)} OVER`}
                   </span>
                 </div>
               )

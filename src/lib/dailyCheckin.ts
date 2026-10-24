@@ -5,6 +5,7 @@
 // asked as "calm") so the numbers compare across questions.
 import { format, subDays } from 'date-fns'
 import { findOption, live } from './optionStore'
+import { setting } from './settings'
 import type { OptionRow } from './editable'
 import type { CategoryColor } from './types'
 
@@ -51,7 +52,7 @@ export interface DailyCheckin {
 
 // Checking in after midnight still belongs to the day you're reflecting on.
 export function checkinDateISO(now: Date = new Date()): string {
-  return format(now.getHours() < 4 ? subDays(now, 1) : now, 'yyyy-MM-dd')
+  return format(now.getHours() < setting('checkin_day_starts_hour') ? subDays(now, 1) : now, 'yyyy-MM-dd')
 }
 
 /** The word shown beside a slider value: the category's own words at the ends, plain ones between. */

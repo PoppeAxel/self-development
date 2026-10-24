@@ -11,6 +11,8 @@ import { muscleGroups, trackedLifts } from '../src/lib/exercises'
 import { balanceRegions } from '../src/lib/training'
 import { getSportStyle } from '../src/lib/workouts'
 import { goalNudge, ratingInfo } from '../src/lib/checkins'
+import { setting } from '../src/lib/settings'
+import { payday, payMonthOf } from '../src/lib/budget'
 
 const at = (h: number) => new Date(2026, 9, 24, h, 30)
 
@@ -70,3 +72,14 @@ assert.deepEqual([ratingInfo('stuck').label, ratingInfo('stuck').color, ratingIn
 assert.equal(goalNudge('steps'), 'A single longer walk most days covers it.')
 assert.equal(goalNudge('savings'), null)
 console.log('lists.check 4b ok')
+
+// Step 5 settings (migration 0052): seeded values, and an edit takes effect.
+assert.equal(setting('sleep_target_hours'), 8)
+assert.equal(setting('notable_sleep_hours'), 1 / 6)
+assert.equal(payday('2026-11', []), '2026-11-23') // 22nd is a Sunday → 23rd, as before
+setOptionRows(listRows.map((r) => (r.kind === 'setting' && r.key === 'payday' ? { ...r, meta: { ...r.meta, value: 25 } } : r)))
+assert.equal(payday('2026-11', []), '2026-11-25')
+assert.equal(payMonthOf('2026-11-24'), '2026-10') // before the new payday → previous period
+assert.throws(() => { setOptionRows([]); setting('payday') }, /Missing setting/)
+setOptionRows(listRows)
+console.log('lists.check 5 ok')

@@ -1,4 +1,4 @@
-export type Tab = 'today' | 'calendar' | 'goals' | 'journal' | 'economy' | 'food' | 'training' | 'settings'
+export type Tab = 'today' | 'calendar' | 'goals' | 'journal' | 'economy' | 'food' | 'training'
 
 // Calendar and Settings are reachable from TopIcons instead of a bottom-bar slot — see there.
 const TABS: { id: Tab; label: string; icon: string }[] = [

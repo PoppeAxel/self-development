@@ -89,5 +89,21 @@
   {"kind":"quick_when","key":"today","label":"Today","icon":null,"color":null,"position":0,"meta":{"repeat":false,"offset":0},"system":false},
   {"kind":"quick_when","key":"tomorrow","label":"Tomorrow","icon":null,"color":null,"position":1,"meta":{"repeat":false,"offset":1},"system":false},
   {"kind":"quick_when","key":"daily","label":"Every day","icon":null,"color":null,"position":2,"meta":{"repeat":true,"days":null},"system":false},
-  {"kind":"quick_when","key":"weekdays","label":"Weekdays","icon":null,"color":null,"position":3,"meta":{"repeat":true,"days":[1,2,3,4,5]},"system":false}
+  {"kind":"quick_when","key":"weekdays","label":"Weekdays","icon":null,"color":null,"position":3,"meta":{"repeat":true,"days":[1,2,3,4,5]},"system":false},
+  {"kind":"setting","key":"sleep_target_hours","label":"Sleep target","icon":null,"color":null,"position":0,"meta":{"value":8,"min":4,"max":12,"step":0.5,"unit":"h"},"system":false},
+  {"kind":"setting","key":"rest_timer_seconds","label":"Rest timer","icon":null,"color":null,"position":1,"meta":{"value":90,"min":15,"max":600,"step":15,"unit":"s"},"system":false},
+  {"kind":"setting","key":"set_target_min","label":"Sets a week, low end","icon":null,"color":null,"position":2,"meta":{"value":10,"min":0,"max":60,"step":1,"unit":"sets"},"system":false},
+  {"kind":"setting","key":"set_target_max","label":"Sets a week, high end","icon":null,"color":null,"position":3,"meta":{"value":20,"min":1,"max":80,"step":1,"unit":"sets"},"system":false},
+  {"kind":"setting","key":"kg_step_small","label":"Kg step, light","icon":null,"color":null,"position":4,"meta":{"value":1,"min":0.25,"max":10,"step":0.25,"unit":"kg"},"system":false},
+  {"kind":"setting","key":"kg_step_large","label":"Kg step, heavy","icon":null,"color":null,"position":5,"meta":{"value":2.5,"min":0.25,"max":20,"step":0.25,"unit":"kg"},"system":false},
+  {"kind":"setting","key":"kg_step_threshold","label":"Heavy from","icon":null,"color":null,"position":6,"meta":{"value":10,"min":0,"max":200,"step":1,"unit":"kg"},"system":false},
+  {"kind":"setting","key":"checkin_day_starts_hour","label":"Check-in day starts at","icon":null,"color":null,"position":7,"meta":{"value":4,"min":0,"max":12,"step":1,"unit":":00"},"system":false},
+  {"kind":"setting","key":"payday","label":"Payday (day of month)","icon":null,"color":null,"position":8,"meta":{"value":22,"min":1,"max":28,"step":1,"unit":""},"system":false},
+  {"kind":"setting","key":"notable_sleep_hours","label":"Notable sleep change","icon":null,"color":null,"position":9,"meta":{"value":0.16666666666666666,"min":0.05,"max":3,"step":0.05,"unit":"h"},"system":false},
+  {"kind":"setting","key":"notable_steps","label":"Notable steps change","icon":null,"color":null,"position":10,"meta":{"value":400,"min":50,"max":10000,"step":50,"unit":"steps"},"system":false},
+  {"kind":"setting","key":"notable_cardio_km","label":"Notable cardio change","icon":null,"color":null,"position":11,"meta":{"value":1.5,"min":0.1,"max":50,"step":0.1,"unit":"km"},"system":false},
+  {"kind":"setting","key":"notable_strength_min","label":"Notable strength change","icon":null,"color":null,"position":12,"meta":{"value":15,"min":1,"max":300,"step":1,"unit":"min"},"system":false},
+  {"kind":"setting","key":"notable_intake_kcal","label":"Notable intake change","icon":null,"color":null,"position":13,"meta":{"value":150,"min":10,"max":2000,"step":10,"unit":"kcal"},"system":false},
+  {"kind":"setting","key":"min_logged_kcal","label":"Fully logged day from","icon":null,"color":null,"position":14,"meta":{"value":1000,"min":0,"max":5000,"step":50,"unit":"kcal"},"system":false},
+  {"kind":"setting","key":"min_logged_days","label":"Days needed for the estimate","icon":null,"color":null,"position":15,"meta":{"value":5,"min":1,"max":28,"step":1,"unit":"days"},"system":false}
 ]

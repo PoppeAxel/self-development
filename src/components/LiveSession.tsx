@@ -1,8 +1,9 @@
+import { setting } from '../lib/settings'
 import { useEffect, useRef, useState } from 'react'
 import { format, parseISO } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
-import { balanceRegions, SET_TARGET, bestE1rm, formatSets, lastTime, regionBalance } from '../lib/training'
+import { balanceRegions, setTarget, bestE1rm, formatSets, lastTime, regionBalance } from '../lib/training'
 import { ConfirmDialog } from './ConfirmDialog'
 import { CLOSE_BTN, SHEET, SwapSheet } from './GymPrograms'
 import type { Exercise, GymProgram, GymProgramExercise, GymSession, GymSessionSet } from '../lib/types'
@@ -14,7 +15,6 @@ import type { Exercise, GymProgram, GymProgramExercise, GymSession, GymSessionSe
 // the Training tab resumes it.
 
 export const LIVE_KEY = 'liveSession'
-const REST_MS = 90_000
 
 /** reps/weight are kept as strings so a half-typed "97." survives the input. */
 export interface LiveSet {
@@ -109,7 +109,11 @@ function summarize(sets: { reps: number | null; weight: number | null }[]): stri
 }
 
 /** 1 kg steps up to 10 kg (dumbbells, cable stacks), 2.5 kg plates above that. */
-const kgStep = (v: number, dir: number) => ((dir > 0 ? v < 10 : v <= 10) ? 1 : 2.5)
+// Small steps up to the threshold, bigger above it ('setting' rows, edited on Training).
+const kgStep = (v: number, dir: number) => {
+  const t = setting('kg_step_threshold')
+  return (dir > 0 ? v < t : v <= t) ? setting('kg_step_small') : setting('kg_step_large')
+}
 
 function Stepper({ label, value, onChange, step, width }: {
   label: string
@@ -271,7 +275,7 @@ export function LiveSession({
   }
 
   function tick(exIdx: number, setIdx: number) {
-    const restAt = Date.now() + REST_MS
+    const restAt = Date.now() + setting('rest_timer_seconds') * 1000
     setState((s) => ({
       ...s,
       restEndsAt: restAt,
@@ -782,7 +786,7 @@ export function BandBar({ value, status }: { value: number; status: 'under' | 'i
     <span className="relative h-2.5 flex-1 rounded-full bg-[#ece6da]">
       <span
         className="absolute inset-y-0 bg-[#d4e6dd]"
-        style={{ left: `${(SET_TARGET.min / scale) * 100}%`, width: `${((SET_TARGET.max - SET_TARGET.min) / scale) * 100}%` }}
+        style={{ left: `${(setTarget().min / scale) * 100}%`, width: `${((setTarget().max - setTarget().min) / scale) * 100}%` }}
       />
       <span
         className="absolute inset-y-0.5 left-0 rounded-full"

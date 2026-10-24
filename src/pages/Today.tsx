@@ -34,6 +34,7 @@ import type { OptionRow } from '../lib/editable'
 import { useEdit } from '../contexts/EditContext'
 import { EditDots, Pressable } from '../components/ItemMenu'
 import { OptionSheet } from '../components/OptionSheet'
+import { Reminders } from '../components/Reminders'
 import type { Category, DailyTask, Goal, Reminder, RecipeIngredient } from '../lib/types'
 
 // A task whose auto_metric is this sentinel auto-completes off today's Food-log total
@@ -1233,6 +1234,12 @@ export function Today() {
           </div>
         </div>
       )}
+
+      {/* Reminders and signing out live at the bottom of Today (there's no Settings page). */}
+      <Reminders />
+      <button onClick={() => supabase.auth.signOut()} className="self-center pb-2 text-xs font-medium text-ink-muted">
+        Sign out
+      </button>
 
       <ConfirmDialog
         open={confirmTask !== null}

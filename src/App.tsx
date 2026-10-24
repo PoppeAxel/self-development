@@ -14,13 +14,12 @@ import { Journal } from './pages/Journal'
 import { Food } from './pages/Food'
 import { Training } from './components/Training'
 import { Finance } from './components/Finance'
-import { Settings } from './pages/Settings'
 
 function Shell() {
-  // Strava redirects back here with ?code=... after connecting — land on Settings so the
-  // "Connected" confirmation is immediately visible.
+  // Strava redirects back here with ?code=... after connecting — land on Training, which
+  // finishes the connect and shows the confirmation.
   const [tab, setTabState] = useState<Tab>(() =>
-    new URLSearchParams(window.location.search).has('code') ? 'settings' : 'today',
+    new URLSearchParams(window.location.search).has('code') ? 'training' : 'today',
   )
   // The pushed goal detail, openable from both Goals and Today. It lives above the Goals
   // tab, so tapping a tab always lands on that tab's own screen rather than a leftover
@@ -73,7 +72,6 @@ function Shell() {
           {tab === 'economy' && <Finance />}
           {tab === 'food' && <Food />}
           {tab === 'training' && <Training />}
-          {tab === 'settings' && <Settings />}
         </div>
         <TabBar active={tab} onChange={setTab} />
       </div>
