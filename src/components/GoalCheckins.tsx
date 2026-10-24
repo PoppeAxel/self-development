@@ -3,8 +3,13 @@ import { format } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { periodEndISO } from '../lib/dates'
 import { goalSource, goalStyle, rolloverRecurringGoals, type GoalPace } from '../lib/goals'
-import { formatGoalValue, isWeightGoal, milestoneState, type MilestoneResult } from '../lib/checkins'
+import { formatGoalValue, isWeightGoal, milestoneState, monthRatings, periodRatings, type MilestoneResult } from '../lib/checkins'
 import type { Category, CheckinRating, Goal } from '../lib/types'
+import { findOption } from '../lib/optionStore'
+import type { OptionRow } from '../lib/editable'
+import { useEdit } from '../contexts/EditContext'
+import { EditDots, Pressable } from './ItemMenu'
+import { OptionSheet } from './OptionSheet'
 
 // The two check-up flows from the Goals round-8 handoff. Both write goal_checkins, one row
 // per goal per reviewed period (upsert on goal_id + period_start, so re-doing one edits it).
@@ -58,11 +63,21 @@ const Label = ({ children, aside }: { children: React.ReactNode; aside?: string 
 
 // ------------------------------------------------------------------ monthly, long-term (2b)
 
-const MONTH_RATINGS: { id: CheckinRating; label: string; fill: string }[] = [
-  { id: 'on_track', label: 'On track', fill: '#1f6b5c' },
-  { id: 'slipping', label: 'Slipping', fill: '#8a6321' },
-  { id: 'stuck', label: 'Stuck', fill: '#a33327' },
-]
+/**
+ * The rating buttons' names/colours are edited in place (✎ or a long-press on a button). It's a
+ * closed set — the ids are fixed — so the sheet offers rename, colour and order only.
+ */
+function useRatingEdit() {
+  const { editing } = useEdit()
+  const [row, setRow] = useState<OptionRow | null>(null)
+  return {
+    editing,
+    open: (kind: 'month_rating' | 'period_rating', key: CheckinRating) => setRow(findOption(kind, key) ?? null),
+    sheet: row && (
+      <OptionSheet kind={row.kind} row={row} noun="rating" noIcon noDuplicate color={row.kind === 'month_rating' ? 'hex' : undefined} onClose={() => setRow(null)} />
+    ),
+  }
+}
 
 /** The glass chips under the goal title: numbers from wherever the goal gets them. */
 function checkinChips(row: GoalRow, reviewStart: string, reviewEnd: string): string[] {
@@ -99,6 +114,7 @@ export function LongTermCheckin({ rows, reviewStart, categories, onClose, onSave
 }) {
   const [step, setStep] = useState(0)
   const [rating, setRating] = useState<CheckinRating | null>(null)
+  const ratingEdit = useRatingEdit()
   const [note, setNote] = useState('')
   const [focus, setFocus] = useState('')
   const [taskAdded, setTaskAdded] = useState(false)
@@ -191,17 +207,25 @@ export function LongTermCheckin({ rows, reviewStart, categories, onClose, onSave
       <div className="flex flex-col gap-[9px]">
         <Label>HOW DID {format(reviewDate, 'MMMM').toUpperCase()} GO?</Label>
         <div className="grid grid-cols-3 gap-2">
-          {MONTH_RATINGS.map((r) => (
-            <button
-              key={r.id}
-              onClick={() => setRating(r.id)}
-              className={`rounded-2xl py-3 text-[13px] ${rating === r.id ? 'font-semibold text-white' : 'border border-line bg-surface font-medium text-ink-2'}`}
-              style={rating === r.id ? { background: r.fill } : undefined}
-            >
-              {r.label}
-            </button>
+          {monthRatings().map((r) => (
+            <span key={r.key} className="relative flex">
+              <Pressable
+                onLongPress={() => ratingEdit.open('month_rating', r.key)}
+                onClick={() => setRating(r.key)}
+                className={`w-full rounded-2xl py-3 text-[13px] ${rating === r.key ? 'font-semibold text-white' : 'border border-line bg-surface font-medium text-ink-2'}`}
+                style={rating === r.key ? { background: r.color ?? undefined } : undefined}
+              >
+                {r.label}
+              </Pressable>
+              {ratingEdit.editing && (
+                <span className="absolute -right-1 -top-1.5">
+                  <EditDots onClick={() => ratingEdit.open('month_rating', r.key)} label={r.label} />
+                </span>
+              )}
+            </span>
           ))}
         </div>
+        {ratingEdit.sheet}
       </div>
 
       <div className="flex flex-col gap-[9px]">
@@ -244,11 +268,6 @@ export function LongTermCheckin({ rows, reviewStart, categories, onClose, onSave
 
 // ------------------------------------------------------------------ week / month (3c)
 
-const PERIOD_RATINGS: { id: CheckinRating; label: string }[] = [
-  { id: 'done', label: 'Done' },
-  { id: 'partly', label: 'Partly' },
-  { id: 'missed', label: 'Missed' },
-]
 
 export function PeriodCheckup({ periodType, title, rows, suggested, reviewStart, nextLabel, categories, onClose, onSaved }: {
   periodType: 'week' | 'month'
@@ -264,6 +283,7 @@ export function PeriodCheckup({ periodType, title, rows, suggested, reviewStart,
   onSaved: () => void
 }) {
   const [ratings, setRatings] = useState(() => new Map(suggested))
+  const ratingEdit = useRatingEdit()
   const [note, setNote] = useState('')
   const [repeat, setRepeat] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -323,6 +343,7 @@ export function PeriodCheckup({ periodType, title, rows, suggested, reviewStart,
         </button>
       }
     >
+      {ratingEdit.sheet}
       <div className="flex flex-col gap-2.5">
         {rows.map((r) => {
           const style = goalStyle(r.goal, categories)
@@ -357,15 +378,22 @@ export function PeriodCheckup({ periodType, title, rows, suggested, reviewStart,
                 {caption && <span className="shrink-0 text-[10px] font-medium text-ink-muted">{caption}</span>}
               </div>
               <div className="grid grid-cols-3 gap-1.5">
-                {PERIOD_RATINGS.map((opt) => (
-                  <button
-                    key={opt.id}
-                    onClick={() => setRatings((m) => new Map(m).set(r.goal.id, opt.id))}
-                    className={`rounded-xl py-2 text-xs ${value === opt.id ? 'font-semibold text-white' : 'bg-[#efe9dc] font-medium text-ink-2'}`}
-                    style={value === opt.id ? { background: style.ink } : undefined}
-                  >
-                    {opt.label}
-                  </button>
+                {periodRatings().map((opt) => (
+                  <span key={opt.key} className="relative flex">
+                    <Pressable
+                      onLongPress={() => ratingEdit.open('period_rating', opt.key)}
+                      onClick={() => setRatings((m) => new Map(m).set(r.goal.id, opt.key))}
+                      className={`w-full rounded-xl py-2 text-xs ${value === opt.key ? 'font-semibold text-white' : 'bg-[#efe9dc] font-medium text-ink-2'}`}
+                      style={value === opt.key ? { background: opt.color ?? style.ink } : undefined}
+                    >
+                      {opt.label}
+                    </Pressable>
+                    {ratingEdit.editing && (
+                      <span className="absolute -right-1 -top-1.5">
+                        <EditDots onClick={() => ratingEdit.open('period_rating', opt.key)} label={opt.label} />
+                      </span>
+                    )}
+                  </span>
                 ))}
               </div>
             </div>

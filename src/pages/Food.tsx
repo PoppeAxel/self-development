@@ -38,8 +38,8 @@ import { THEME } from '../lib/theme'
 import { resolveImportedLines, type ImportedRecipe } from '../lib/recipeImport'
 import { normalizeUrl, linkHost, linkLabel } from '../lib/links'
 import type { FoodLogEntry, Ingredient, MealType, Recipe, RecipeIngredient, SavedLink } from '../lib/types'
-import type { OptionRow } from '../lib/editable'
-import { findOption } from '../lib/optionStore'
+import { liveOptions, type OptionRow } from '../lib/editable'
+import { findOption, getOptionRows } from '../lib/optionStore'
 import { useEdit } from '../contexts/EditContext'
 import { EditDots, Pressable } from '../components/ItemMenu'
 import { OptionSheet, type RefMover } from '../components/OptionSheet'
@@ -142,17 +142,13 @@ function emptyIngredientForm(): IngredientFormState {
   return { name: '', kcal: '', protein: '', carbs: '', fat: '', fiber: '', portionLabel: '', portionGrams: '', category: '' }
 }
 
-// The quantity sheet's presets. Recipes are logged in servings, ingredients in grams;
-// anything off-preset goes through the ⌨ escape rather than widening these.
-const PRESET_QUANTITIES: Record<'recipe' | 'ingredient', number[]> = {
-  recipe: [0.5, 1, 1.5, 2],
-  ingredient: [50, 100, 150, 200],
-}
-
-const PRESET_LABELS: Record<'recipe' | 'ingredient', string[]> = {
-  recipe: ['½', '1', '1½', '2'],
-  ingredient: ['50', '100', '150', '200'],
-}
+// The quantity sheet's presets: `options` rows (kinds 'serving_preset' for recipes, 'gram_preset'
+// for ingredients; meta.value = the amount, label = what the cell shows), edited in place in the
+// sheet. Anything off-preset goes through the ⌨ escape.
+const presetKind = (kind: 'recipe' | 'ingredient') => (kind === 'recipe' ? 'serving_preset' : 'gram_preset')
+const quantityPresets = (kind: 'recipe' | 'ingredient') =>
+  liveOptions(getOptionRows(), presetKind(kind)).map((row) => ({ row, label: row.label, value: Number(row.meta.value) }))
+const isPreset = (kind: 'recipe' | 'ingredient', quantity: number) => quantityPresets(kind).some((p) => p.value === quantity)
 
 type FoodSubTab = 'log' | 'recipes' | 'library' | 'links'
 const SUB_TABS: FoodSubTab[] = ['log', 'recipes', 'library', 'links']
@@ -194,7 +190,7 @@ export function Food() {
   const [selectedMeal, setSelectedMeal] = useState<MealType>(() => defaultMealTypeForNow())
   // Meal types and ingredient categories are edited in place: ✎ edit mode or a long-press.
   const { editing } = useEdit()
-  const [optionSheet, setOptionSheet] = useState<{ kind: 'meal_type' | 'ingredient_category'; row: OptionRow | null } | null>(null)
+  const [optionSheet, setOptionSheet] = useState<{ kind: 'meal_type' | 'ingredient_category' | 'serving_preset' | 'gram_preset'; row: OptionRow | null } | null>(null)
   const [addLogOpen, setAddLogOpen] = useState(false)
   const [addLogQuery, setAddLogQuery] = useState('')
   const [addLogFilter, setAddLogFilter] = useState<'all' | 'recipe' | 'ingredient'>('all')
@@ -369,7 +365,7 @@ export function Food() {
     // The strip's selected meal is now always explicit, so it wins outright: you tapped
     // + under "Dinner", you meant dinner, whatever the recipe is tagged as.
     setQuantifyMealType(selectedMeal)
-    setQuantifyFreeform(quantity != null && !PRESET_QUANTITIES[kind].includes(quantity))
+    setQuantifyFreeform(quantity != null && !isPreset(kind, quantity))
     setQuantifyLastUsed(quantity ?? null)
     setAddLogOpen(false)
   }
@@ -392,7 +388,7 @@ export function Food() {
     }
     setQuantifyMealType(entry.meal_type ?? selectedMeal)
     const existing = entry.recipe_id ? (entry.servings ?? 1) : (entry.grams ?? 0)
-    setQuantifyFreeform(!PRESET_QUANTITIES[entry.recipe_id ? 'recipe' : 'ingredient'].includes(existing))
+    setQuantifyFreeform(!isPreset(entry.recipe_id ? 'recipe' : 'ingredient', existing))
     setQuantifyLastUsed(null)
   }
 
@@ -2080,8 +2076,7 @@ export function Food() {
         (() => {
           const kind = quantifying.kind
           const look = mealInfo(quantifyMealType ?? selectedMeal)
-          const presets = PRESET_QUANTITIES[kind]
-          const labels = PRESET_LABELS[kind]
+          const presets = quantityPresets(kind)
           const value = Number(quantifyValue)
           const recipe = kind === 'recipe' ? recipesById.get(quantifying.id) : null
           const ingredient = kind === 'ingredient' ? ingredientsById.get(quantifying.id) : null
@@ -2147,25 +2142,42 @@ export function Food() {
 
                 <div className="flex flex-col gap-[9px]">
                   <span className="text-[10px] font-semibold tracking-[0.07em] text-ink-muted">HOW MUCH?</span>
-                  <div className="grid grid-cols-5 gap-[7px]">
-                    {presets.map((preset, i) => {
-                      const active = !quantifyFreeform && value === preset
+                  <div className="grid gap-[7px]" style={{ gridTemplateColumns: `repeat(${presets.length + 1 + (editing ? 1 : 0)}, minmax(0, 1fr))` }}>
+                    {presets.map((preset) => {
+                      const active = !quantifyFreeform && value === preset.value
+                      const editPreset = () => setOptionSheet({ kind: presetKind(kind), row: preset.row })
                       return (
-                        <button
-                          key={preset}
-                          onClick={() => {
-                            setQuantifyValue(String(preset))
-                            setQuantifyFreeform(false)
-                          }}
-                          className={`rounded-[15px] py-[11px] text-center text-[13px] font-semibold ${
-                            active ? 'text-white' : 'border border-line bg-surface text-ink-2'
-                          }`}
-                          style={active ? { background: look.accent } : undefined}
-                        >
-                          {labels[i]}
-                        </button>
+                        <span key={preset.row.id} className="relative flex">
+                          <Pressable
+                            onLongPress={editPreset}
+                            onClick={() => {
+                              setQuantifyValue(String(preset.value))
+                              setQuantifyFreeform(false)
+                            }}
+                            className={`w-full rounded-[15px] py-[11px] text-center text-[13px] font-semibold ${
+                              active ? 'text-white' : 'border border-line bg-surface text-ink-2'
+                            }`}
+                            style={active ? { background: look.accent } : undefined}
+                          >
+                            {preset.label}
+                          </Pressable>
+                          {editing && (
+                            <span className="absolute -right-1 -top-1.5">
+                              <EditDots onClick={editPreset} label={preset.label} />
+                            </span>
+                          )}
+                        </span>
                       )
                     })}
+                    {editing && (
+                      <button
+                        onClick={() => setOptionSheet({ kind: presetKind(kind), row: null })}
+                        aria-label="New preset"
+                        className="rounded-[15px] border border-dashed border-line-strong py-[11px] text-center text-[13px] font-semibold text-pine"
+                      >
+                        +
+                      </button>
+                    )}
                     <button
                       onClick={() => setQuantifyFreeform(true)}
                       aria-label="Enter an exact amount"
@@ -2860,6 +2872,31 @@ export function Food() {
                 className="w-14 rounded-xl border border-line bg-page px-2 py-1.5 text-center text-sm font-semibold text-ink outline-none focus:border-pine"
               />
               :00
+            </label>
+          )}
+        />
+      )}
+      {(optionSheet?.kind === 'serving_preset' || optionSheet?.kind === 'gram_preset') && (
+        <OptionSheet
+          kind={optionSheet.kind}
+          row={optionSheet.row}
+          noun="preset"
+          noIcon
+          maxLength={6}
+          newMeta={{ value: optionSheet.kind === 'serving_preset' ? 1 : 100 }}
+          onClose={() => setOptionSheet(null)}
+          fields={(meta, set) => (
+            <label className="flex items-center gap-2 text-[13px] text-ink-2">
+              Amount
+              <input
+                type="number"
+                min={0}
+                step="any"
+                value={String(meta.value ?? '')}
+                onChange={(e) => set({ value: Number(e.target.value) || 0 })}
+                className="w-20 rounded-xl border border-line bg-page px-2 py-1.5 text-center text-sm font-semibold text-ink outline-none focus:border-pine"
+              />
+              {optionSheet.kind === 'serving_preset' ? 'servings' : 'g'}
             </label>
           )}
         />

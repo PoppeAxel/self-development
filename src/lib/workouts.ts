@@ -1,3 +1,4 @@
+import { getOptionRows } from './optionStore'
 // Mirrors STRENGTH_SPORT_TYPES in supabase/functions/sync-strava-workouts/index.ts —
 // keep these two lists in sync. Everything else (Run, Ride, Swim, Walk, Hike, Soccer, ...)
 // counts as cardio.
@@ -25,27 +26,18 @@ export interface SportStyle {
   color: string
 }
 
-// Strava sport_types seen so far, styled for the Cardio breakdown chart. Unknown types
-// (a new sport Strava starts sending) fall back to a generic style below rather than
-// erroring — extend this map when a new one shows up worth distinguishing.
-const SPORT_STYLES: Record<string, SportStyle> = {
-  Run: { label: 'Run', icon: '👟', color: '#a8563f' },
-  TrailRun: { label: 'Trail run', icon: '👟', color: '#8a4630' },
-  Ride: { label: 'Ride', icon: '🚴', color: '#46608f' },
-  VirtualRide: { label: 'Ride', icon: '🚴', color: '#46608f' },
-  MountainBikeRide: { label: 'MTB ride', icon: '🚵', color: '#35528f' },
-  GravelRide: { label: 'Gravel ride', icon: '🚴', color: '#2c4372' },
-  Swim: { label: 'Swim', icon: '🏊', color: '#3f7f8a' },
-  Walk: { label: 'Walk', icon: '🚶', color: '#8b8577' },
-  Hike: { label: 'Hike', icon: '🥾', color: '#6f8a3f' },
-  Soccer: { label: 'Football', icon: '⚽', color: '#2f6b5a' },
-  AlpineSki: { label: 'Ski', icon: '⛷️', color: '#6a4f7a' },
-  Snowboard: { label: 'Snowboard', icon: '🏂', color: '#5d4470' },
-  Rowing: { label: 'Rowing', icon: '🚣', color: '#7a5a8a' },
-}
-
+// Strava sport_types, styled for the Cardio chart and list: `options` rows of kind 'sport_style'
+// (migration 0051, edited in place on Training → Cardio), matched on meta.sport_type. A type Strava
+// sends that has no row yet gets the neutral style below, labelled with its own name.
 const DEFAULT_SPORT_STYLE: SportStyle = { label: '', icon: '🏅', color: '#a09a8c' }
 
+/** The sport_style row for a Strava sport_type (live first, else archived). */
+export const sportRow = (sportType: string) => {
+  const rows = getOptionRows().filter((r) => r.kind === 'sport_style' && (r.meta.sport_type ?? r.key) === sportType)
+  return rows.find((r) => !r.archived_at) ?? rows[0]
+}
+
 export function getSportStyle(sportType: string): SportStyle {
-  return SPORT_STYLES[sportType] ?? { ...DEFAULT_SPORT_STYLE, label: sportType }
+  const r = sportRow(sportType)
+  return r ? { label: r.label, icon: r.icon ?? DEFAULT_SPORT_STYLE.icon, color: r.color ?? DEFAULT_SPORT_STYLE.color } : { ...DEFAULT_SPORT_STYLE, label: sportType }
 }

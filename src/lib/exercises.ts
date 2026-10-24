@@ -1,38 +1,19 @@
-// Fixed muscle-group taxonomy for the exercise catalog (src/components/GymPrograms.tsx).
-// Kept as a flat list rather than a DB enum so adding a category is a one-line change.
-export const MUSCLE_GROUPS = [
-  'Chest',
-  'Triceps',
-  'Shoulders',
-  'Upper back',
-  'Lower back',
-  'Biceps',
-  'Forearms',
-  'Quads',
-  'Hamstrings',
-  'Glutes',
-  'Calves',
-  'Core',
-  'Full body',
-] as const
+import { live } from './optionStore'
 
-export type MuscleGroup = (typeof MUSCLE_GROUPS)[number]
+// The muscle groups an exercise can be tagged with (kind 'muscle_group', migration 0051, edited in
+// place in the exercise library). The label IS the text exercises.primary_muscle /
+// secondary_muscle store, so renaming one rewrites those rows.
+export type MuscleGroup = string
+export const muscleGroups = (): MuscleGroup[] => live('muscle_group').map((r) => r.label)
 
-// Rolls the 13 muscle groups up into a handful of body regions for a compact overview
-// (src/components/GymPrograms.tsx's Muscle balance section) — the full per-muscle
-// breakdown is still available by expanding a region.
-export const MUSCLE_REGIONS: Record<string, MuscleGroup[]> = {
-  Push: ['Chest', 'Shoulders', 'Triceps'],
-  Pull: ['Upper back', 'Lower back', 'Biceps'],
-  Legs: ['Quads', 'Hamstrings', 'Glutes', 'Calves'],
-  Core: ['Core', 'Full body'],
-  Forearms: ['Forearms'],
+// The lifts worth tracking progress on (kind 'tracked_lift', edited in place on Training).
+// `exercise` is matched against gym_session_sets.exercise_name (exact, case-insensitive) so a
+// variant like "Romanian deadlift" doesn't get conflated with "Deadlift"; `label` is shown.
+export interface TrackedLift {
+  label: string
+  exercise: string
 }
-
-// The big compound lifts worth tracking progress on — matched against
-// gym_session_sets.exercise_name (exact, case-insensitive) so a variant like "Romanian
-// deadlift" doesn't get conflated with "Deadlift".
-export const TRACKED_LIFTS = ['Squat', 'Bench press', 'Deadlift', 'Military press (overhead press)'] as const
+export const trackedLifts = (): TrackedLift[] => live('tracked_lift').map((r) => ({ label: r.label, exercise: String(r.meta.exercise || r.label) }))
 
 // Epley formula: estimates the weight you could lift for a single rep, so sets at
 // different rep ranges (e.g. 50kg×10 vs 60kg×6) become comparable on one scale.

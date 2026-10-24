@@ -21,39 +21,20 @@ import {
   type IntervalBucket,
 } from '../lib/goals'
 import { LabelPicker } from '../components/LabelPicker'
+import { OptionSheet } from '../components/OptionSheet'
+import { useEdit } from '../contexts/EditContext'
+import { findOption, setOptionRows } from '../lib/optionStore'
+import { patchOption } from '../lib/options'
 import { AUTO_METRICS } from '../lib/metrics'
 import { mediaMetrics } from '../lib/media'
 import { formatKr, periodTotals, type SavingsEntry } from '../lib/finance'
 import { loadBankSavings } from '../lib/bankSavings'
-import { formatGoalValue, isWeightGoal, milestoneState, parseGoalValue, type MilestoneResult } from '../lib/checkins'
+import { formatGoalValue, goalNudge, isWeightGoal, milestoneState, parseGoalValue, ratingInfo, type MilestoneResult } from '../lib/checkins'
 import { useNav } from '../contexts/NavContext'
 import { Screen } from '../components/Screen'
 import { DaysRing, PaceBars } from '../components/Pace'
 import { ConfirmDialog } from '../components/ConfirmDialog'
-import type { Category, CheckinRating, DailyTask, Goal, GoalCheckin } from '../lib/types'
-
-const RATING_LABEL: Record<CheckinRating, string> = {
-  on_track: 'On track',
-  slipping: 'Slipping',
-  stuck: 'Stuck',
-  done: 'Done',
-  partly: 'Partly',
-  missed: 'Missed',
-}
-const RATING_FILL: Partial<Record<CheckinRating, string>> = { on_track: '#1f6b5c', slipping: '#8a6321', stuck: '#a33327' }
-
-/**
- * The nudge after the projection sentence. Deliberately a lookup, not generated prose:
- * a metric with no copy here gets no second clause rather than a sentence that sounds
- * confident about something the app can't actually suggest.
- */
-const NUDGE: Record<string, string> = {
-  strength_sessions: 'One more session a week closes the gap.',
-  cardio_sessions: 'One more session a week closes the gap.',
-  cardio_minutes: 'One extra session a week closes most of the gap.',
-  strength_minutes: 'A longer session each week closes most of the gap.',
-  steps: 'A single longer walk most days covers it.',
-}
+import type { Category, DailyTask, Goal, GoalCheckin } from '../lib/types'
 
 interface TaskRow {
   task: DailyTask
@@ -76,6 +57,18 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
   const [addingTask, setAddingTask] = useState(false)
   const [newTaskTitle, setNewTaskTitle] = useState('')
   const [labels, setLabels] = useState<Category[]>([])
+  const { editing } = useEdit()
+  const [nudgeOpen, setNudgeOpen] = useState(false)
+  // A nudge is keyed by its metric, so re-adding a deleted one brings that row back rather than
+  // inserting a second row with the same key.
+  async function openNudge(metric: string) {
+    const r = findOption('goal_nudge', metric)
+    if (r?.archived_at) {
+      await patchOption(r.id, { archived_at: null })
+      setOptionRows((all) => all.map((x) => (x.id === r.id ? { ...x, archived_at: null } : x)))
+    }
+    setNudgeOpen(true)
+  }
   const categories = new Map(labels.map((c) => [c.id, c]))
   const [checkinList, setCheckinList] = useState<GoalCheckin[]>([])
   const [results, setResults] = useState<MilestoneResult[]>([])
@@ -493,8 +486,8 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
                 <div className="flex items-center gap-2">
                   <span className="text-[13px] font-semibold text-ink">{format(new Date(c.period_start + 'T00:00:00'), 'MMMM')}</span>
                   {c.rating ? (
-                    <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-white" style={{ background: RATING_FILL[c.rating] ?? style.ink }}>
-                      {RATING_LABEL[c.rating]}
+                    <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-white" style={{ background: ratingInfo(c.rating).color ?? style.ink }}>
+                      {ratingInfo(c.rating).label}
                     </span>
                   ) : (
                     <span className="text-[10px] font-medium text-ink-muted">skipped</span>
@@ -546,7 +539,13 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
                     {Math.round(pace.projected).toLocaleString()}
                     {unit}
                   </strong>
-                  .{goal.auto_metric && NUDGE[goal.auto_metric] ? ` ${NUDGE[goal.auto_metric]}` : ''}
+                  .{goal.auto_metric && goalNudge(goal.auto_metric) ? ` ${goalNudge(goal.auto_metric)}` : ''}
+                  {/* The nudge is a written sentence per metric, edited in place — never generated. */}
+                  {editing && goal.auto_metric && (
+                    <button onClick={() => openNudge(goal.auto_metric!)} className="ml-1 font-medium text-pine">
+                      ✎ {goalNudge(goal.auto_metric) ? 'Edit nudge' : 'Add a nudge'}
+                    </button>
+                  )}
                 </>
               )}
             </p>
@@ -722,6 +721,18 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
         onConfirm={remove}
         onCancel={() => setConfirmDelete(false)}
       />
+      {nudgeOpen && goal.auto_metric && (
+        <OptionSheet
+          kind="goal_nudge"
+          row={findOption('goal_nudge', goal.auto_metric) ?? null}
+          fixedKey={goal.auto_metric}
+          noun="nudge"
+          noIcon
+          noDuplicate
+          maxLength={120}
+          onClose={() => setNudgeOpen(false)}
+        />
+      )}
     </Screen>
   )
 }

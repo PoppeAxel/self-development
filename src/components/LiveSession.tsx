@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { format, parseISO } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
-import { BALANCE_REGIONS, SET_TARGET, bestE1rm, formatSets, lastTime, regionBalance } from '../lib/training'
+import { balanceRegions, SET_TARGET, bestE1rm, formatSets, lastTime, regionBalance } from '../lib/training'
 import { ConfirmDialog } from './ConfirmDialog'
 import { CLOSE_BTN, SHEET, SwapSheet } from './GymPrograms'
 import type { Exercise, GymProgram, GymProgramExercise, GymSession, GymSessionSet } from '../lib/types'
@@ -385,9 +385,9 @@ export function LiveSession({
       doneByExercise.flatMap((ex) => {
         const c = exerciseByName.get(ex.name.toLowerCase())
         return [c?.primary_muscle, c?.secondary_muscle].flatMap((m) =>
-          Object.entries(BALANCE_REGIONS)
-            .filter(([, muscles]) => m && (muscles as string[]).includes(m))
-            .map(([r]) => r),
+          balanceRegions()
+            .filter((r) => m && r.muscles.includes(m))
+            .map((r) => r.label),
         )
       }),
     )

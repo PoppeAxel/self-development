@@ -1,6 +1,28 @@
 import { addDays, format, subMonths } from 'date-fns'
 import { periodEndISO, periodStartISO } from './dates'
+import { findOption, live } from './optionStore'
+import type { OptionRow } from './editable'
 import type { CheckinRating, Goal, GoalCheckin, PeriodType } from './types'
+
+// The check-up ratings' names and colours, and GoalDetail's nudges, are `options` rows (kinds
+// 'month_rating', 'period_rating', 'goal_nudge'; migration 0051) edited in place. The rating ids
+// themselves are fixed — goal_checkins' CHECK and suggestRating depend on them.
+export interface RatingInfo {
+  key: CheckinRating
+  label: string
+  /** Fill when picked; null = the goal's own ink. */
+  color: string | null
+}
+const toRating = (r: OptionRow): RatingInfo => ({ key: r.key as CheckinRating, label: r.label, color: r.color })
+export const monthRatings = (): RatingInfo[] => live('month_rating').map(toRating)
+export const periodRatings = (): RatingInfo[] => live('period_rating').map(toRating)
+export const ratingInfo = (key: CheckinRating): RatingInfo => {
+  const r = findOption('month_rating', key) ?? findOption('period_rating', key)
+  return r ? toRating(r) : { key, label: key, color: null }
+}
+
+/** The nudge after GoalDetail's projection sentence for a goal tracking `metric`, if one is set. */
+export const goalNudge = (metric: string): string | null => live('goal_nudge').find((r) => r.key === metric)?.label ?? null
 
 // Pure helpers for the Goals round-8 handoff: milestone maths, value formatting, which
 // period a check-up reviews, and the history dots. No supabase import, so

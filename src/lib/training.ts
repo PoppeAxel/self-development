@@ -1,27 +1,26 @@
 import { addDays, format, parseISO } from 'date-fns'
 import { estimatedOneRepMax, type LiftPoint, type MuscleGroup } from './exercises'
 import { isStrengthWorkout } from './workouts'
+import { live } from './optionStore'
 import type { GoalPace } from './goals'
 import type { Exercise, GymProgram, GymSession, GymSessionSet, Workout } from './types'
 
 // The Training tab (Journal) and live workout mode read everything through here, so the
 // page and the finish screen can't disagree about a number.
 
-// Push/Pull lumped chest in with shoulders, which hid exactly the gap a target band is
-// there to show — so balance is measured per region instead. MUSCLE_REGIONS is unrelated.
-export const BALANCE_REGIONS: Record<string, MuscleGroup[]> = {
-  Back: ['Upper back', 'Lower back'],
-  Chest: ['Chest'],
-  Shoulders: ['Shoulders'],
-  Arms: ['Biceps', 'Triceps', 'Forearms'],
-  Legs: ['Quads', 'Hamstrings', 'Glutes', 'Calves'],
-  Core: ['Core', 'Full body'],
+// Push/Pull lumped chest in with shoulders, which hid exactly the gap a target band is there to
+// show — so balance is measured per region. Regions are `options` rows (kind 'balance_region');
+// each muscle group names its region in meta.region. Both are edited in place.
+export interface BalanceRegion {
+  key: string
+  label: string
+  muscles: MuscleGroup[]
+}
+export const balanceRegions = (): BalanceRegion[] => {
+  const muscles = live('muscle_group')
+  return live('balance_region').map((r) => ({ key: r.key, label: r.label, muscles: muscles.filter((m) => m.meta.region === r.key).map((m) => m.label) }))
 }
 export const SET_TARGET = { min: 10, max: 20 } as const
-
-const REGION_OF = new Map<string, string>(
-  Object.entries(BALANCE_REGIONS).flatMap(([region, muscles]) => muscles.map((m) => [m, region] as [string, string])),
-)
 
 export type BalanceStatus = 'under' | 'in' | 'over'
 export interface RegionBalance {
@@ -54,6 +53,8 @@ export function regionBalance(
   today: string,
   weeks = 4,
 ): RegionBalance[] {
+  const regions = balanceRegions()
+  const REGION_OF = new Map(regions.flatMap((r) => r.muscles.map((m) => [m, r.label] as [string, string])))
   const from = shiftDate(today, -(weeks * 7 - 1))
   const inWindow = new Set(sessions.filter((s) => s.date >= from && s.date <= today).map((s) => s.id))
   const totals = new Map<string, number>()
@@ -70,7 +71,7 @@ export function regionBalance(
     }
     if (secondary && secondary !== primary) add(secondary, 0.5)
   }
-  return Object.keys(BALANCE_REGIONS).map((region) => {
+  return regions.map(({ label: region }) => {
     // Rounded here so the shown number and its "N under" always add up to the target.
     const perWeek = Math.round(((totals.get(region) ?? 0) / weeks) * 10) / 10
     const status: BalanceStatus = perWeek < SET_TARGET.min ? 'under' : perWeek > SET_TARGET.max ? 'over' : 'in'

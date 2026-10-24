@@ -1,6 +1,7 @@
 // Self-check for the pure Training functions. Run:
 //   npx rolldown scripts/training.check.ts --platform node -f esm -o $TMP/tc.mjs && node $TMP/tc.mjs
 import assert from 'node:assert/strict'
+import './listsFixture'
 import { autoLinks, nextProgram, paceTrend, paceTrendLabel, planCaption, workoutPace, regionBalance, weekStrip } from '../src/lib/training'
 import type { GoalPace } from '../src/lib/goals'
 import type { Workout } from '../src/lib/types'

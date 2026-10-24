@@ -47,7 +47,13 @@ export function OptionSheet({
   onChanged,
   noIcon,
   maxLength = MAX_NAME,
+  noDuplicate,
+  fixedKey,
 }: {
+  /** A closed set (goal check-up ratings): no Duplicate. */
+  noDuplicate?: boolean
+  /** The key a new item must have (a goal nudge is keyed by its metric). */
+  fixedKey?: string
   /** Items that never show an icon (diary prompts, check-in questions). */
   noIcon?: boolean
   /** Longest allowed name (prompts are sentences, not names). */
@@ -113,7 +119,7 @@ export function OptionSheet({
           onChanged?.()
         }
       } else {
-        const created = await insertOption({ kind, key: newKey(kind), position: items.length, ...patch })
+        const created = await insertOption({ kind, key: fixedKey ?? newKey(kind), position: items.length, ...patch })
         setOptionRows((all) => [...all, created])
       }
       onClose()
@@ -172,7 +178,7 @@ export function OptionSheet({
       <ItemSheet
         title={row ? `Edit ${noun}` : `New ${noun}`}
         onClose={onClose}
-        onDuplicate={row && !moving ? duplicate : undefined}
+        onDuplicate={row && !moving && !noDuplicate ? duplicate : undefined}
         onMoveUp={row && !moving && index > 0 ? () => move(-1) : undefined}
         onMoveDown={row && !moving && index < items.length - 1 ? () => move(1) : undefined}
         onDelete={row && !moving && !row.system ? startDelete : undefined}

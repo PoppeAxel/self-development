@@ -7,6 +7,10 @@ import { setOptionRows } from '../src/lib/optionStore'
 import { categoryLook, defaultMealTypeForNow, ingredientCategories, mealInfo, mealTypes, orderedCategoryKeys, UNCATEGORIZED } from '../src/lib/food'
 import { isMediaMetric, mediaInfo, mediaKindOf, mediaKinds, mediaMetricOf, mediaMetrics } from '../src/lib/media'
 import { accountInfo, bufferAccounts, periodTotals, savingsAccounts } from '../src/lib/finance'
+import { muscleGroups, trackedLifts } from '../src/lib/exercises'
+import { balanceRegions } from '../src/lib/training'
+import { getSportStyle } from '../src/lib/workouts'
+import { goalNudge, ratingInfo } from '../src/lib/checkins'
 
 const at = (h: number) => new Date(2026, 9, 24, h, 30)
 
@@ -53,3 +57,16 @@ assert.equal(t.net, 1500)
 assert.equal(t.byAccount.car_buffer, 500)
 
 console.log('lists.check ok')
+
+// Step 4b lists (migration 0051): same order/values as the old constants.
+setOptionRows(listRows)
+assert.deepEqual(muscleGroups().length, 13)
+assert.deepEqual(balanceRegions().map((r) => [r.label, r.muscles.length]), [['Back', 2], ['Chest', 1], ['Shoulders', 1], ['Arms', 3], ['Legs', 4], ['Core', 2]])
+assert.deepEqual(trackedLifts().map((l) => l.exercise), ['Squat', 'Bench press', 'Deadlift', 'Military press (overhead press)'])
+assert.equal(trackedLifts()[3].label, 'Overhead press')
+assert.deepEqual(getSportStyle('Ride'), { label: 'Ride', icon: '🚴', color: '#e6b39f' }) // what the chart drew
+assert.deepEqual(getSportStyle('Kitesurf'), { label: 'Kitesurf', icon: '🏅', color: '#a09a8c' }) // unknown → neutral
+assert.deepEqual([ratingInfo('stuck').label, ratingInfo('stuck').color, ratingInfo('done').color], ['Stuck', '#a33327', null])
+assert.equal(goalNudge('steps'), 'A single longer walk most days covers it.')
+assert.equal(goalNudge('savings'), null)
+console.log('lists.check 4b ok')

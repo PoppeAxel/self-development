@@ -1,8 +1,39 @@
 import { useImperativeHandle, useState, type Ref } from 'react'
 import { supabase } from '../lib/supabase'
-import { MUSCLE_GROUPS } from '../lib/exercises'
+import { muscleGroups } from '../lib/exercises'
 import { lastTime } from '../lib/training'
 import { ConfirmDialog } from './ConfirmDialog'
+import { EditDots } from './ItemMenu'
+import { OptionSheet, type RefMover } from './OptionSheet'
+import { useEdit } from '../contexts/EditContext'
+import { live as liveRows } from '../lib/optionStore'
+import type { OptionRow } from '../lib/editable'
+
+// An exercise stores its muscle groups' names as text (primary and secondary), so deleting one
+// moves those exercises (ids prefixed by column) and renaming one rewrites them.
+const MUSCLE_REFS: RefMover = {
+  noun: (n) => `${n} exercise ${n === 1 ? 'tag' : 'tags'}`,
+  valueOf: (r) => r.label,
+  noneLabel: 'Uncategorized',
+  find: async (label) => {
+    const [{ data: p }, { data: s }] = await Promise.all([
+      supabase.from('exercises').select('id').eq('primary_muscle', label).throwOnError(),
+      supabase.from('exercises').select('id').eq('secondary_muscle', label).throwOnError(),
+    ])
+    return [...(p ?? []).map((r) => `p:${r.id}`), ...(s ?? []).map((r) => `s:${r.id}`)]
+  },
+  move: async (ids, to) => {
+    const of = (prefix: string) => ids.filter((i) => i.startsWith(prefix)).map((i) => i.slice(2))
+    if (of('p:').length) await supabase.from('exercises').update({ primary_muscle: to }).in('id', of('p:')).throwOnError()
+    if (of('s:').length) await supabase.from('exercises').update({ secondary_muscle: to }).in('id', of('s:')).throwOnError()
+  },
+}
+const renameMuscle = async (from: string, to: string) => {
+  await Promise.all([
+    supabase.from('exercises').update({ primary_muscle: to }).eq('primary_muscle', from).throwOnError(),
+    supabase.from('exercises').update({ secondary_muscle: to }).eq('secondary_muscle', from).throwOnError(),
+  ])
+}
 import type { Exercise, GymProgram, GymProgramExercise, GymSession, GymSessionSet } from '../lib/types'
 
 // Program CRUD, the program builder, the exercise library and the edit-a-past-session
@@ -122,6 +153,9 @@ export function GymPrograms({
 }) {
   const [confirmDeleteProgram, setConfirmDeleteProgram] = useState<GymProgram | null>(null)
   const [programsListOpen, setProgramsListOpen] = useState(false)
+  // Muscle groups are edited in place in the exercise library (✎ edit mode).
+  const { editing } = useEdit()
+  const [muscleSheet, setMuscleSheet] = useState<OptionRow | 'new' | null>(null)
 
   const [builderOpen, setBuilderOpen] = useState(false)
   const [editingProgram, setEditingProgram] = useState<GymProgram | null>(null)
@@ -535,7 +569,7 @@ export function GymPrograms({
                       className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-2 py-2.5 text-sm text-ink outline-none focus:border-pine"
                     >
                       <option value="">Primary muscle</option>
-                      {MUSCLE_GROUPS.map((m) => (
+                      {muscleGroups().map((m) => (
                         <option key={m} value={m}>
                           {m}
                         </option>
@@ -549,7 +583,7 @@ export function GymPrograms({
                       className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-2 py-2.5 text-sm text-ink outline-none focus:border-pine"
                     >
                       <option value="">Secondary (optional)</option>
-                      {MUSCLE_GROUPS.map((m) => (
+                      {muscleGroups().map((m) => (
                         <option key={m} value={m}>
                           {m}
                         </option>
@@ -827,12 +861,22 @@ export function GymPrograms({
               + New exercise
             </button>
             {exercises.length === 0 && <p className="text-sm text-ink-disabled">No exercises yet — add one above.</p>}
-            {[...MUSCLE_GROUPS, null].map((muscle) => {
+            {editing && (
+              <button onClick={() => setMuscleSheet('new')} className="self-start text-[12px] font-medium text-pine">
+                + New muscle group
+              </button>
+            )}
+            {[...muscleGroups(), null].map((muscle) => {
               const group = exercises.filter((ex) => (ex.primary_muscle ?? null) === muscle).sort((a, b) => a.name.localeCompare(b.name))
-              if (group.length === 0) return null
+              // In edit mode every muscle group shows (empty ones too) so it can be edited.
+              if (group.length === 0 && !(editing && muscle)) return null
+              const row = muscle ? liveRows('muscle_group').find((r) => r.label === muscle) : undefined
               return (
                 <div key={muscle ?? 'uncategorized'}>
-                  <h3 className="mb-1 mt-2 text-xs font-semibold uppercase text-ink-disabled">{muscle ?? 'Uncategorized'}</h3>
+                  <h3 className="mb-1 mt-2 flex items-center gap-1.5 text-xs font-semibold uppercase text-ink-disabled">
+                    {muscle ?? 'Uncategorized'}
+                    {editing && row && <EditDots onClick={() => setMuscleSheet(row)} label={muscle ?? ''} />}
+                  </h3>
                   <div className="flex flex-col gap-2">
                     {group.map((ex) => (
                       <div key={ex.id} className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
@@ -851,6 +895,36 @@ export function GymPrograms({
             })}
           </div>
 
+          {muscleSheet && (
+            <OptionSheet
+              kind="muscle_group"
+              row={muscleSheet === 'new' ? null : muscleSheet}
+              noun="muscle group"
+              noIcon
+              newMeta={{ region: liveRows('balance_region')[0]?.key ?? null }}
+              refs={MUSCLE_REFS}
+              onRenamed={renameMuscle}
+              onChanged={onChanged}
+              onClose={() => setMuscleSheet(null)}
+              fields={(meta, set) => (
+                <>
+                  <p className="text-[11px] font-semibold tracking-[0.06em] text-ink-3">COUNTS TOWARD (MUSCLE BALANCE)</p>
+                  <div className="flex flex-wrap gap-[7px]">
+                    {[...liveRows('balance_region').map((r) => ({ key: r.key as string | null, label: r.label })), { key: null, label: 'No region' }].map((r) => (
+                      <button
+                        key={r.key ?? '__none'}
+                        type="button"
+                        onClick={() => set({ region: r.key })}
+                        className={`rounded-full px-3 py-1.5 text-xs ${(meta.region ?? null) === r.key ? 'bg-pine font-semibold text-white' : 'border border-line bg-surface font-medium text-ink-2'}`}
+                      >
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            />
+          )}
           {exerciseFormOpen && (
             <div className={`${SHEET} z-[65]`}>
               <div className="flex items-center justify-between px-4 pt-4">
@@ -869,7 +943,7 @@ export function GymPrograms({
                 />
                 <select value={exerciseFormPrimary} onChange={(e) => setExerciseFormPrimary(e.target.value)} className={INPUT}>
                   <option value="">Primary muscle</option>
-                  {MUSCLE_GROUPS.map((m) => (
+                  {muscleGroups().map((m) => (
                     <option key={m} value={m}>
                       {m}
                     </option>
@@ -877,7 +951,7 @@ export function GymPrograms({
                 </select>
                 <select value={exerciseFormSecondary} onChange={(e) => setExerciseFormSecondary(e.target.value)} className={INPUT}>
                   <option value="">Secondary muscle (optional)</option>
-                  {MUSCLE_GROUPS.map((m) => (
+                  {muscleGroups().map((m) => (
                     <option key={m} value={m}>
                       {m}
                     </option>

@@ -92,7 +92,7 @@ export function ItemSheet({
         </div>
         {children}
         {/* No actions when creating a new item — only its fields. */}
-        {(onDuplicate || onDelete) && (
+        {(onDuplicate || onDelete || onMoveUp || onMoveDown) && (
         <div className="mt-4 flex gap-2 border-t border-line pt-4">
           {onDuplicate && (
             <button type="button" onClick={onDuplicate} className={action}>

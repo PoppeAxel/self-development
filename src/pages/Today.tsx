@@ -29,6 +29,11 @@ import { MorningCheckIn } from '../components/MorningCheckIn'
 import { DailyCheckin } from '../components/DailyCheckin'
 import { checkinDateISO } from '../lib/dailyCheckin'
 import { WEEK_ORDER, habitHistory, isScheduledOn, repeatLabel } from '../lib/planner'
+import { findOption, live } from '../lib/optionStore'
+import type { OptionRow } from '../lib/editable'
+import { useEdit } from '../contexts/EditContext'
+import { EditDots, Pressable } from '../components/ItemMenu'
+import { OptionSheet } from '../components/OptionSheet'
 import type { Category, DailyTask, Goal, Reminder, RecipeIngredient } from '../lib/types'
 
 // A task whose auto_metric is this sentinel auto-completes off today's Food-log total
@@ -40,13 +45,24 @@ const CALORIE_BUDGET_METRIC = 'calorie_budget'
 const iso = (d: Date) => format(d, 'yyyy-MM-dd')
 const shiftISO = (date: string, days: number) => iso(addDays(new Date(date + 'T00:00:00'), days))
 const WEEKDAYS = [1, 2, 3, 4, 5]
-type QuickWhen = 'today' | 'tomorrow' | 'daily' | 'weekdays'
-const QUICK_WHEN: { id: QuickWhen; label: string }[] = [
-  { id: 'today', label: 'Today' },
-  { id: 'tomorrow', label: 'Tomorrow' },
-  { id: 'daily', label: 'Every day' },
-  { id: 'weekdays', label: 'Weekdays' },
-]
+// The quick-add bar's "when" chips: `options` rows (kind 'quick_when', migration 0051), edited in
+// place on the chips. Each is a one-time to-do `offset` days after the day shown, or a habit
+// repeating on `days` (0 = Sunday; null = every day).
+interface QuickWhen {
+  key: string
+  label: string
+  repeat: boolean
+  offset: number
+  days: number[] | null
+}
+const quickWhens = (): QuickWhen[] =>
+  live('quick_when').map((r) => ({
+    key: r.key,
+    label: r.label,
+    repeat: r.meta.repeat === true,
+    offset: Number(r.meta.offset ?? 0),
+    days: Array.isArray(r.meta.days) ? (r.meta.days as number[]) : null,
+  }))
 
 export function Today() {
   // Daily check-in: red until tonight's row exists, green after. The 22:00 push opens
@@ -70,7 +86,11 @@ export function Today() {
   // Completion dates per task over the last nine weeks — habit dots and the week strip.
   const [history, setHistory] = useState<Map<string, Set<string>>>(new Map())
   const [quickTitle, setQuickTitle] = useState('')
-  const [quickWhen, setQuickWhen] = useState<QuickWhen>('today')
+  const [quickWhen, setQuickWhen] = useState<string>(() => quickWhens()[0]?.key ?? '')
+  // The chip picked, or the first one if it was deleted meanwhile.
+  const when: QuickWhen = quickWhens().find((w) => w.key === quickWhen) ?? quickWhens()[0] ?? { key: '', label: '', repeat: false, offset: 0, days: null }
+  const { editing } = useEdit()
+  const [whenSheet, setWhenSheet] = useState<OptionRow | 'new' | null>(null)
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set())
   const [categories, setCategories] = useState<Category[]>([])
   const { openGoalDetail } = useNav()
@@ -315,9 +335,9 @@ export function Today() {
   function openAddForm() {
     resetForm()
     setNewTitle(quickTitle.trim())
-    setNewRecurring(quickWhen === 'daily' || quickWhen === 'weekdays')
-    setNewRepeatDays(quickWhen === 'weekdays' ? WEEKDAYS : null)
-    setNewScheduledDate(quickWhen === 'tomorrow' ? shiftISO(viewDate, 1) : viewDate)
+    setNewRecurring(when.repeat)
+    setNewRepeatDays(when.repeat ? when.days : null)
+    setNewScheduledDate(shiftISO(viewDate, when.repeat ? 0 : when.offset))
     setAddFormOpen(true)
   }
 
@@ -334,9 +354,9 @@ export function Today() {
     await supabase.from('daily_tasks').insert({
       title,
       user_id: user.id,
-      recurring: quickWhen === 'daily' || quickWhen === 'weekdays',
-      repeat_days: quickWhen === 'weekdays' ? WEEKDAYS : null,
-      scheduled_date: quickWhen === 'tomorrow' ? shiftISO(viewDate, 1) : viewDate,
+      recurring: when.repeat,
+      repeat_days: when.repeat ? when.days : null,
+      scheduled_date: shiftISO(viewDate, when.repeat ? 0 : when.offset),
     })
     load()
   }
@@ -812,7 +832,7 @@ export function Today() {
           <input
             value={quickTitle}
             onChange={(e) => setQuickTitle(e.target.value)}
-            placeholder={quickWhen === 'daily' || quickWhen === 'weekdays' ? 'New habit…' : 'Add a to-do…'}
+            placeholder={when.repeat ? 'New habit…' : 'Add a to-do…'}
             enterKeyHint="done"
             className="min-w-0 flex-1 bg-transparent px-1 text-[15px] text-ink placeholder-ink-disabled outline-none"
           />
@@ -826,23 +846,100 @@ export function Today() {
           </button>
         </div>
         <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1">
-          {QUICK_WHEN.map((w) => (
-            <button
-              key={w.id}
-              type="button"
-              onClick={() => setQuickWhen(w.id)}
-              className={`shrink-0 rounded-full px-3 py-1.5 text-xs transition ${
-                quickWhen === w.id ? 'bg-pine font-semibold text-white' : 'border border-line bg-page font-medium text-ink-2'
-              }`}
-            >
-              {w.id === 'today' && !isToday ? format(new Date(viewDate + 'T00:00:00'), 'EEE d') : w.label}
+          {quickWhens().map((w) => {
+            const editWhen = () => setWhenSheet(findOption('quick_when', w.key) ?? null)
+            return (
+              <span key={w.key} className="flex shrink-0 items-center gap-1">
+                <Pressable
+                  type="button"
+                  onLongPress={editWhen}
+                  onClick={() => setQuickWhen(w.key)}
+                  className={`rounded-full px-3 py-1.5 text-xs transition ${
+                    when.key === w.key ? 'bg-pine font-semibold text-white' : 'border border-line bg-page font-medium text-ink-2'
+                  }`}
+                >
+                  {/* "Today" reads as the day itself when another day is shown. */}
+                  {!w.repeat && w.offset === 0 && !isToday ? format(new Date(viewDate + 'T00:00:00'), 'EEE d') : w.label}
+                </Pressable>
+                {editing && <EditDots onClick={editWhen} label={w.label} />}
+              </span>
+            )
+          })}
+          {editing && (
+            <button type="button" onClick={() => setWhenSheet('new')} className="shrink-0 rounded-full border border-dashed border-line-strong px-3 py-1.5 text-xs font-medium text-pine">
+              + New
             </button>
-          ))}
+          )}
           <button type="button" onClick={openAddForm} className="shrink-0 rounded-full px-2.5 py-1.5 text-xs font-medium text-pine">
             More…
           </button>
         </div>
       </form>
+      {whenSheet && (
+        <OptionSheet
+          kind="quick_when"
+          row={whenSheet === 'new' ? null : whenSheet}
+          noun="quick choice"
+          noIcon
+          newMeta={{ repeat: false, offset: 0, days: null }}
+          onClose={() => setWhenSheet(null)}
+          fields={(meta, set) => {
+            const repeat = meta.repeat === true
+            const days = Array.isArray(meta.days) ? (meta.days as number[]) : null
+            return (
+              <>
+                <div className="grid grid-cols-2 gap-1.5 rounded-2xl bg-page p-1">
+                  {[false, true].map((r) => (
+                    <button
+                      key={String(r)}
+                      type="button"
+                      onClick={() => set({ repeat: r })}
+                      className={`rounded-xl py-2 text-xs ${repeat === r ? 'bg-surface font-semibold text-pine-dark shadow-card' : 'font-medium text-ink-3'}`}
+                    >
+                      {r ? 'Habit (repeats)' : 'To-do (once)'}
+                    </button>
+                  ))}
+                </div>
+                {repeat ? (
+                  <div className="flex gap-1">
+                    {WEEK_ORDER.map((d) => {
+                      const on = days == null || days.includes(d)
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => {
+                            const current = days ?? WEEK_ORDER
+                            const next = on ? current.filter((x) => x !== d) : [...current, d].sort()
+                            // All seven = every day (null), like the full form.
+                            set({ days: next.length === 7 ? null : next })
+                          }}
+                          className={`flex-1 rounded-xl py-1.5 text-xs font-medium ${on ? 'bg-cat-emerald-tint text-pine' : 'bg-track text-ink-disabled'}`}
+                        >
+                          {DAY_LABELS[d].charAt(0)}
+                        </button>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <label className="flex items-center gap-2 text-[13px] text-ink-2">
+                    On the day shown +
+                    <input
+                      type="number"
+                      min={0}
+                      max={365}
+                      value={String(meta.offset ?? 0)}
+                      onChange={(e) => set({ offset: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
+                      className="w-16 rounded-xl border border-line bg-page px-2 py-1.5 text-center text-sm font-semibold text-ink outline-none focus:border-pine"
+                    />
+                    days
+                  </label>
+                )}
+              </>
+            )
+          }}
+        />
+      )}
 
       {loading ? (
         <p className="text-sm text-ink-disabled">Loading…</p>

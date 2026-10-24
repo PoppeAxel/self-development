@@ -4,8 +4,8 @@ import { addDays, differenceInCalendarDays, format, getISOWeek, parseISO } from 
 import { supabase } from '../lib/supabase'
 import { todayISO, weekStartISO } from '../lib/dates'
 import { goalPace, sessionMetricValue } from '../lib/goals'
-import { TRACKED_LIFTS, liftTrendPerWeek, recentAverage } from '../lib/exercises'
-import { formatWorkoutDistance, formatWorkoutDuration, getSportStyle, isStrengthWorkout } from '../lib/workouts'
+import { trackedLifts, liftTrendPerWeek, recentAverage } from '../lib/exercises'
+import { formatWorkoutDistance, formatWorkoutDuration, getSportStyle, isStrengthWorkout, sportRow } from '../lib/workouts'
 import {
   autoLinks,
   formatPace,
@@ -25,6 +25,43 @@ import { Screen, HeroChip, HeroSegments } from './Screen'
 import { CLOSE_BTN, GymPrograms, INPUT, SHEET, type GymProgramsHandle } from './GymPrograms'
 import { LiveSession, newLiveState, savedLiveState, SectionLabel, type LiveState } from './LiveSession'
 import { ConfirmDialog } from './ConfirmDialog'
+import { EditDots } from './ItemMenu'
+import { OptionSheet, type RefMover } from './OptionSheet'
+import { useEdit } from '../contexts/EditContext'
+import { live as liveRows, setOptionRows } from '../lib/optionStore'
+import { patchOption } from '../lib/options'
+import type { OptionRow } from '../lib/editable'
+
+// A region's muscle groups (options rows naming it in meta.region) move with it when it's deleted.
+const REGION_REFS: RefMover = {
+  noun: (n) => `${n} muscle ${n === 1 ? 'group' : 'groups'}`,
+  valueOf: (r) => r.key,
+  noneLabel: 'No region',
+  find: async (key) => liveRows('muscle_group').filter((m) => m.meta.region === key).map((m) => m.id),
+  move: async (ids, to) => {
+    const rows = liveRows('muscle_group').filter((m) => ids.includes(m.id))
+    await Promise.all(rows.map((m) => patchOption(m.id, { meta: { ...m.meta, region: to } })))
+    const byId = new Set(ids)
+    setOptionRows((all) => all.map((m) => (byId.has(m.id) ? { ...m, meta: { ...m.meta, region: to } } : m)))
+  },
+}
+
+/** Edit mode only: the items of a list as chips with ⋯, plus a "+ New" chip. */
+function EditChips({ items, onEdit, onNew, newLabel }: { items: OptionRow[]; onEdit: (row: OptionRow) => void; onNew: () => void; newLabel: string }) {
+  return (
+    <div className="-mt-1 flex flex-wrap gap-[7px]">
+      {items.map((r) => (
+        <span key={r.id} className="flex items-center gap-1 rounded-full border border-line bg-surface py-1 pl-3 pr-1.5 text-xs font-medium text-ink-2">
+          {r.label}
+          <EditDots onClick={() => onEdit(r)} label={r.label} />
+        </span>
+      ))}
+      <button onClick={onNew} className="rounded-full border border-dashed border-line-strong px-3 py-1 text-xs font-medium text-pine">
+        {newLabel}
+      </button>
+    </div>
+  )
+}
 import type { Exercise, Goal, GymProgram, GymProgramExercise, GymSession, GymSessionSet, Workout } from '../lib/types'
 
 // The Training bottom tab: Cardio + Strength merged (design 1b). Took Finance's slot on
@@ -37,8 +74,8 @@ const FALLING = '#9c4a36'
 
 type SessionRow = GymSession & { gym_session_sets: GymSessionSet[] }
 
-const liftLabel = (name: string) => (name.startsWith('Military press') ? 'Overhead press' : name)
-const sportColor = (sport: string) => (sport === 'Run' ? CARDIO.run : sport.includes('Ride') ? CARDIO.light : getSportStyle(sport).color)
+// Each sport's own colour (sport_style rows, edited in place below the chart).
+const sportColor = (sport: string) => getSportStyle(sport).color
 // Run sits at the bottom of a stacked bar, rides above it, everything else on top.
 const sportRank = (sport: string) => (sport === 'Run' ? 0 : sport.includes('Ride') ? 1 : 2)
 
@@ -170,6 +207,9 @@ export function Training() {
   const [otherOpen, setOtherOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [liftOpen, setLiftOpen] = useState<string | null>(null)
+  // Tracked lifts, balance regions and sport styles are edited in place (✎ edit mode).
+  const { editing } = useEdit()
+  const [trainingSheet, setTrainingSheet] = useState<{ kind: 'tracked_lift' | 'balance_region' | 'sport_style'; row: OptionRow | null; sportType?: string } | null>(null)
   const [linkingSessionId, setLinkingSessionId] = useState<string | null>(null)
   const [confirmDeleteSession, setConfirmDeleteSession] = useState<GymSession | null>(null)
   const [confirmDeleteWorkout, setConfirmDeleteWorkout] = useState<Workout | null>(null)
@@ -255,7 +295,9 @@ export function Training() {
   }
 
   // --- lifts, balance, cardio
-  const lifts = TRACKED_LIFTS.map((name) => ({ name, points: liftPoints(name, sessions, sets) })).filter((l) => l.points.length > 0)
+  const lifts = trackedLifts()
+    .map(({ label, exercise }) => ({ name: exercise, label, points: liftPoints(exercise, sessions, sets) }))
+    .filter((l) => l.points.length > 0)
   const balance = regionBalance(sessions, sets, exerciseByName, today)
   const hasBalance = balance.some((r) => r.perWeek > 0)
 
@@ -427,11 +469,19 @@ export function Training() {
 
       {/* 3 · lifts */}
       <SectionLabel>LIFTS · e1RM, AVG LAST 3</SectionLabel>
+      {editing && (
+        <EditChips
+          items={liveRows('tracked_lift')}
+          onEdit={(row) => setTrainingSheet({ kind: 'tracked_lift', row })}
+          onNew={() => setTrainingSheet({ kind: 'tracked_lift', row: null })}
+          newLabel="+ Track a lift"
+        />
+      )}
       {lifts.length === 0 ? (
         <p className="-mt-1 text-sm text-ink-disabled">Log squat, bench, deadlift or overhead press with weight and reps to see them here.</p>
       ) : (
         <div className="-mt-1 flex flex-col rounded-[20px] border border-line bg-surface shadow-card">
-          {lifts.map(({ name, points }, i) => {
+          {lifts.map(({ name, label, points }, i) => {
             const trend = liftTrendPerWeek(points)
             const trendText =
               trend == null
@@ -448,7 +498,7 @@ export function Training() {
                 className={`flex items-center gap-3 px-3.5 py-3 text-left ${i > 0 ? 'border-t border-[#efe9dd]' : ''}`}
               >
                 <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate text-[13px] font-semibold text-ink">{liftLabel(name)}</span>
+                  <span className="truncate text-[13px] font-semibold text-ink">{label}</span>
                   <span className="text-[10px] font-semibold" style={{ color: trendText.color }}>
                     {trendText.text}
                   </span>
@@ -465,6 +515,14 @@ export function Training() {
       <SectionLabel>
         MUSCLE BALANCE · TARGET {SET_TARGET.min}–{SET_TARGET.max}
       </SectionLabel>
+      {editing && (
+        <EditChips
+          items={liveRows('balance_region')}
+          onEdit={(row) => setTrainingSheet({ kind: 'balance_region', row })}
+          onNew={() => setTrainingSheet({ kind: 'balance_region', row: null })}
+          newLabel="+ New region"
+        />
+      )}
       {!hasBalance ? (
         <p className="-mt-1 text-sm text-ink-disabled">Tag exercises with muscles in the program editor to see your balance.</p>
       ) : (
@@ -535,7 +593,10 @@ export function Training() {
                   return (
                     <div key={sport} className="flex items-center gap-2.5">
                       <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: sportColor(sport) }} />
-                      <span className="flex-1 text-[13px] font-medium text-ink">{getSportStyle(sport).label}</span>
+                      <span className="flex flex-1 items-center gap-1.5 text-[13px] font-medium text-ink">
+                        {getSportStyle(sport).label}
+                        {editing && <EditDots onClick={() => setTrainingSheet({ kind: 'sport_style', row: sportRow(sport) ?? null, sportType: sport })} label={getSportStyle(sport).label} />}
+                      </span>
                       <span className="text-[13px] font-semibold text-ink">{formatPace(trend)}</span>
                       <span
                         className="w-[84px] text-right text-[10px] font-semibold"
@@ -547,6 +608,11 @@ export function Training() {
                   )
                 })}
                 <span className="-mt-1 text-[10px] text-ink-muted">Pace trend over 8 weeks · per sport</span>
+                {editing && (
+                  <button onClick={() => setTrainingSheet({ kind: 'sport_style', row: null })} className="self-start text-[12px] font-medium text-pine">
+                    + Style another Strava sport
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -584,7 +650,7 @@ export function Training() {
       {liftForSheet && (
         <div className="fixed inset-0 z-50 flex flex-col bg-page safe-top safe-bottom">
           <div className="flex items-center justify-between px-4 pt-4">
-            <h2 className="text-lg font-bold text-ink">{liftLabel(liftForSheet.name)} · e1RM</h2>
+            <h2 className="text-lg font-bold text-ink">{liftForSheet.label} · e1RM</h2>
             <button onClick={() => setLiftOpen(null)} className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2">
               Close ✕
             </button>
@@ -771,6 +837,56 @@ export function Training() {
         }}
         onCancel={() => setConfirmDeleteWorkout(null)}
       />
+      {trainingSheet?.kind === 'tracked_lift' && (
+        <OptionSheet
+          kind="tracked_lift"
+          row={trainingSheet.row}
+          noun="lift"
+          noIcon
+          newMeta={{ exercise: '' }}
+          onClose={() => setTrainingSheet(null)}
+          fields={(meta, set) => (
+            <>
+              <input
+                value={String(meta.exercise ?? '')}
+                onChange={(e) => set({ exercise: e.target.value })}
+                list="tracked-lift-exercises"
+                placeholder="Exercise name as logged, e.g. Squat"
+                aria-label="Exercise"
+                className="rounded-[14px] border border-line bg-page px-3 py-2.5 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-pine"
+              />
+              <datalist id="tracked-lift-exercises">
+                {[...exerciseByName.values()].map((ex) => (
+                  <option key={ex.id} value={ex.name} />
+                ))}
+              </datalist>
+              <p className="text-[11px] text-ink-muted">Matched exactly (any case) against what's logged — the name above is just what's shown.</p>
+            </>
+          )}
+        />
+      )}
+      {trainingSheet?.kind === 'balance_region' && (
+        <OptionSheet kind="balance_region" row={trainingSheet.row} noun="region" noIcon refs={REGION_REFS} onClose={() => setTrainingSheet(null)} />
+      )}
+      {trainingSheet?.kind === 'sport_style' && (
+        <OptionSheet
+          kind="sport_style"
+          row={trainingSheet.row}
+          noun="sport"
+          color="hex"
+          newMeta={{ sport_type: trainingSheet.sportType ?? '' }}
+          onClose={() => setTrainingSheet(null)}
+          fields={(meta, set) => (
+            <input
+              value={String(meta.sport_type ?? '')}
+              onChange={(e) => set({ sport_type: e.target.value.trim() })}
+              placeholder="Strava sport type, e.g. Kayaking"
+              aria-label="Strava sport type"
+              className="rounded-[14px] border border-line bg-page px-3 py-2.5 font-mono text-[12px] text-ink outline-none placeholder:text-ink-faint focus:border-pine"
+            />
+          )}
+        />
+      )}
     </Screen>
   )
 }
