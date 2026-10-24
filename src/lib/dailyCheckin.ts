@@ -1,23 +1,53 @@
-// Daily check-in: six fixed 1–10 evening ratings + optional note (daily_checkins), opened
-// from the button at the top of Today. Not to be confused with checkins.ts (goal
-// check-ups). Pure — no supabase import. Every scale reads "10 = good" (stress is asked as
-// "calm") so the numbers compare across categories.
+// Daily check-in: 1–10 evening ratings + optional note (daily_checkins), opened from the button
+// at the top of Today. Not to be confused with checkins.ts (goal check-ups). Pure — no supabase
+// import. The questions are `options` rows (kind 'checkin_question', meta {question, low, high};
+// migration 0050), edited in place in the check-in; every scale reads "10 = good" (stress is
+// asked as "calm") so the numbers compare across questions.
 import { format, subDays } from 'date-fns'
+import { findOption, live } from './optionStore'
+import type { OptionRow } from './editable'
 import type { CategoryColor } from './types'
 
-export const CHECKIN_KEYS = ['mood', 'energy', 'calm', 'focus', 'connection', 'body'] as const
-export type CheckinKey = (typeof CHECKIN_KEYS)[number]
+/** A checkin_question key — also the key in daily_checkins.scores. */
+export type CheckinKey = string
 
-export const CHECKIN_INFO: Record<CheckinKey, { label: string; question: string; low: string; high: string }> = {
-  mood: { label: 'Mood', question: 'How good did today feel overall?', low: 'Awful', high: 'Great' },
-  energy: { label: 'Energy', question: 'How much energy did you have?', low: 'Drained', high: 'Energised' },
-  calm: { label: 'Calm', question: 'How calm did you feel?', low: 'Stressed', high: 'Calm' },
-  focus: { label: 'Focus', question: 'Did you spend your time on what mattered?', low: 'Scattered', high: 'Focused' },
-  connection: { label: 'Connection', question: 'How connected did you feel to others?', low: 'Lonely', high: 'Connected' },
-  body: { label: 'Body', question: 'How did your body feel?', low: 'Beat up', high: 'Fresh' },
+export interface QuestionInfo {
+  key: CheckinKey
+  label: string
+  question: string
+  low: string
+  high: string
 }
 
-export type DailyCheckin = { id: string; date: string; note: string | null } & Record<CheckinKey, number | null>
+const toQuestion = (r: OptionRow): QuestionInfo => ({
+  key: r.key,
+  label: r.label,
+  question: String(r.meta.question ?? ''),
+  low: String(r.meta.low || 'Low'),
+  high: String(r.meta.high || 'High'),
+})
+
+/** Live questions, in order. */
+export const checkinQuestions = (): QuestionInfo[] => live('checkin_question').map(toQuestion)
+
+/** Any question by key (archived too); an unknown key reads as itself. */
+export const questionInfo = (key: CheckinKey): QuestionInfo => {
+  const r = findOption('checkin_question', key)
+  return r ? toQuestion(r) : { key, label: key, question: '', low: 'Low', high: 'High' }
+}
+
+/** The diary's prompt chips, in order. */
+export const diaryPrompts = (): string[] => live('diary_prompt').map((r) => r.label)
+
+export type Scores = Record<CheckinKey, number | null>
+
+/** A daily_checkins row. Scores of a question deleted since stay in `scores` (history). */
+export interface DailyCheckin {
+  id: string
+  date: string
+  note: string | null
+  scores: Scores
+}
 
 // Checking in after midnight still belongs to the day you're reflecting on.
 export function checkinDateISO(now: Date = new Date()): string {
@@ -26,20 +56,20 @@ export function checkinDateISO(now: Date = new Date()): string {
 
 /** The word shown beside a slider value: the category's own words at the ends, plain ones between. */
 export function descriptor(key: CheckinKey, v: number): string {
-  if (v <= 2) return CHECKIN_INFO[key].low
+  if (v <= 2) return questionInfo(key).low
   if (v <= 4) return 'Below par'
   if (v <= 6) return 'Okay'
   if (v <= 8) return 'Good'
-  return CHECKIN_INFO[key].high
+  return questionInfo(key).high
 }
 
 /**
  * The read-back's one-line summary: each score against its average over the 7 days before.
  * `previous` should already be limited to those days. Null when there's nothing to compare.
  */
-export function headline(day: Record<CheckinKey, number | null>, previous: Record<CheckinKey, number | null>[]): string | null {
+export function headline(day: Scores, previous: Scores[]): string | null {
   const diffs: { key: CheckinKey; diff: number }[] = []
-  for (const key of CHECKIN_KEYS) {
+  for (const { key } of checkinQuestions()) {
     const v = day[key]
     const past = previous.map((p) => p[key]).filter((x): x is number => x != null)
     if (v == null || past.length === 0) continue
@@ -49,7 +79,7 @@ export function headline(day: Record<CheckinKey, number | null>, previous: Recor
   diffs.sort((a, b) => b.diff - a.diff)
   const best = diffs[0]
   const worst = diffs[diffs.length - 1]
-  const label = (k: CheckinKey) => CHECKIN_INFO[k].label
+  const label = (k: CheckinKey) => questionInfo(k).label
   if (diffs.every((d) => Math.abs(d.diff) < 0.5)) return 'A pretty typical day — right on your weekly average.'
   if (worst.diff > -0.5) return `${label(best.key)} stood out — above your week.`
   // Nothing was up, something was down — "X was up" would be false.

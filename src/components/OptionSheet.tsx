@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { CATEGORY_COLOR_LABELS, CATEGORY_STYLES } from '../lib/categories'
-import { copyName, liveOptions, moveItem, nameProblem, type OptionRow } from '../lib/editable'
+import { copyName, liveOptions, MAX_NAME, moveItem, nameProblem, type OptionRow } from '../lib/editable'
 import { insertOption, newKey, patchOption, writeOrder } from '../lib/options'
 import { getOptionRows, setOptionRows } from '../lib/optionStore'
 import { CATEGORY_COLORS } from '../lib/types'
@@ -45,7 +45,13 @@ export function OptionSheet({
   refs,
   onRenamed,
   onChanged,
+  noIcon,
+  maxLength = MAX_NAME,
 }: {
+  /** Items that never show an icon (diary prompts, check-in questions). */
+  noIcon?: boolean
+  /** Longest allowed name (prompts are sentences, not names). */
+  maxLength?: number
   kind: string
   /** null = create a new one. */
   row: OptionRow | null
@@ -92,7 +98,7 @@ export function OptionSheet({
 
   const save = () =>
     run(async () => {
-      const problem = nameProblem(label, items.filter((r) => r.id !== row?.id).map((r) => r.label))
+      const problem = nameProblem(label, items.filter((r) => r.id !== row?.id).map((r) => r.label), maxLength)
       if (problem) return setError(problem)
       // meta.tint is a fixed companion of the colour (seeded ingredient categories): a new colour
       // drops it so the tint is mixed from the new colour instead of staying the old hue.
@@ -201,11 +207,11 @@ export function OptionSheet({
         ) : (
           <div className="flex flex-col gap-3">
             <div className="flex gap-2">
-              <input value={icon} onChange={(e) => setIcon(e.target.value)} maxLength={4} placeholder="🏷" aria-label="Icon" className={`${FIELD} w-14 text-center`} />
+              {!noIcon && <input value={icon} onChange={(e) => setIcon(e.target.value)} maxLength={4} placeholder="🏷" aria-label="Icon" className={`${FIELD} w-14 text-center`} />}
               <input
                 autoFocus={!row}
                 value={label}
-                maxLength={30}
+                maxLength={maxLength}
                 onChange={(e) => {
                   setLabel(e.target.value)
                   setError(null)

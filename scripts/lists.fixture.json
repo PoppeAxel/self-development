@@ -21,5 +21,14 @@
   {"kind":"savings_account","key":"car_buffer","label":"Car buffer","icon":"🚗","color":"#4f7f8c","position":1,"meta":{"buffer":true},"system":false},
   {"kind":"savings_account","key":"travel_buffer","label":"Travel buffer","icon":"✈️","color":"#6a8fb0","position":2,"meta":{"buffer":true},"system":false},
   {"kind":"savings_account","key":"investments","label":"ETF & stocks","icon":"📈","color":"#a8842f","position":3,"meta":{"buffer":false},"system":true},
-  {"kind":"savings_account","key":"mortgage","label":"House loan paid","icon":"🏠","color":"#46608f","position":4,"meta":{"buffer":false},"system":true}
+  {"kind":"savings_account","key":"mortgage","label":"House loan paid","icon":"🏠","color":"#46608f","position":4,"meta":{"buffer":false},"system":true},
+  {"kind":"checkin_question","key":"mood","label":"Mood","icon":null,"color":null,"position":0,"meta":{"question":"How good did today feel overall?","low":"Awful","high":"Great"},"system":false},
+  {"kind":"checkin_question","key":"energy","label":"Energy","icon":null,"color":null,"position":1,"meta":{"question":"How much energy did you have?","low":"Drained","high":"Energised"},"system":false},
+  {"kind":"checkin_question","key":"calm","label":"Calm","icon":null,"color":null,"position":2,"meta":{"question":"How calm did you feel?","low":"Stressed","high":"Calm"},"system":false},
+  {"kind":"checkin_question","key":"focus","label":"Focus","icon":null,"color":null,"position":3,"meta":{"question":"Did you spend your time on what mattered?","low":"Scattered","high":"Focused"},"system":false},
+  {"kind":"checkin_question","key":"connection","label":"Connection","icon":null,"color":null,"position":4,"meta":{"question":"How connected did you feel to others?","low":"Lonely","high":"Connected"},"system":false},
+  {"kind":"checkin_question","key":"body","label":"Body","icon":null,"color":null,"position":5,"meta":{"question":"How did your body feel?","low":"Beat up","high":"Fresh"},"system":false},
+  {"kind":"diary_prompt","key":"best","label":"Best part of today","icon":null,"color":null,"position":0,"meta":{},"system":false},
+  {"kind":"diary_prompt","key":"drained","label":"What drained me","icon":null,"color":null,"position":1,"meta":{},"system":false},
+  {"kind":"diary_prompt","key":"tomorrow","label":"Tomorrow I want to","icon":null,"color":null,"position":2,"meta":{},"system":false}
 ]

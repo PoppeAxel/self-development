@@ -3,17 +3,23 @@ import { format, subDays } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { CATEGORY_STYLES } from '../lib/categories'
 import {
-  CHECKIN_INFO,
-  CHECKIN_KEYS,
+  checkinQuestions,
   descriptor,
+  diaryPrompts,
   headline,
   MOMENT_COLOR,
   momentKey,
   type CheckinKey,
   type DailyCheckin as Checkin,
   type Moment,
+  type Scores,
 } from '../lib/dailyCheckin'
 import { loadDayMoments } from '../lib/dayMoments'
+import { getOptionRows } from '../lib/optionStore'
+import type { OptionRow } from '../lib/editable'
+import { useEdit } from '../contexts/EditContext'
+import { EditDots, Pressable } from './ItemMenu'
+import { OptionSheet } from './OptionSheet'
 
 // The evening check-in, full screen over Today (design_handoff_daily_checkin_diary):
 //   grade    — all six ratings on one screen as drag sliders
@@ -24,14 +30,23 @@ import { loadDayMoments } from '../lib/dayMoments'
 // from grade/diary discards; nothing is written until "Save day".
 
 type Mode = 'loading' | 'grade' | 'diary' | 'read'
-type Scores = Record<CheckinKey, number>
-const START: Scores = { mood: 5, energy: 5, calm: 5, focus: 5, connection: 5, body: 5 }
-const PROMPTS = ['Best part of today', 'What drained me', 'Tomorrow I want to']
 const LABEL = 'text-[11px] font-semibold tracking-[0.1em] text-ink-3'
+/** Where an untouched slider sits. */
+const MIDDLE = 5
+
+// The questions and prompts are edited right here (✎ in the header, or a long-press). Deleting a
+// question needs no "move": past days keep its score in `scores`, it just stops being asked.
+type Sheet = { kind: 'checkin_question' | 'diary_prompt'; row: OptionRow | null }
 
 export function DailyCheckin({ date, onClose, onSaved }: { date: string; onClose: () => void; onSaved: () => void }) {
   const [mode, setMode] = useState<Mode>('loading')
-  const [scores, setScores] = useState<Scores>(START)
+  const [scores, setScores] = useState<Record<CheckinKey, number>>({})
+  // The saved day's scores as loaded — kept so a question deleted since doesn't lose its value on re-save.
+  const [savedScores, setSavedScores] = useState<Scores>({})
+  const { editing, toggleEditing } = useEdit()
+  const [sheet, setSheet] = useState<Sheet | null>(null)
+  const questions = checkinQuestions()
+  const rowOf = (kind: Sheet['kind'], match: (r: OptionRow) => boolean) => getOptionRows().find((r) => r.kind === kind && !r.archived_at && match(r)) ?? null
   // Untouched sliders save as null — a 5 that was never considered shouldn't drag averages.
   const [touched, setTouched] = useState<Partial<Record<CheckinKey, boolean>>>({})
   const [diary, setDiary] = useState('')
@@ -59,8 +74,10 @@ export function DailyCheckin({ date, onClose, onSaved }: { date: string; onClose
     setPrevious((prev ?? []) as Checkin[])
     const saved = row as Checkin | null
     if (saved) {
-      setScores(Object.fromEntries(CHECKIN_KEYS.map((k) => [k, saved[k] ?? 5])) as Scores)
-      setTouched(Object.fromEntries(CHECKIN_KEYS.map((k) => [k, saved[k] != null])))
+      const s = saved.scores ?? {}
+      setSavedScores(s)
+      setScores(Object.fromEntries(Object.entries(s).filter(([, v]) => v != null)) as Record<CheckinKey, number>)
+      setTouched(Object.fromEntries(Object.entries(s).map(([k, v]) => [k, v != null])))
       setDiary(saved.note ?? '')
     }
     setMode(saved ? 'read' : 'grade')
@@ -70,7 +87,7 @@ export function DailyCheckin({ date, onClose, onSaved }: { date: string; onClose
     load()
   }, [date])
 
-  const finalScores = Object.fromEntries(CHECKIN_KEYS.map((k) => [k, touched[k] ? scores[k] : null])) as Record<CheckinKey, number | null>
+  const finalScores: Scores = { ...savedScores, ...Object.fromEntries(questions.map((q) => [q.key, touched[q.key] ? (scores[q.key] ?? MIDDLE) : null])) }
 
   async function save() {
     if (saving) return
@@ -82,7 +99,9 @@ export function DailyCheckin({ date, onClose, onSaved }: { date: string; onClose
     const filled = moments.filter((m) => notes[momentKey(m)]?.trim())
     const cleared = savedNoteKeys.filter((k) => !notes[k]?.trim())
     await Promise.all([
-      supabase.from('daily_checkins').upsert({ user_id: user.id, date, ...finalScores, note: diary.trim() || null }, { onConflict: 'user_id,date' }),
+      supabase
+        .from('daily_checkins')
+        .upsert({ user_id: user.id, date, scores: Object.fromEntries(Object.entries(finalScores).filter(([, v]) => v != null)), note: diary.trim() || null }, { onConflict: 'user_id,date' }),
       filled.length &&
         supabase.from('daily_checkin_moments').upsert(
           filled.map((m) => ({ user_id: user.id, date, source: m.source, source_id: m.sourceId, note: notes[momentKey(m)].trim() })),
@@ -102,6 +121,46 @@ export function DailyCheckin({ date, onClose, onSaved }: { date: string; onClose
   if (mode === 'loading') return <div className="fixed inset-0 z-50 bg-page" />
   const dateLabel = format(new Date(date + 'T00:00:00'), 'EEEE d MMMM')
 
+  const sheetView =
+    sheet?.kind === 'checkin_question' ? (
+      <OptionSheet
+        kind="checkin_question"
+        row={sheet.row}
+        noun="question"
+        noIcon
+        newMeta={{ question: '', low: '', high: '' }}
+        onClose={() => setSheet(null)}
+        fields={(meta, set) => (
+          <>
+            <input
+              value={String(meta.question ?? '')}
+              onChange={(e) => set({ question: e.target.value })}
+              maxLength={80}
+              placeholder="The question, e.g. How well did you sleep?"
+              aria-label="Question"
+              className="rounded-[14px] border border-line bg-page px-3 py-2.5 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-pine"
+            />
+            <div className="flex gap-2">
+              {(['low', 'high'] as const).map((end) => (
+                <input
+                  key={end}
+                  value={String(meta[end] ?? '')}
+                  onChange={(e) => set({ [end]: e.target.value })}
+                  maxLength={20}
+                  placeholder={end === 'low' ? 'Word at 1, e.g. Awful' : 'Word at 10, e.g. Great'}
+                  aria-label={end === 'low' ? 'Word at 1' : 'Word at 10'}
+                  className="min-w-0 flex-1 rounded-[14px] border border-line bg-page px-3 py-2.5 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-pine"
+                />
+              ))}
+            </div>
+            <p className="text-[11px] text-ink-muted">Ask it so 10 is the good end — that keeps the scores comparable.</p>
+          </>
+        )}
+      />
+    ) : sheet?.kind === 'diary_prompt' ? (
+      <OptionSheet kind="diary_prompt" row={sheet.row} noun="prompt" noIcon maxLength={60} onClose={() => setSheet(null)} />
+    ) : null
+
   // ---------------------------------------------------------------- 1. grade
   if (mode === 'grade') {
     return (
@@ -113,28 +172,44 @@ export function DailyCheckin({ date, onClose, onSaved }: { date: string; onClose
               <h1 className="truncate text-[22px] font-semibold">How was today?</h1>
               <p className="mt-0.5 text-xs font-medium text-white">{dateLabel} · drag to rate</p>
             </div>
+            <IconButton onClick={toggleEditing} label={editing ? 'Done editing' : 'Edit questions'} glyph="✎" />
             <span className="shrink-0 rounded-full bg-white/16 px-2.5 py-[5px] text-xs font-semibold">1 / 2</span>
           </div>
         </header>
         <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-5 pt-[18px] pb-2">
-          {CHECKIN_KEYS.map((k) => (
-            <div key={k} className="rounded-[20px] border border-line bg-surface px-4 pt-3.5 pb-2">
-              <div className="flex items-baseline gap-2">
-                <span className="text-sm font-semibold text-ink">{CHECKIN_INFO[k].label}</span>
-                <span className="flex-1 text-xs font-medium text-ink-muted">{descriptor(k, scores[k])}</span>
-                <span className={`text-xl font-semibold tabular-nums ${touched[k] ? 'text-pine' : 'text-ink-faint'}`}>{scores[k]}</span>
+          {questions.map((q) => {
+            const k = q.key
+            const value = scores[k] ?? MIDDLE
+            const edit = () => setSheet({ kind: 'checkin_question', row: rowOf('checkin_question', (r) => r.key === k) })
+            return (
+              <div key={k} className="rounded-[20px] border border-line bg-surface px-4 pt-3.5 pb-2">
+                <div className="flex items-baseline gap-2">
+                  <Pressable type="button" onClick={() => editing && edit()} onLongPress={edit} className="text-sm font-semibold text-ink">
+                    {q.label}
+                  </Pressable>
+                  {editing && <EditDots onClick={edit} label={q.label} />}
+                  <span className="flex-1 text-xs font-medium text-ink-muted">{descriptor(k, value)}</span>
+                  <span className={`text-xl font-semibold tabular-nums ${touched[k] ? 'text-pine' : 'text-ink-faint'}`}>{value}</span>
+                </div>
+                {editing && q.question && <p className="mt-0.5 text-[11px] text-ink-muted">{q.question}</p>}
+                <Slider
+                  label={q.label}
+                  value={value}
+                  onChange={(v) => {
+                    setScores((s) => ({ ...s, [k]: v }))
+                    setTouched((t) => ({ ...t, [k]: true }))
+                  }}
+                />
               </div>
-              <Slider
-                label={CHECKIN_INFO[k].label}
-                value={scores[k]}
-                onChange={(v) => {
-                  setScores((s) => ({ ...s, [k]: v }))
-                  setTouched((t) => ({ ...t, [k]: true }))
-                }}
-              />
-            </div>
-          ))}
+            )
+          })}
+          {editing && (
+            <button onClick={() => setSheet({ kind: 'checkin_question', row: null })} className="rounded-[20px] border border-dashed border-line-strong py-3 text-sm font-semibold text-pine">
+              + New question
+            </button>
+          )}
         </div>
+        {sheetView}
         <div className="shrink-0 px-5 pt-3 pb-10 safe-bottom">
           <button onClick={() => setMode('diary')} className="w-full rounded-[20px] bg-pine py-4 text-sm font-semibold text-white">
             Continue to journal
@@ -159,6 +234,13 @@ export function DailyCheckin({ date, onClose, onSaved }: { date: string; onClose
               <h1 className="text-[15px] font-semibold text-ink">Diary</h1>
               <p className="text-xs font-medium text-ink-muted">{dateLabel}</p>
             </div>
+            <button
+              onClick={toggleEditing}
+              aria-label={editing ? 'Done editing' : 'Edit prompts'}
+              className={`flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[14px] text-base ${editing ? 'bg-pine text-white' : 'bg-track text-ink'}`}
+            >
+              ✎
+            </button>
             <span className="shrink-0 rounded-full bg-track px-2.5 py-[5px] text-xs font-semibold text-ink-3">2 / 2</span>
           </div>
         </header>
@@ -213,15 +295,26 @@ export function DailyCheckin({ date, onClose, onSaved }: { date: string; onClose
           <section className="flex flex-col gap-2.5">
             <p className={LABEL}>DEAR DIARY</p>
             <div className="no-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5">
-              {PROMPTS.map((p) => (
-                <button
-                  key={p}
-                  onClick={() => setDiary((d) => (d.trim() ? `${d.trimEnd()}\n\n${p} — ` : `${p} — `))}
-                  className="shrink-0 rounded-full bg-cat-emerald-tint px-3 py-1.5 text-xs font-medium text-cat-emerald-ink"
-                >
-                  {p}
+              {diaryPrompts().map((p) => {
+                const edit = () => setSheet({ kind: 'diary_prompt', row: rowOf('diary_prompt', (r) => r.label === p) })
+                return (
+                  <span key={p} className="flex shrink-0 items-center gap-1">
+                    <Pressable
+                      onLongPress={edit}
+                      onClick={() => setDiary((d) => (d.trim() ? `${d.trimEnd()}\n\n${p} — ` : `${p} — `))}
+                      className="rounded-full bg-cat-emerald-tint px-3 py-1.5 text-xs font-medium text-cat-emerald-ink"
+                    >
+                      {p}
+                    </Pressable>
+                    {editing && <EditDots onClick={edit} label={p} />}
+                  </span>
+                )
+              })}
+              {editing && (
+                <button onClick={() => setSheet({ kind: 'diary_prompt', row: null })} className="shrink-0 rounded-full border border-dashed border-line-strong px-3 py-1.5 text-xs font-medium text-pine">
+                  + New prompt
                 </button>
-              ))}
+              )}
             </div>
             <textarea
               value={diary}
@@ -241,12 +334,13 @@ export function DailyCheckin({ date, onClose, onSaved }: { date: string; onClose
             Save day
           </button>
         </div>
+        {sheetView}
       </div>
     )
   }
 
   // ---------------------------------------------------------------- 3. read-back
-  const summary = headline(finalScores, previous)
+  const summary = headline(finalScores, previous.map((p) => p.scores ?? {}))
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-page">
       <header className="hero flex shrink-0 flex-col gap-3.5">
@@ -260,11 +354,11 @@ export function DailyCheckin({ date, onClose, onSaved }: { date: string; onClose
             Edit
           </button>
         </div>
-        <div className="grid grid-cols-6 gap-1.5">
-          {CHECKIN_KEYS.map((k) => (
-            <div key={k} className="flex flex-col items-center rounded-xl bg-white/14 py-1.5">
-              <span className="text-base font-semibold tabular-nums">{finalScores[k] ?? '–'}</span>
-              <span className="text-[9px] font-medium text-white/85">{CHECKIN_INFO[k].label}</span>
+        <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.max(questions.length, 1)}, minmax(0, 1fr))` }}>
+          {questions.map((q) => (
+            <div key={q.key} className="flex flex-col items-center rounded-xl bg-white/14 py-1.5">
+              <span className="text-base font-semibold tabular-nums">{finalScores[q.key] ?? '–'}</span>
+              <span className="w-full truncate px-0.5 text-center text-[9px] font-medium text-white/85">{q.label}</span>
             </div>
           ))}
         </div>

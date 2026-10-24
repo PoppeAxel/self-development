@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { supabase } from '../lib/supabase'
-import { CHECKIN_INFO, CHECKIN_KEYS, type DailyCheckin as Checkin } from '../lib/dailyCheckin'
+import { checkinQuestions, type DailyCheckin as Checkin } from '../lib/dailyCheckin'
 import { DailyCheckin } from './DailyCheckin'
 import { Screen } from './Screen'
 
@@ -47,11 +47,11 @@ export function DiaryList({ segments }: { segments: React.ReactNode }) {
                 <span className="text-sm font-semibold text-ink">{format(new Date(d.date + 'T00:00:00'), 'EEEE d MMMM')}</span>
                 <span className="text-ink-faint">›</span>
               </div>
-              <div className="grid grid-cols-6 gap-1 text-center">
-                {CHECKIN_KEYS.map((k) => (
+              <div className="grid gap-1 text-center" style={{ gridTemplateColumns: `repeat(${Math.max(checkinQuestions().length, 1)}, minmax(0, 1fr))` }}>
+                {checkinQuestions().map(({ key: k, label }) => (
                   <span key={k} className="flex flex-col">
-                    <span className="text-[15px] font-semibold tabular-nums text-ink">{d[k] ?? '–'}</span>
-                    <span className="text-[9px] font-medium text-ink-muted">{CHECKIN_INFO[k].label}</span>
+                    <span className="text-[15px] font-semibold tabular-nums text-ink">{d.scores?.[k] ?? '–'}</span>
+                    <span className="truncate text-[9px] font-medium text-ink-muted">{label}</span>
                   </span>
                 ))}
               </div>

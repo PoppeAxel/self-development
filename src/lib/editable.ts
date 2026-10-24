@@ -24,10 +24,10 @@ export const liveOptions = (rows: OptionRow[], kind: string) =>
   rows.filter((r) => r.kind === kind && !r.archived_at).sort((a, b) => a.position - b.position || a.label.localeCompare(b.label))
 
 /** Why a name can't be saved, or null if it can. `others` = every other item's name, archived ones too. */
-export function nameProblem(name: string, others: string[]): string | null {
+export function nameProblem(name: string, others: string[], max = MAX_NAME): string | null {
   const n = name.trim()
   if (!n) return 'Give it a name.'
-  if (n.length > MAX_NAME) return `Keep it under ${MAX_NAME} characters.`
+  if (n.length > max) return `Keep it under ${max} characters.`
   if (others.some((o) => o.trim().toLowerCase() === n.toLowerCase())) return 'That name is already used.'
   return null
 }
