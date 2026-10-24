@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { format } from 'date-fns'
 import { supabase } from '../lib/supabase'
-import { ACCOUNT_INFO, BUFFER_ACCOUNTS, SAVINGS_ACCOUNTS, formatKr, type BufferAccount } from '../lib/finance'
+import { accountInfo, bufferAccounts, formatKr, type SavingsAccount } from '../lib/finance'
 import { loadBudgetRules } from '../lib/bankSavings'
 import { loadOptions } from '../lib/options'
 import type { OptionRow } from '../lib/editable'
@@ -30,7 +30,7 @@ import {
   type SplitRules,
 } from '../lib/budget'
 import { useEdit } from '../contexts/EditContext'
-import { EditDots, useLongPress } from './ItemMenu'
+import { EditDots, Pressable } from './ItemMenu'
 import { HeadSheet, SpecialSheet, SubSheet } from './BudgetCategorySheets'
 
 // Economy → Budget / Plan: import Nordea's CSV export (no bank API), see income, saved, fixed
@@ -47,12 +47,6 @@ function FixedTag({ fixed }: { fixed: boolean }) {
       {fixed ? 'FIXED' : 'VAR'}
     </span>
   )
-}
-
-/** A row that opens its sheet on long-press, on top of its normal tap. */
-function Pressable({ onLongPress, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { onLongPress: () => void }) {
-  const press = useLongPress(onLongPress)
-  return <button {...props} {...press} className={`${props.className ?? ''} select-none [-webkit-touch-callout:none]`} />
 }
 
 type Row = Pick<BankTransaction, 'id' | 'description' | 'category'>
@@ -144,9 +138,9 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
     await supabase.from('user_settings').upsert({ user_id: user.id, budget_card_split: card })
   }
 
-  async function saveRule(key: BufferAccount | 'amortization', raw: string) {
+  async function saveRule(key: SavingsAccount | 'amortization', raw: string) {
     const value = Number(raw.replace(/\s/g, '').replace(',', '.') || 0)
-    const current = key === 'amortization' ? rules.amortizationPerMonth : rules.buffers[key]
+    const current = key === 'amortization' ? rules.amortizationPerMonth : (rules.buffers[key] ?? 0)
     if (!Number.isFinite(value) || value < 0 || value === current) return
     const next: SplitRules = key === 'amortization' ? { ...rules, amortizationPerMonth: value } : { ...rules, buffers: { ...rules.buffers, [key]: value } }
     setRules(next)
@@ -434,10 +428,10 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
         {b.saved !== 0 && (
           <div className="flex flex-col gap-1.5">
             <p className="mt-1 text-[11px] font-semibold tracking-[0.1em] text-ink-3">SAVED</p>
-            {SAVINGS_ACCOUNTS.filter((a) => b.savedByAccount[a] !== 0).map((a) => (
+            {Object.keys(b.savedByAccount).filter((a) => b.savedByAccount[a] !== 0).map((a) => (
               <div key={a} className="flex items-baseline justify-between text-[13px]">
                 <span className="text-ink-2">
-                  {ACCOUNT_INFO[a].icon} {ACCOUNT_INFO[a].label}
+                  {accountInfo(a).icon} {accountInfo(a).label}
                 </span>
                 <span className="font-semibold text-ink">{formatKr(b.savedByAccount[a])}</span>
               </div>
@@ -458,15 +452,15 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
         <button onClick={() => setEditingRules((v) => !v)} className="self-start text-[11px] font-medium text-ink-muted">
           {editingRules
             ? 'Done'
-            : `Split rules · buffers ${formatKr(BUFFER_ACCOUNTS.reduce((s, a) => s + rules.buffers[a], 0))} · card ${formatKr(cardTotal)} · amortization ${formatKr(rules.amortizationPerMonth)}`}
+            : `Split rules · buffers ${formatKr(bufferAccounts().reduce((s, a) => s + (rules.buffers[a] ?? 0), 0))} · card ${formatKr(cardTotal)} · amortization ${formatKr(rules.amortizationPerMonth)}`}
         </button>
         {editingRules && (
           <div className="flex flex-col gap-1.5">
             <p className="text-[11px] text-ink-muted">Each pay period, what goes into savings fills these buffers in order; the rest counts as 📈 ETF & stocks.</p>
-            {[...BUFFER_ACCOUNTS, 'amortization' as const].map((key) => (
+            {[...bufferAccounts(), 'amortization' as const].map((key) => (
               <label key={key} className="flex items-center gap-3 rounded-xl border border-line bg-page px-3 py-2">
                 <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink-2">
-                  {key === 'amortization' ? '🏠 Amortization (of each mortgage payment)' : `${ACCOUNT_INFO[key].icon} ${ACCOUNT_INFO[key].label}`}
+                  {key === 'amortization' ? '🏠 Amortization (of each mortgage payment)' : `${accountInfo(key).icon} ${accountInfo(key).label}`}
                 </span>
                 <input
                   defaultValue={(key === 'amortization' ? rules.amortizationPerMonth : rules.buffers[key]) || ''}

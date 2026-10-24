@@ -1,6 +1,7 @@
 // Asserts src/lib/finance.ts. Run:
 //   npx rolldown scripts/finance.check.ts --platform node -f esm -o <tmp>/fc.mjs && node <tmp>/fc.mjs
 import assert from 'node:assert/strict'
+import './listsFixture'
 import { periodTotals, potProgress } from '../src/lib/finance'
 
 const entries = [

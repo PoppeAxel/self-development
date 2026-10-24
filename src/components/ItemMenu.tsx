@@ -37,6 +37,12 @@ export function useLongPress(onLongPress: () => void) {
   }
 }
 
+/** A button that also opens its item's sheet on long-press. */
+export function Pressable({ onLongPress, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { onLongPress: () => void }) {
+  const press = useLongPress(onLongPress)
+  return <button {...props} {...press} className={`${props.className ?? ''} select-none [-webkit-touch-callout:none]`} />
+}
+
 /** The small ⋯ shown on an item in edit mode. */
 export function EditDots({ onClick, label }: { onClick: () => void; label: string }) {
   return (

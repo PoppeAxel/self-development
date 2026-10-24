@@ -1,6 +1,7 @@
 // Asserts src/lib/budget.ts. Run:
 //   npx rolldown scripts/budget.check.ts --platform node -f esm -o <tmp>/bc.mjs && node <tmp>/bc.mjs
 import assert from 'node:assert/strict'
+import './listsFixture'
 import {
   bankSavingsEntries,
   makeCatalog,

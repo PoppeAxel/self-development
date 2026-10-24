@@ -12,7 +12,7 @@ import { isAutoMetric, METRIC_INFO, type AutoMetric } from './metrics'
 import { isStrengthWorkout } from './workouts'
 import { CATEGORY_STYLES } from './categories'
 import type { MilestoneResult } from './checkins'
-import { isMediaMetric, MEDIA_INFO, MEDIA_METRIC_KIND, type MediaMetric } from './media'
+import { isMediaMetric, mediaInfo, mediaKindOf, type MediaMetric } from './media'
 import { loadBankSavings } from './bankSavings'
 import type { Category, Goal, PeriodType } from './types'
 
@@ -54,7 +54,7 @@ export function isGoalMetric(value: string | null): value is GoalMetric {
 export function goalMetricInfo(metric: GoalMetric): { label: string; icon: string; unit: string } {
   if (isFinanceMetric(metric)) return FINANCE_METRIC_INFO[metric]
   if (isMediaMetric(metric)) {
-    const info = MEDIA_INFO[MEDIA_METRIC_KIND[metric]]
+    const info = mediaInfo(mediaKindOf(metric))
     return { label: `${info.plural} finished (Media)`, icon: info.icon, unit: info.plural.toLowerCase() }
   }
   return isAutoMetric(metric) ? METRIC_INFO[metric] : SESSION_METRIC_INFO[metric]
@@ -65,7 +65,7 @@ async function mediaDates(metric: MediaMetric, start: string, end: string): Prom
   const { data } = await supabase
     .from('media_entries')
     .select('finished_on')
-    .eq('kind', MEDIA_METRIC_KIND[metric])
+    .eq('kind', mediaKindOf(metric))
     .gte('finished_on', start)
     .lte('finished_on', end)
   return (data ?? []).map((r) => r.finished_on as string)
@@ -142,7 +142,7 @@ export function goalStyle(goal: Pick<Goal, 'category_id'>, categories: Map<strin
 export function goalSource(goal: Goal): string {
   if (goal.kind === 'milestone') return goal.auto_metric === 'weight' ? '⚖️ Weight log' : goal.source_exercise ? '🏋️ Gym log' : 'by hand'
   if (isFinanceMetric(goal.auto_metric)) return '💰 Finance'
-  if (isMediaMetric(goal.auto_metric)) return `${MEDIA_INFO[MEDIA_METRIC_KIND[goal.auto_metric]].icon} Media`
+  if (isMediaMetric(goal.auto_metric)) return `${mediaInfo(mediaKindOf(goal.auto_metric)).icon} Media`
   if (isSessionMetric(goal.auto_metric)) return `${SESSION_METRIC_INFO[goal.auto_metric].icon} Strava`
   if (isAutoMetric(goal.auto_metric)) return `${METRIC_INFO[goal.auto_metric].icon} auto`
   return 'manual'

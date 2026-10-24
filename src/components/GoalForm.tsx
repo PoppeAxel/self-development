@@ -3,7 +3,7 @@ import { format } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { periodStartISO } from '../lib/dates'
 import { FINANCE_METRIC_INFO, goalMetricInfo, SESSION_METRIC_INFO, SESSION_METRICS } from '../lib/goals'
-import { MEDIA_METRICS } from '../lib/media'
+import { mediaMetrics } from '../lib/media'
 import { AUTO_METRICS, METRIC_INFO } from '../lib/metrics'
 import { formatGoalValue, milestoneState, parseGoalValue } from '../lib/checkins'
 import type { Category, GoalKind, PeriodType } from '../lib/types'
@@ -245,7 +245,7 @@ export function GoalForm({ tab, categories, setCategories, onClose, onCreated }:
                   <option value="savings">
                     {FINANCE_METRIC_INFO.savings.icon} {FINANCE_METRIC_INFO.savings.label}
                   </option>
-                  {MEDIA_METRICS.map((m) => (
+                  {mediaMetrics().map((m) => (
                     <option key={m} value={m}>
                       {goalMetricInfo(m).icon} {goalMetricInfo(m).label}
                     </option>

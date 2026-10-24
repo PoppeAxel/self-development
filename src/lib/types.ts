@@ -196,7 +196,8 @@ export interface Ingredient {
   created_at: string
 }
 
-export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack'
+/** A meal_type key (options table, edited in place on the Food tab). */
+export type MealType = string
 
 export interface Recipe {
   id: string

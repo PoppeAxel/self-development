@@ -1,35 +1,41 @@
 import { differenceInCalendarDays, format, parseISO } from 'date-fns'
 import { CATEGORY_STYLES } from './categories'
-import type { FoodLogEntry, Ingredient, MealType, Recipe, RecipeIngredient } from './types'
+import { findOption, getOptionRows, live } from './optionStore'
+import type { OptionRow } from './editable'
+import { CATEGORY_COLORS, type CategoryColor, type FoodLogEntry, type Ingredient, type MealType, type Recipe, type RecipeIngredient } from './types'
 
-export const MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack']
-
-export const MEAL_TYPE_INFO: Record<MealType, { label: string; icon: string }> = {
-  breakfast: { label: 'Breakfast', icon: '🌅' },
-  lunch: { label: 'Lunch', icon: '🥪' },
-  dinner: { label: 'Dinner', icon: '🍽' },
-  snack: { label: 'Snack', icon: '🍎' },
-}
+// Meal types and ingredient categories are `options` rows (kinds 'meal_type' and
+// 'ingredient_category', migration 0049), edited in place on the Food tab.
 
 /**
- * One identity per meal — accent, tint, ink and glyph — so the meal strip, the entries
- * card, the usuals chips and the recipe cards all colour the same meal the same way.
- * Before this there were two disagreeing maps in Food.tsx (MEAL_HUE gave dinner
- * terracotta, RECIPE_MEAL_ACCENT gave it slate blue); terracotta won.
- *
- * The hues are the category palette's, not new values: breakfast ochre, lunch pine,
- * dinner terracotta, snack plum.
+ * One identity per meal — label, glyph, and accent/tint/ink from its palette colour — so the
+ * meal strip, the entries card, the usuals chips and the recipe cards all colour the same meal
+ * the same way. `untilHour`: logging before that hour defaults to this meal.
  */
-export const MEAL_LOOK: Record<MealType, { accent: string; tint: string; ink: string; icon: string }> = {
-  breakfast: { ...pick('amber'), icon: MEAL_TYPE_INFO.breakfast.icon },
-  lunch: { ...pick('emerald'), icon: MEAL_TYPE_INFO.lunch.icon },
-  dinner: { ...pick('pink'), icon: MEAL_TYPE_INFO.dinner.icon },
-  snack: { ...pick('violet'), icon: MEAL_TYPE_INFO.snack.icon },
+export interface MealInfo {
+  key: MealType
+  label: string
+  icon: string
+  color: CategoryColor
+  accent: string
+  tint: string
+  ink: string
+  untilHour: number
 }
 
-function pick(color: keyof typeof CATEGORY_STYLES) {
+const toMeal = (r: OptionRow): MealInfo => {
+  const color = (CATEGORY_COLORS as readonly string[]).includes(r.color ?? '') ? (r.color as CategoryColor) : 'violet'
   const { accent, tint, ink } = CATEGORY_STYLES[color]
-  return { accent, tint, ink }
+  return { key: r.key, label: r.label, icon: r.icon ?? '🍽', color, accent, tint, ink, untilHour: Number(r.meta.until_hour ?? 24) }
+}
+
+/** Live meal keys, in order. */
+export const mealTypes = (): MealType[] => live('meal_type').map((r) => r.key)
+
+/** Any meal by key (archived too, so old entries keep their look); an unknown key reads as itself. */
+export const mealInfo = (key: MealType): MealInfo => {
+  const r = findOption('meal_type', key)
+  return r ? toMeal(r) : { ...CATEGORY_STYLES.violet, key, label: key, icon: '🍽', color: 'violet', untilHour: 24 }
 }
 
 /**
@@ -45,30 +51,19 @@ export function relativeDayLabel(date: string, reference: string): string {
   return format(parseISO(date), 'd MMM')
 }
 
-// Guess a reasonable default meal when logging food, based on time of day — just a
-// starting point in the picker, never enforced (always overridable).
-export function defaultMealTypeForNow(): MealType {
-  const hour = new Date().getHours()
-  if (hour < 10) return 'breakfast'
-  if (hour < 15) return 'lunch'
-  if (hour < 21) return 'dinner'
-  return 'snack'
+// Guess a reasonable default meal when logging food, based on time of day — just a starting
+// point in the picker, never enforced (always overridable): the first meal, in order, whose
+// "until" hour is still ahead; past all of them, the last meal.
+export function defaultMealTypeForNow(now: Date = new Date()): MealType {
+  const hour = now.getHours()
+  const meals = live('meal_type').map(toMeal)
+  return (meals.find((m) => hour < m.untilHour) ?? meals.at(-1))?.key ?? ''
 }
 
-// Suggested ingredient categories — quick-tap starting points in the ingredient form,
-// not an enforced enum (ingredients.category is free text, so a custom value works too).
-export const INGREDIENT_CATEGORIES = [
-  'Protein',
-  'Vegetable',
-  'Fruit',
-  'Dairy',
-  'Grains & Carbs',
-  'Fats & Oils',
-  'Sauces & Condiments',
-  'Spices & Seasoning',
-  'Sweets & Snacks',
-  'Beverages',
-] as const
+// Ingredient categories in order — quick-tap starting points in the ingredient form, not an
+// enforced enum (ingredients.category is free text, so a custom value works too). The text an
+// ingredient stores IS the category's label, so renaming one rewrites its ingredients.
+export const ingredientCategories = (): string[] => live('ingredient_category').map((r) => r.label)
 
 export interface Macros {
   kcal: number
@@ -423,38 +418,36 @@ export function logCounts(entries: FoodLogEntry[]): LogCounts {
 
 export const UNCATEGORIZED = 'Uncategorized'
 
-/**
- * How each ingredient category presents itself: a glyph, the tile tint behind it, and the
- * accent its rows carry. Keys match INGREDIENT_CATEGORIES; anything else (the category
- * field is free text) falls back to the neutral entry.
- */
-export const CATEGORY_LOOK: Record<string, { glyph: string; tint: string; accent: string }> = {
-  Protein: { glyph: '🥩', tint: '#f6ebe4', accent: '#a8563f' },
-  Vegetable: { glyph: '🥦', tint: '#e8efe8', accent: '#2f6b5a' },
-  Fruit: { glyph: '🍎', tint: '#f7efdf', accent: '#a8842f' },
-  Dairy: { glyph: '🥛', tint: '#e8edf4', accent: '#46608f' },
-  'Grains & Carbs': { glyph: '🍞', tint: '#f1ecf2', accent: '#6a4f7a' },
-  'Fats & Oils': { glyph: '🫗', tint: '#efe9dc', accent: '#8b8577' },
-  'Sauces & Condiments': { glyph: '🫙', tint: '#efe9dc', accent: '#8b8577' },
-  'Spices & Seasoning': { glyph: '🧂', tint: '#efe9dc', accent: '#8b8577' },
-  'Sweets & Snacks': { glyph: '🍫', tint: '#efe9dc', accent: '#8b8577' },
-  Beverages: { glyph: '🥤', tint: '#efe9dc', accent: '#8b8577' },
-  [UNCATEGORIZED]: { glyph: '🧂', tint: '#efe9dc', accent: '#8b8577' },
-}
-
+// The bucket for ingredients with no category, and the look of one typed by hand that isn't in
+// the list — neither is a row in `options`.
+const UNCATEGORIZED_LOOK = { glyph: '🧂', tint: '#efe9dc', accent: '#8b8577' }
 const CUSTOM_CATEGORY_LOOK = { glyph: '🏷', tint: '#efe9dc', accent: '#8b8577' }
 
-export function categoryLook(category: string) {
-  return CATEGORY_LOOK[category] ?? CUSTOM_CATEGORY_LOOK
+/** The ingredient_category row whose label is this text — a live one first, else an archived one. */
+export const categoryRow = (category: string) => {
+  const rows = getOptionRows().filter((r) => r.kind === 'ingredient_category' && r.label === category)
+  return rows.find((r) => !r.archived_at) ?? rows[0]
 }
 
 /**
- * Category keys in display order: the known list first, then custom ones A–Z, then
+ * How an ingredient category presents itself: a glyph, the tile tint behind it, and the accent
+ * its rows carry. A category with no tint of its own gets its accent mixed into the card colour.
+ */
+export function categoryLook(category: string) {
+  if (category === UNCATEGORIZED) return UNCATEGORIZED_LOOK
+  const r = categoryRow(category)
+  if (!r) return CUSTOM_CATEGORY_LOOK
+  const accent = r.color ?? CUSTOM_CATEGORY_LOOK.accent
+  return { glyph: r.icon ?? CUSTOM_CATEGORY_LOOK.glyph, accent, tint: typeof r.meta.tint === 'string' ? r.meta.tint : `color-mix(in srgb, ${accent} 14%, #fdfbf6)` }
+}
+
+/**
+ * Category keys in display order: the list's own order first, then custom ones A–Z, then
  * Uncategorized last — never hidden, since `category` is free text and drifts.
  */
 export function orderedCategoryKeys(present: Iterable<string>): string[] {
   const keys = new Set(present)
-  const known = INGREDIENT_CATEGORIES as readonly string[]
+  const known = ingredientCategories()
   const custom = [...keys].filter((k) => k !== UNCATEGORIZED && !known.includes(k)).sort((a, b) => a.localeCompare(b))
   return [...known, ...custom, UNCATEGORIZED].filter((k) => keys.has(k))
 }

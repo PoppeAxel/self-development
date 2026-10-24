@@ -10,6 +10,12 @@ export async function loadOptions(kinds: string[]): Promise<OptionRow[]> {
   return (data ?? []) as OptionRow[]
 }
 
+/** Every row of every kind — what the app loads at start into optionStore. */
+export async function loadAllOptions(): Promise<OptionRow[]> {
+  const { data } = await supabase.from('options').select('*').order('position').throwOnError()
+  return (data ?? []) as OptionRow[]
+}
+
 /** A new stable key. Keys are never shown and never change on rename. */
 export const newKey = (prefix: string) => `${prefix}_${crypto.randomUUID().slice(0, 8)}`
 

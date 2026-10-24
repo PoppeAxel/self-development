@@ -1,4 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
+import { getOptionRows, setOptionRows, subscribeOptions } from './lib/optionStore'
+import { loadAllOptions } from './lib/options'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { NavContext } from './contexts/NavContext'
 import { EditProvider } from './contexts/EditContext'
@@ -24,6 +26,19 @@ function Shell() {
   // tab, so tapping a tab always lands on that tab's own screen rather than a leftover
   // detail view.
   const [goalDetailId, setGoalDetailId] = useState<string | null>(null)
+  // The in-app editable lists (meal types, media kinds, savings accounts, …) — read through
+  // optionStore by the libs. Nothing renders until they're in, and any edit re-renders the tree.
+  useSyncExternalStore(subscribeOptions, getOptionRows)
+  const [optionsReady, setOptionsReady] = useState(false)
+  const [optionsError, setOptionsError] = useState<string | null>(null)
+  useEffect(() => {
+    loadAllOptions()
+      .then((rows) => {
+        setOptionRows(rows)
+        setOptionsReady(true)
+      })
+      .catch((e) => setOptionsError(e instanceof Error ? e.message : 'Could not load the app’s lists.'))
+  }, [])
 
   function setTab(next: Tab) {
     setGoalDetailId(null)
@@ -33,6 +48,10 @@ function Shell() {
   function openGoalDetail(goalId: string | null) {
     setGoalDetailId(goalId)
     if (goalId) setTabState('goals')
+  }
+
+  if (!optionsReady) {
+    return <div className="flex min-h-full items-center justify-center px-6 text-center text-ink-muted">{optionsError ?? 'Loading…'}</div>
   }
 
   // Each page owns its own scroll (see `Screen`), so the shell hands it the full screen;

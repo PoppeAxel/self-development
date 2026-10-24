@@ -2,7 +2,12 @@ import { useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { periodEndISO, periodStartISO, todayISO } from '../lib/dates'
-import { ACCOUNT_INFO, SAVINGS_ACCOUNTS, formatKr, periodTotals, type SavingsAccount, type SavingsEntry } from '../lib/finance'
+import { accountInfo, formatKr, periodTotals, savingsAccounts, type SavingsAccount, type SavingsEntry } from '../lib/finance'
+import { findOption } from '../lib/optionStore'
+import type { OptionRow } from '../lib/editable'
+import { useEdit } from '../contexts/EditContext'
+import { EditDots, useLongPress } from './ItemMenu'
+import { OptionSheet, type RefMover } from './OptionSheet'
 import { ChipRail, HeroSegments, Screen } from './Screen'
 import { ConfirmDialog } from './ConfirmDialog'
 import { Pots } from './Pots'
@@ -21,15 +26,42 @@ const PERIODS: { id: Exclude<PeriodType, 'week'>; label: string }[] = [
   { id: 'quarter', label: 'This quarter' },
   { id: 'year', label: 'This year' },
 ]
-const emptyAmounts = () => Object.fromEntries(SAVINGS_ACCOUNTS.map((a) => [a, ''])) as Record<SavingsAccount, string>
 const INPUT = 'min-w-0 flex-1 bg-transparent text-right text-sm font-semibold text-ink outline-none placeholder:font-medium placeholder:text-ink-faint'
+
+// An account's logged entries move with it when it's deleted (bank-derived rows follow the
+// Budget split rules instead, which only fill live accounts).
+const ACCOUNT_REFS: RefMover = {
+  noun: (n) => `${n} saved ${n === 1 ? 'entry' : 'entries'}`,
+  valueOf: (r) => r.key,
+  find: async (key) => ((await supabase.from('savings_entries').select('id').eq('account', key).throwOnError()).data ?? []).map((r) => r.id as string),
+  move: async (ids, to) => {
+    await supabase.from('savings_entries').update({ account: to }).in('id', ids).throwOnError()
+  },
+}
+
+/** An account name that opens its sheet on long-press (and, in edit mode, carries a ⋯). */
+function AccountLabel({ account, onEdit }: { account: SavingsAccount; onEdit: () => void }) {
+  const { editing } = useEdit()
+  const press = useLongPress(onEdit)
+  const info = accountInfo(account)
+  return (
+    <span className="flex min-w-0 select-none items-center gap-1.5 [-webkit-touch-callout:none]" {...press}>
+      <span className="text-base">{info.icon}</span>
+      <span className="truncate text-[13px] font-medium text-ink-2">{info.label}</span>
+      {editing && <EditDots onClick={onEdit} label={info.label} />}
+    </span>
+  )
+}
 
 export function Finance() {
   const [entries, setEntries] = useState<SavingsEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [mode, setMode] = useState<Mode>('deposit')
   const [date, setDate] = useState(todayISO())
-  const [amounts, setAmounts] = useState<Record<SavingsAccount, string>>(emptyAmounts)
+  const [amounts, setAmounts] = useState<Record<SavingsAccount, string>>({})
+  const { editing } = useEdit()
+  const [accountSheet, setAccountSheet] = useState<OptionRow | 'new' | null>(null)
+  const editAccount = (key: SavingsAccount) => setAccountSheet(findOption('savings_account', key) ?? null)
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
   const [period, setPeriod] = useState<Exclude<PeriodType, 'week'>>('month')
@@ -56,9 +88,11 @@ export function Finance() {
   }, [])
 
   // Paying off the loan can't be undone, so withdrawals only apply to buffer and investments.
-  const accounts = mode === 'deposit' ? SAVINGS_ACCOUNTS : SAVINGS_ACCOUNTS.filter((a) => a !== 'mortgage')
+  const accounts = savingsAccounts()
+    .map((a) => a.key)
+    .filter((a) => mode === 'deposit' || a !== 'mortgage')
   const parsed = accounts
-    .map((a) => ({ account: a, value: Number(amounts[a].replace(/\s/g, '').replace(',', '.')) }))
+    .map((a) => ({ account: a, value: Number((amounts[a] ?? '').replace(/\s/g, '').replace(',', '.')) }))
     .filter((r) => Number.isFinite(r.value) && r.value > 0)
 
   async function save(e: React.FormEvent) {
@@ -72,7 +106,7 @@ export function Finance() {
     await supabase.from('savings_entries').insert(
       parsed.map((r) => ({ user_id: user.id, date, account: r.account, amount: mode === 'withdraw' ? -r.value : r.value, note: note.trim() || null })),
     )
-    setAmounts(emptyAmounts())
+    setAmounts({})
     setNote('')
     setSaving(false)
     load()
@@ -149,10 +183,9 @@ export function Finance() {
         <div className="flex flex-col overflow-hidden rounded-2xl border border-line">
           {accounts.map((a, i) => (
             <label key={a} className={`flex items-center gap-3 px-3.5 py-2.5 ${i > 0 ? 'border-t border-line' : ''}`}>
-              <span className="text-base">{ACCOUNT_INFO[a].icon}</span>
-              <span className="shrink-0 text-[13px] font-medium text-ink-2">{ACCOUNT_INFO[a].label}</span>
+              <AccountLabel account={a} onEdit={() => editAccount(a)} />
               <input
-                value={amounts[a]}
+                value={amounts[a] ?? ''}
                 onChange={(e) => setAmounts((s) => ({ ...s, [a]: e.target.value }))}
                 inputMode="decimal"
                 placeholder="0"
@@ -161,6 +194,11 @@ export function Finance() {
               <span className="text-xs text-ink-muted">kr</span>
             </label>
           ))}
+          {editing && (
+            <button type="button" onClick={() => setAccountSheet('new')} className="border-t border-line px-3.5 py-2.5 text-left text-[13px] font-medium text-pine">
+              + New account
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <input
@@ -189,19 +227,17 @@ export function Finance() {
           <span className="text-xs font-semibold tracking-[0.06em] text-ink-3">NET SAVED</span>
           <span className={`text-xl font-semibold ${selected.net < 0 ? 'text-cat-rose-ink' : 'text-ink'}`}>{formatKr(selected.net)}</span>
         </div>
-        {SAVINGS_ACCOUNTS.map((a) => {
+        {Object.keys(selected.byAccount).map((a) => {
           const v = selected.byAccount[a]
-          const max = Math.max(...SAVINGS_ACCOUNTS.map((x) => Math.abs(selected.byAccount[x])), 1)
+          const max = Math.max(...Object.values(selected.byAccount).map((x) => Math.abs(x)), 1)
           return (
             <div key={a} className="flex flex-col gap-1">
-              <div className="flex items-baseline justify-between text-[13px]">
-                <span className="text-ink-2">
-                  {ACCOUNT_INFO[a].icon} {ACCOUNT_INFO[a].label}
-                </span>
+              <div className="flex items-baseline justify-between gap-2 text-[13px]">
+                <AccountLabel account={a} onEdit={() => editAccount(a)} />
                 <span className={`font-semibold ${v < 0 ? 'text-cat-rose-ink' : 'text-ink'}`}>{formatKr(v)}</span>
               </div>
               <span className="block h-1.5 overflow-hidden rounded-full bg-[#ece5d7]">
-                <span className="block h-full rounded-full" style={{ width: `${(Math.max(v, 0) / max) * 100}%`, background: ACCOUNT_INFO[a].color }} />
+                <span className="block h-full rounded-full" style={{ width: `${(Math.max(v, 0) / max) * 100}%`, background: accountInfo(a).color }} />
               </span>
             </div>
           )
@@ -219,9 +255,9 @@ export function Finance() {
         <div className="-mt-1 overflow-hidden rounded-[20px] border border-line bg-surface">
           {recent.map((e, i) => (
             <div key={e.id} className={`flex items-center gap-3 px-3.5 py-2.5 ${i > 0 ? 'border-t border-line' : ''}`}>
-              <span className="text-base">{ACCOUNT_INFO[e.account].icon}</span>
+              <span className="text-base">{accountInfo(e.account).icon}</span>
               <span className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-[13px] font-medium text-ink">{e.note || ACCOUNT_INFO[e.account].label}</span>
+                <span className="truncate text-[13px] font-medium text-ink">{e.note || accountInfo(e.account).label}</span>
                 <span className="text-[11px] text-ink-muted">{format(new Date(e.date + 'T00:00:00'), 'd MMM yyyy')}</span>
               </span>
               <span className={`shrink-0 text-[13px] font-semibold ${e.amount < 0 ? 'text-cat-rose-ink' : 'text-ink'}`}>
@@ -253,11 +289,31 @@ export function Finance() {
       <ConfirmDialog
         open={confirmDelete != null}
         title="Delete this entry?"
-        message={confirmDelete ? `${ACCOUNT_INFO[confirmDelete.account].label} · ${formatKr(confirmDelete.amount)} on ${confirmDelete.date}` : ''}
+        message={confirmDelete ? `${accountInfo(confirmDelete.account).label} · ${formatKr(confirmDelete.amount)} on ${confirmDelete.date}` : ''}
         confirmLabel="Delete"
         onConfirm={() => confirmDelete && remove(confirmDelete)}
         onCancel={() => setConfirmDelete(null)}
       />
+      {accountSheet && (
+        <OptionSheet
+          kind="savings_account"
+          row={accountSheet === 'new' ? null : accountSheet}
+          noun="account"
+          color="hex"
+          newMeta={{ buffer: false }}
+          refs={ACCOUNT_REFS}
+          onChanged={load}
+          onClose={() => setAccountSheet(null)}
+          fields={(meta, set) =>
+            accountSheet !== 'new' && accountSheet.system ? null : (
+              <label className="flex items-center gap-2 text-[13px] text-ink-2">
+                <input type="checkbox" checked={meta.buffer === true} onChange={(e) => set({ buffer: e.target.checked })} className="accent-pine" />
+                Filled from the bank’s savings (Budget → split rules)
+              </label>
+            )
+          }
+        />
+      )}
     </Screen>
   )
 }

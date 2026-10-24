@@ -5,10 +5,10 @@
 // date (created_at is the sync time, not the workout's), so workouts and steps are untimed.
 import { format, subDays } from 'date-fns'
 import { supabase } from './supabase'
-import { addMacros, logEntryMacros, MEAL_TYPE_INFO, ZERO_MACROS } from './food'
+import { addMacros, logEntryMacros, mealInfo, ZERO_MACROS } from './food'
 import { formatSleepDuration } from './sleep'
 import { sortMoments, type Moment } from './dailyCheckin'
-import type { FoodLogEntry, Ingredient, MealType, Recipe, RecipeIngredient } from './types'
+import type { FoodLogEntry, Ingredient, Recipe, RecipeIngredient } from './types'
 
 const hhmm = (ts: string) => format(new Date(ts), 'HH:mm')
 const avg = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / xs.length
@@ -107,7 +107,8 @@ export async function loadDayMoments(date: string): Promise<Moment[]> {
     const meals = new Map<string, FoodLogEntry[]>()
     for (const e of entries) meals.set(e.meal_type ?? 'food', [...(meals.get(e.meal_type ?? 'food') ?? []), e])
     for (const [meal, list] of meals) {
-      const info = MEAL_TYPE_INFO[meal as MealType] as { label: string; icon: string } | undefined
+      // 'food' = entries with no meal tag.
+      const info = meal === 'food' ? undefined : mealInfo(meal)
       const main = [...list].sort((a, b) => kcal(b) - kcal(a))[0]
       const mealKcal = Math.round(list.reduce((s, e) => s + kcal(e), 0))
       const first = list.map((e) => e.created_at).sort()[0]

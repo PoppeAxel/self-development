@@ -22,7 +22,7 @@ import {
 } from '../lib/goals'
 import { LabelPicker } from '../components/LabelPicker'
 import { AUTO_METRICS } from '../lib/metrics'
-import { MEDIA_METRICS } from '../lib/media'
+import { mediaMetrics } from '../lib/media'
 import { formatKr, periodTotals, type SavingsEntry } from '../lib/finance'
 import { loadBankSavings } from '../lib/bankSavings'
 import { formatGoalValue, isWeightGoal, milestoneState, parseGoalValue, type MilestoneResult } from '../lib/checkins'
@@ -410,7 +410,7 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
                   className="min-w-0 flex-1 rounded-xl border border-line bg-page px-3 py-1.5 text-right text-sm text-ink outline-none focus:border-pine"
                 >
                   <option value="">Manual</option>
-                  {[...AUTO_METRICS, ...SESSION_METRICS, ...FINANCE_METRICS, ...MEDIA_METRICS].map((m) => (
+                  {[...AUTO_METRICS, ...SESSION_METRICS, ...FINANCE_METRICS, ...mediaMetrics()].map((m) => (
                     <option key={m} value={m}>
                       {goalMetricInfo(m).icon} {goalMetricInfo(m).label}
                     </option>

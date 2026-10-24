@@ -20,15 +20,15 @@ import {
   searchRank,
   mealUsuals,
   relativeDayLabel,
-  MEAL_LOOK,
+  mealInfo,
   logCounts,
   categoryLook,
+  categoryRow,
   groupByCategory,
   orderedCategoryKeys,
   UNCATEGORIZED,
-  MEAL_TYPES,
-  MEAL_TYPE_INFO,
-  INGREDIENT_CATEGORIES,
+  mealTypes,
+  ingredientCategories,
   ZERO_MACROS,
   type Macros,
   type LivsmedelsverketFood,
@@ -38,11 +38,52 @@ import { THEME } from '../lib/theme'
 import { resolveImportedLines, type ImportedRecipe } from '../lib/recipeImport'
 import { normalizeUrl, linkHost, linkLabel } from '../lib/links'
 import type { FoodLogEntry, Ingredient, MealType, Recipe, RecipeIngredient, SavedLink } from '../lib/types'
+import type { OptionRow } from '../lib/editable'
+import { findOption } from '../lib/optionStore'
+import { useEdit } from '../contexts/EditContext'
+import { EditDots, Pressable } from '../components/ItemMenu'
+import { OptionSheet, type RefMover } from '../components/OptionSheet'
+
+// A meal is stored on both log entries and recipes; ids carry a table prefix so one delete can
+// move (and Undo move back) both.
+const MEAL_REFS: RefMover = {
+  noun: (n) => `${n} logged ${n === 1 ? 'entry or recipe' : 'entries and recipes'}`,
+  valueOf: (r) => r.key,
+  noneLabel: 'No meal',
+  find: async (key) => {
+    const [{ data: logs }, { data: recipes }] = await Promise.all([
+      supabase.from('food_log_entries').select('id').eq('meal_type', key).throwOnError(),
+      supabase.from('recipes').select('id').eq('meal_type', key).throwOnError(),
+    ])
+    return [...(logs ?? []).map((r) => `log:${r.id}`), ...(recipes ?? []).map((r) => `recipe:${r.id}`)]
+  },
+  move: async (ids, to) => {
+    const of = (prefix: string) => ids.filter((i) => i.startsWith(prefix)).map((i) => i.slice(prefix.length))
+    const logs = of('log:')
+    const recipes = of('recipe:')
+    if (logs.length) await supabase.from('food_log_entries').update({ meal_type: to }).in('id', logs).throwOnError()
+    if (recipes.length) await supabase.from('recipes').update({ meal_type: to }).in('id', recipes).throwOnError()
+  },
+}
+
+// An ingredient stores its category's name as text, so a rename rewrites those rows too.
+const CATEGORY_REFS: RefMover = {
+  noun: (n) => `${n} ${n === 1 ? 'ingredient' : 'ingredients'}`,
+  valueOf: (r) => r.label,
+  noneLabel: 'Uncategorised',
+  find: async (label) => ((await supabase.from('ingredients').select('id').eq('category', label).throwOnError()).data ?? []).map((r) => r.id as string),
+  move: async (ids, to) => {
+    await supabase.from('ingredients').update({ category: to }).in('id', ids).throwOnError()
+  },
+}
+const renameCategory = async (from: string, to: string) => {
+  await supabase.from('ingredients').update({ category: to }).eq('category', from).throwOnError()
+}
 
 function MealTypePicker({ value, onChange }: { value: MealType | null; onChange: (v: MealType | null) => void }) {
   return (
     <div className="grid grid-cols-2 gap-1.5">
-      {MEAL_TYPES.map((m) => (
+      {mealTypes().map((m) => (
         <button
           key={m}
           type="button"
@@ -51,7 +92,7 @@ function MealTypePicker({ value, onChange }: { value: MealType | null; onChange:
             value === m ? 'bg-cat-emerald-tint text-cat-emerald-ink' : 'bg-track text-ink-3'
           }`}
         >
-          {MEAL_TYPE_INFO[m].icon} {MEAL_TYPE_INFO[m].label}
+          {mealInfo(m).icon} {mealInfo(m).label}
         </button>
       ))}
     </div>
@@ -151,6 +192,9 @@ export function Food() {
   // The meal the Log tab is focused on — seeded from the clock, then whatever you tap. Its
   // logged items and your usuals for it show underneath.
   const [selectedMeal, setSelectedMeal] = useState<MealType>(() => defaultMealTypeForNow())
+  // Meal types and ingredient categories are edited in place: ✎ edit mode or a long-press.
+  const { editing } = useEdit()
+  const [optionSheet, setOptionSheet] = useState<{ kind: 'meal_type' | 'ingredient_category'; row: OptionRow | null } | null>(null)
   const [addLogOpen, setAddLogOpen] = useState(false)
   const [addLogQuery, setAddLogQuery] = useState('')
   const [addLogFilter, setAddLogFilter] = useState<'all' | 'recipe' | 'ingredient'>('all')
@@ -408,7 +452,7 @@ export function Food() {
   // kcal per meal for the strip. A meal with nothing logged is null, not 0 — the tile
   // shows "—" so an untouched meal reads as untouched rather than as a zero-calorie one.
   const mealKcal = new Map<MealType, number | null>(
-    MEAL_TYPES.map((meal) => {
+    mealTypes().map((meal) => {
       const mealEntries = dayEntriesByMeal.get(meal) ?? []
       if (mealEntries.length === 0) return [meal, null]
       return [meal, mealEntries.reduce((sum, e) => sum + macrosFor(e).kcal, 0)]
@@ -430,7 +474,7 @@ export function Food() {
       return {
         name: recipe.name,
         kcal: perServing.kcal * quantity,
-        icon: recipe.meal_type ? MEAL_TYPE_INFO[recipe.meal_type].icon : '🍽',
+        icon: recipe.meal_type ? mealInfo(recipe.meal_type).icon : '🍽',
       }
     }
     const ingredient = ingredientsById.get(ref.id)
@@ -1197,21 +1241,23 @@ export function Food() {
       {subTab === 'log' && (
         <>
           {/* The meal strip: the day at a glance, and the meal selector. */}
-          <div className="grid shrink-0 grid-cols-4 gap-2">
-            {MEAL_TYPES.map((meal) => {
-              const look = MEAL_LOOK[meal]
+          <div className="grid shrink-0 gap-2" style={{ gridTemplateColumns: `repeat(${Math.max(mealTypes().length, 1)}, minmax(0, 1fr))` }}>
+            {mealTypes().map((meal) => {
+              const look = mealInfo(meal)
               const kcal = mealKcal.get(meal) ?? null
               const selected = selectedMeal === meal
+              const editMeal = () => setOptionSheet({ kind: 'meal_type', row: findOption('meal_type', meal) ?? null })
               return (
-                <button
-                  key={meal}
+                <span key={meal} className="relative flex">
+                <Pressable
+                  onLongPress={editMeal}
                   onClick={() => {
                     setSelectedMeal(meal)
                     setShowAllUsuals(false)
                   }}
-                  aria-label={MEAL_TYPE_INFO[meal].label}
+                  aria-label={mealInfo(meal).label}
                   aria-pressed={selected}
-                  className={`flex flex-col items-center gap-[3px] rounded-[18px] px-1 py-2.5 ${selected ? '' : 'border border-line bg-surface'}`}
+                  className={`flex w-full flex-col items-center gap-[3px] rounded-[18px] px-1 py-2.5 ${selected ? '' : 'border border-line bg-surface'}`}
                   style={selected ? { background: look.accent, boxShadow: `0 4px 12px ${look.accent}4d` } : undefined}
                 >
                   <span className="text-[15px] leading-none">{look.icon}</span>
@@ -1222,12 +1268,23 @@ export function Food() {
                     className={`text-[9px] leading-none ${selected ? 'font-semibold' : 'font-medium text-ink-muted'}`}
                     style={selected ? { color: 'rgba(255,255,255,.85)' } : undefined}
                   >
-                    {MEAL_TYPE_INFO[meal].label}
+                    {mealInfo(meal).label}
                   </span>
-                </button>
+                </Pressable>
+                {editing && (
+                  <span className="absolute -right-1 -top-1.5">
+                    <EditDots onClick={editMeal} label={look.label} />
+                  </span>
+                )}
+                </span>
               )
             })}
           </div>
+          {editing && (
+            <button onClick={() => setOptionSheet({ kind: 'meal_type', row: null })} className="-mt-1 self-start text-[12px] font-medium text-pine">
+              + New meal
+            </button>
+          )}
 
           {/* Search sits right under the strip, always visible, so something you haven't
               logged for this meal before is one tap away. */}
@@ -1238,7 +1295,7 @@ export function Food() {
             >
               <span className="shrink-0 text-sm">🔍</span>
               <span className="truncate text-[13px] font-medium text-ink-muted">
-                Search food for {MEAL_TYPE_INFO[selectedMeal].label.toLowerCase()}
+                Search food for {mealInfo(selectedMeal).label.toLowerCase()}
               </span>
             </button>
             <button
@@ -1254,7 +1311,7 @@ export function Food() {
             <p className="text-sm text-ink-disabled">Loading…</p>
           ) : (
             (() => {
-              const look = MEAL_LOOK[selectedMeal]
+              const look = mealInfo(selectedMeal)
               const logged = dayEntriesByMeal.get(selectedMeal) ?? []
               const mealMacros = logged.reduce((sum, e) => addMacros(sum, macrosFor(e)), ZERO_MACROS)
               // Recent and most-logged as one list: what you had lately first, then your
@@ -1263,14 +1320,14 @@ export function Food() {
               const loggedKeys = new Set(logged.map((e) => (e.recipe_id ? `recipe:${e.recipe_id}` : `ingredient:${e.ingredient_id}`)))
               const picks = [...usuals.recent, ...usuals.frequent].filter((u) => !loggedKeys.has(`${u.ref.kind}:${u.ref.id}`))
               const shown = showAllUsuals ? picks : picks.slice(0, 5)
-              const label = MEAL_TYPE_INFO[selectedMeal].label.toLowerCase()
+              const label = mealInfo(selectedMeal).label.toLowerCase()
               return (
                 <>
                   {logged.length > 0 && (
                     <div className="shrink-0 overflow-hidden rounded-[20px] border border-line bg-surface shadow-card">
                       <div className="flex items-center justify-between gap-2.5 px-3.5 py-2.5" style={{ background: look.tint }}>
                         <span className="text-[13px] font-semibold" style={{ color: look.ink }}>
-                          {look.icon} {MEAL_TYPE_INFO[selectedMeal].label}
+                          {look.icon} {mealInfo(selectedMeal).label}
                         </span>
                         <span className="shrink-0 text-[11px] font-semibold" style={{ color: look.ink }}>
                           {round(mealMacros.kcal).toLocaleString()} kcal · P {round(mealMacros.protein)} C {round(mealMacros.carbs)} F{' '}
@@ -1306,7 +1363,7 @@ export function Food() {
                     <>
                       <div className="flex shrink-0 items-center gap-2.5">
                         <span className="text-[10px] font-semibold tracking-[0.07em] text-ink-muted">
-                          YOUR USUAL {MEAL_TYPE_INFO[selectedMeal].label.toUpperCase()}S
+                          YOUR USUAL {mealInfo(selectedMeal).label.toUpperCase()}S
                         </span>
                         <span className="h-px flex-1 bg-line-strong" />
                       </div>
@@ -1404,9 +1461,9 @@ export function Food() {
           <ChipRail
             options={[
               { id: 'all' as const, label: `All ${recipes.length}` },
-              ...MEAL_TYPES.filter((m) => (recipeMealCounts.get(m) ?? 0) > 0 || mealTypeFilter === m).map((m) => ({
+              ...mealTypes().filter((m) => (recipeMealCounts.get(m) ?? 0) > 0 || mealTypeFilter === m).map((m) => ({
                 id: m,
-                label: `${MEAL_TYPE_INFO[m].icon} ${MEAL_TYPE_INFO[m].label} ${recipeMealCounts.get(m) ?? 0}`,
+                label: `${mealInfo(m).icon} ${mealInfo(m).label} ${recipeMealCounts.get(m) ?? 0}`,
               })),
               ...(recipes.some((r) => !r.meal_type) ? [{ id: 'none' as const, label: `Untagged ${recipes.filter((r) => !r.meal_type).length}` }] : []),
             ]}
@@ -1472,7 +1529,7 @@ export function Food() {
               const row = (recipe: Recipe, divider: boolean, variant: boolean) => {
                 const perServing = recipeMacros(recipe)
                 const logged = counts.byRecipe.get(recipe.id) ?? 0
-                const look = recipe.meal_type ? MEAL_LOOK[recipe.meal_type] : null
+                const look = recipe.meal_type ? mealInfo(recipe.meal_type) : null
                 const family = variantsOf.get(recipe.id) ?? []
                 const open = openVariantGroups.has(recipe.id) || !!recipeSearchQuery.trim()
                 // A variant's name usually repeats its original's ("Köttfärssås – Kyckling");
@@ -1556,6 +1613,19 @@ export function Food() {
             value={libraryFilter}
             onChange={setLibraryFilter}
           />
+          {/* Categories are edited from here: pick one in the rail, then ✎ (edit mode). */}
+          {editing && (
+            <div className="-mt-1 flex flex-wrap items-center gap-2 text-[12px] font-medium">
+              {categoryRow(libraryFilter) && (
+                <button onClick={() => setOptionSheet({ kind: 'ingredient_category', row: categoryRow(libraryFilter) ?? null })} className="flex items-center gap-1 text-pine">
+                  ⋯ Edit “{libraryFilter}”
+                </button>
+              )}
+              <button onClick={() => setOptionSheet({ kind: 'ingredient_category', row: null })} className="text-pine">
+                + New category
+              </button>
+            </div>
+          )}
 
           <div className="flex items-center gap-2">
             {libraryFilter !== 'recent' ? (
@@ -1831,7 +1901,7 @@ export function Food() {
           it adds to, and never a dead end: "Can't find it?" makes the ingredient from here. */}
       {addLogOpen &&
         (() => {
-          const look = MEAL_LOOK[selectedMeal]
+          const look = mealInfo(selectedMeal)
           const q = addLogQuery.trim()
           const notFound = (
             <div className="flex flex-col gap-1.5 rounded-[20px] border border-dashed border-line-strong bg-surface p-3.5">
@@ -1848,7 +1918,7 @@ export function Food() {
                 ✎ {q ? `Create “${q}” with your own numbers` : 'Create an ingredient with your own numbers'}
               </button>
               <span className="text-[10px] font-medium text-ink-muted">
-                Saved to your library, then straight on to logging it for {MEAL_TYPE_INFO[selectedMeal].label.toLowerCase()}.
+                Saved to your library, then straight on to logging it for {mealInfo(selectedMeal).label.toLowerCase()}.
               </span>
             </div>
           )
@@ -1860,7 +1930,7 @@ export function Food() {
                     {logDate === todayISO() ? 'TODAY' : format(new Date(logDate + 'T00:00:00'), 'EEE d MMM').toUpperCase()}
                   </span>
                   <h2 className="truncate text-lg font-bold text-ink">
-                    {look.icon} Add to {MEAL_TYPE_INFO[selectedMeal].label.toLowerCase()}
+                    {look.icon} Add to {mealInfo(selectedMeal).label.toLowerCase()}
                   </h2>
                 </span>
                 <button onClick={() => setAddLogOpen(false)} className="shrink-0 rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2">
@@ -1909,7 +1979,7 @@ export function Food() {
                       const ingredient = r.kind === 'ingredient' ? ingredientsById.get(r.id) : null
                       const glyph = recipe
                         ? recipe.meal_type
-                          ? MEAL_TYPE_INFO[recipe.meal_type].icon
+                          ? mealInfo(recipe.meal_type).icon
                           : '🍽'
                         : categoryLook(ingredient?.category ?? UNCATEGORIZED).glyph
                       const caption = recipe
@@ -2009,7 +2079,7 @@ export function Food() {
       {quantifying &&
         (() => {
           const kind = quantifying.kind
-          const look = MEAL_LOOK[quantifyMealType ?? selectedMeal]
+          const look = mealInfo(quantifyMealType ?? selectedMeal)
           const presets = PRESET_QUANTITIES[kind]
           const labels = PRESET_LABELS[kind]
           const value = Number(quantifyValue)
@@ -2045,7 +2115,7 @@ export function Food() {
                     className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-[15px] text-lg"
                     style={{ background: look.tint }}
                   >
-                    {kind === 'recipe' ? (recipe?.meal_type ? MEAL_LOOK[recipe.meal_type].icon : '🍽') : '🥗'}
+                    {kind === 'recipe' ? (recipe?.meal_type ? mealInfo(recipe.meal_type).icon : '🍽') : '🥗'}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-[17px] font-semibold text-ink">{quantifying.name}</span>
@@ -2061,7 +2131,7 @@ export function Food() {
                     className="shrink-0 rounded-full px-2.5 py-[5px] text-[11px] font-semibold"
                     style={{ background: look.tint, color: look.ink }}
                   >
-                    {quantifyMealType ? MEAL_TYPE_INFO[quantifyMealType].label : 'No meal'} ⌄
+                    {quantifyMealType ? mealInfo(quantifyMealType).label : 'No meal'} ⌄
                   </button>
                 </div>
 
@@ -2179,7 +2249,7 @@ export function Food() {
                   >
                     {quantifying.entryId
                       ? 'Save'
-                      : `Log to ${quantifyMealType ? MEAL_TYPE_INFO[quantifyMealType].label.toLowerCase() : 'the day'}`}
+                      : `Log to ${quantifyMealType ? mealInfo(quantifyMealType).label.toLowerCase() : 'the day'}`}
                   </button>
                 </div>
               </div>
@@ -2683,7 +2753,7 @@ export function Food() {
             <div>
               <p className="mb-1 text-xs text-ink-disabled">Category (optional) — groups the Library list</p>
               <div className="flex flex-wrap gap-1.5">
-                {INGREDIENT_CATEGORIES.map((c) => (
+                {ingredientCategories().map((c) => (
                   <button
                     key={c}
                     type="button"
@@ -2767,6 +2837,48 @@ export function Food() {
         onConfirm={saveIngredientNow}
         onCancel={() => setConfirmDuplicateName(null)}
       />
+
+      {optionSheet?.kind === 'meal_type' && (
+        <OptionSheet
+          kind="meal_type"
+          row={optionSheet.row}
+          noun="meal"
+          color="palette"
+          newMeta={{ until_hour: 24 }}
+          refs={MEAL_REFS}
+          onChanged={load}
+          onClose={() => setOptionSheet(null)}
+          fields={(meta, set) => (
+            <label className="flex items-center gap-2 text-[13px] text-ink-2">
+              Default when logging before
+              <input
+                type="number"
+                min={0}
+                max={24}
+                value={String(meta.until_hour ?? 24)}
+                onChange={(e) => set({ until_hour: Math.min(24, Math.max(0, Number(e.target.value) || 0)) })}
+                className="w-14 rounded-xl border border-line bg-page px-2 py-1.5 text-center text-sm font-semibold text-ink outline-none focus:border-pine"
+              />
+              :00
+            </label>
+          )}
+        />
+      )}
+      {optionSheet?.kind === 'ingredient_category' && (
+        <OptionSheet
+          kind="ingredient_category"
+          row={optionSheet.row}
+          noun="category"
+          color="hex"
+          refs={CATEGORY_REFS}
+          onRenamed={async (from, to) => {
+            await renameCategory(from, to)
+            if (libraryFilter === from) setLibraryFilter(to)
+          }}
+          onChanged={load}
+          onClose={() => setOptionSheet(null)}
+        />
+      )}
     </Screen>
   )
 }

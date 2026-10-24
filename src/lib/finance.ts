@@ -1,21 +1,41 @@
 // Journal → Finance: savings logged by hand (savings_entries). Pure — no supabase import —
 // so scripts/finance.check.ts can run it under node.
 
-export const SAVINGS_ACCOUNTS = ['buffer', 'car_buffer', 'travel_buffer', 'investments', 'mortgage'] as const
-export type SavingsAccount = (typeof SAVINGS_ACCOUNTS)[number]
-/** The buffers his Avanza autogiros fill, in fill order; whatever's left over is ETF & stocks. */
-export const BUFFER_ACCOUNTS = ['buffer', 'car_buffer', 'travel_buffer'] as const satisfies readonly SavingsAccount[]
-export type BufferAccount = (typeof BUFFER_ACCOUNTS)[number]
+import { findOption, live } from './optionStore'
+import type { OptionRow } from './editable'
 
-export const ACCOUNT_INFO: Record<SavingsAccount, { label: string; icon: string; color: string }> = {
-  buffer: { label: 'Buffer', icon: '🛟', color: '#2f6b5a' },
-  car_buffer: { label: 'Car buffer', icon: '🚗', color: '#4f7f8c' },
-  travel_buffer: { label: 'Travel buffer', icon: '✈️', color: '#6a8fb0' },
-  investments: { label: 'ETF & stocks', icon: '📈', color: '#a8842f' },
-  mortgage: { label: 'House loan paid', icon: '🏠', color: '#46608f' },
+// Savings accounts are `options` rows of kind 'savings_account' (migration 0049), edited in place
+// in the Savings tab. `meta.buffer` accounts are filled, in order, from each pay period's bank
+// savings; whatever's left over goes to 'investments'. 'investments' and 'mortgage' are system
+// rows (budget.ts branches on those keys).
+
+/** A savings_account key. */
+export type SavingsAccount = string
+
+export interface AccountInfo {
+  key: SavingsAccount
+  label: string
+  icon: string
+  color: string
+  buffer: boolean
 }
 
-const zeroAccounts = () => Object.fromEntries(SAVINGS_ACCOUNTS.map((a) => [a, 0])) as Record<SavingsAccount, number>
+const toAccount = (r: OptionRow): AccountInfo => ({ key: r.key, label: r.label, icon: r.icon ?? '🏦', color: r.color ?? '#8b8577', buffer: r.meta.buffer === true })
+
+/** Live accounts, in order. */
+export const savingsAccounts = (): AccountInfo[] => live('savings_account').map(toAccount)
+
+/** The buffers bank savings fill, in fill order. */
+export const bufferAccounts = (): SavingsAccount[] => savingsAccounts().filter((a) => a.buffer).map((a) => a.key)
+
+/** Any account by key (archived too, so old entries keep their name); an unknown key reads as itself. */
+export const accountInfo = (key: SavingsAccount): AccountInfo => {
+  const r = findOption('savings_account', key)
+  return r ? toAccount(r) : { key, label: key, icon: '🏦', color: '#8b8577', buffer: false }
+}
+
+/** 0 for every live account, so each shows even with nothing logged; other keys are added as they turn up. */
+export const zeroAccounts = (): Record<SavingsAccount, number> => Object.fromEntries(savingsAccounts().map((a) => [a.key, 0]))
 
 export interface SavingsEntry {
   id: string
@@ -41,10 +61,10 @@ export function periodTotals(entries: Pick<SavingsEntry, 'date' | 'account' | 'a
   for (const e of entries) {
     if (e.date < start || e.date > end) continue
     const amount = Number(e.amount)
-    byAccount[e.account] += amount
+    byAccount[e.account] = (byAccount[e.account] ?? 0) + amount
     if (amount < 0) withdrawn -= amount
   }
-  return { byAccount, withdrawn, net: SAVINGS_ACCOUNTS.reduce((s, a) => s + byAccount[a], 0) }
+  return { byAccount, withdrawn, net: Object.values(byAccount).reduce((s, v) => s + v, 0) }
 }
 
 // --- Pots: short-term saving for one thing (ring, watch, trip). Separate from the totals above.

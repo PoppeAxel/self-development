@@ -1,7 +1,7 @@
 // Economy → Budget: Nordea CSV export → bank_transactions. Pure — no supabase import —
 // so scripts/budget.check.ts can run it under node.
 
-import { BUFFER_ACCOUNTS, SAVINGS_ACCOUNTS, type BufferAccount, type SavingsAccount } from './finance'
+import { bufferAccounts, zeroAccounts, type SavingsAccount } from './finance'
 import { liveOptions, type OptionRow } from './editable'
 
 // Head categories → subcategories → keyword guesses live in the `options` table (kinds
@@ -248,14 +248,14 @@ export function payPeriod(month: string, transactions: Pick<BankTransaction, 'da
 
 /** Set once in Budget (user_settings). All kr per month. */
 export interface SplitRules {
-  /** How much of each pay period's savings goes to each buffer, filled in BUFFER_ACCOUNTS order. */
-  buffers: Record<BufferAccount, number>
+  /** How much of each pay period's savings goes to each buffer account, filled in bufferAccounts() order. */
+  buffers: Record<SavingsAccount, number>
   amortizationPerMonth: number
   /** How each pay period's card top-ups are spent, by subcategory key, filled in catalog order; the rest is Other. */
   card: Record<string, number>
 }
 
-export const NO_RULES: SplitRules = { buffers: { buffer: 0, car_buffer: 0, travel_buffer: 0 }, amortizationPerMonth: 0, card: {} }
+export const NO_RULES: SplitRules = { buffers: {}, amortizationPerMonth: 0, card: {} }
 
 /**
  * What the bank rows saved, as savings-tab entries. Per pay period (`periodOf`) money into
@@ -272,7 +272,8 @@ export function bankSavingsEntries(
 ): { date: string; account: SavingsAccount; amount: number }[] {
   const out: { date: string; account: SavingsAccount; amount: number }[] = []
   // Per period, what each buffer can still take this period.
-  const room = new Map<string, Record<BufferAccount, number>>()
+  const room = new Map<string, Record<SavingsAccount, number>>()
+  const buffers = bufferAccounts()
   for (const t of [...transactions].sort((a, b) => a.date.localeCompare(b.date))) {
     const amount = -Number(t.amount) // money out of the bank account = saved
     if (t.category === 'mortgage') {
@@ -287,8 +288,8 @@ export function bankSavingsEntries(
       const left = room.get(key) ?? { ...rules.buffers }
       room.set(key, left)
       let rest = amount
-      for (const b of BUFFER_ACCOUNTS) {
-        const take = Math.min(left[b], rest)
+      for (const b of buffers) {
+        const take = Math.min(left[b] ?? 0, rest)
         if (take <= 0) continue
         left[b] -= take
         rest -= take
@@ -344,8 +345,8 @@ export function periodBudget(
   cat: BudgetCatalog,
 ): PeriodBudget {
   const inPeriod = transactions.filter((t) => t.date >= start && t.date <= end)
-  const savedByAccount = Object.fromEntries(SAVINGS_ACCOUNTS.map((a) => [a, 0])) as Record<SavingsAccount, number>
-  for (const e of bankSavingsEntries(inPeriod, rules, () => '')) savedByAccount[e.account] += e.amount
+  const savedByAccount = zeroAccounts()
+  for (const e of bankSavingsEntries(inPeriod, rules, () => '')) savedByAccount[e.account] = (savedByAccount[e.account] ?? 0) + e.amount
   let income = 0
   let sharedBack = 0
   let topUps = 0
@@ -368,7 +369,7 @@ export function periodBudget(
   const sum = (g: BudgetGroup) => byCategory.filter((c) => categoryInfo(cat, c.category).group === g).reduce((s, c) => s + c.amount, 0)
   const fixed = sum('fixed')
   const variable = sum('variable')
-  const saved = SAVINGS_ACCOUNTS.reduce((s, a) => s + savedByAccount[a], 0)
+  const saved = Object.values(savedByAccount).reduce((s, v) => s + v, 0)
   return { income, saved, savedByAccount, fixed, variable, sharedBack, left: income - saved - fixed - variable + sharedBack, byCategory }
 }
 
