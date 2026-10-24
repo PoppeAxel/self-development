@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useEdit } from '../contexts/EditContext'
 import type { Tab } from './TabBar'
 
 const ICONS: { id: Tab; icon: string; label: string }[] = [
@@ -23,6 +24,7 @@ export function TopIcons({
   onRefresh?: () => Promise<void>
 }) {
   const [spinning, setSpinning] = useState(false)
+  const { editing, toggleEditing } = useEdit()
 
   async function refresh() {
     if (!onRefresh) return
@@ -36,6 +38,17 @@ export function TopIcons({
 
   return (
     <div className="flex items-center gap-2">
+      {/* Edit mode: shows the ⋯ on everything editable in place. Solid while on, like an active tab. */}
+      <button
+        onClick={toggleEditing}
+        aria-label={editing ? 'Done editing' : 'Edit'}
+        aria-pressed={editing}
+        className={`flex h-[34px] w-[34px] items-center justify-center rounded-[12px] text-base leading-none transition ${
+          editing ? 'bg-surface text-pine' : 'bg-white/14 text-white active:bg-white/25'
+        }`}
+      >
+        ✎
+      </button>
       {onRefresh && (
         <button
           onClick={refresh}

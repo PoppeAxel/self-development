@@ -1,4 +1,3 @@
-import { supabase } from './supabase'
 import type { CategoryColor } from './types'
 
 // One muted hue per category (calm warm-neutral restyle). Each owns a tile tint, a chip
@@ -87,29 +86,4 @@ export const CATEGORY_COLOR_LABELS: Record<CategoryColor, string> = {
   violet: 'Plum',
   amber: 'Ochre',
   rose: 'Clay red',
-}
-
-const DEFAULT_CATEGORIES: { name: string; color: CategoryColor }[] = [
-  { name: 'Training', color: 'pink' },
-  { name: 'Health', color: 'emerald' },
-  { name: 'Work', color: 'sky' },
-  { name: 'General', color: 'violet' },
-]
-
-export async function ensureDefaultCategories() {
-  const { count } = await supabase.from('categories').select('id', { count: 'exact', head: true })
-  if (count) return
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return
-  // Multiple pages (Today, Settings) call this on every mount, so two can race here —
-  // both see count === 0 above and both try to insert. `ignoreDuplicates` against the
-  // (user_id, name) unique constraint makes that harmless instead of creating duplicates.
-  await supabase
-    .from('categories')
-    .upsert(
-      DEFAULT_CATEGORIES.map((c) => ({ ...c, user_id: user.id })),
-      { onConflict: 'user_id,name', ignoreDuplicates: true },
-    )
 }

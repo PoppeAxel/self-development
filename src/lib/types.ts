@@ -6,6 +6,9 @@ export interface Category {
   user_id: string
   name: string
   color: CategoryColor
+  position: number
+  /** Set = deleted (hidden from pickers); rows that still point at it keep its name. */
+  archived_at: string | null
 }
 
 export interface DailyTask {

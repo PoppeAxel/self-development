@@ -346,7 +346,7 @@ export function Journal() {
         supabase.from('goals').select('*').eq('period_type', 'week').eq('period_start', reviewWeek).order('created_at'),
         supabase.from('task_completions').select('task_id, date').gte('date', reviewWeek).lte('date', weekEnd),
         supabase.from('daily_tasks').select('id, category_id'),
-        supabase.from('categories').select('*').order('name'),
+        supabase.from('categories').select('*').order('position').order('name'),
       ])
       if (cancelled) return
 

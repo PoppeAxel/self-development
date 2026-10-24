@@ -20,7 +20,7 @@ import {
   type GoalPace,
   type IntervalBucket,
 } from '../lib/goals'
-import { CATEGORY_STYLES } from '../lib/categories'
+import { LabelPicker } from '../components/LabelPicker'
 import { AUTO_METRICS } from '../lib/metrics'
 import { MEDIA_METRICS } from '../lib/media'
 import { formatKr, periodTotals, type SavingsEntry } from '../lib/finance'
@@ -75,7 +75,8 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [addingTask, setAddingTask] = useState(false)
   const [newTaskTitle, setNewTaskTitle] = useState('')
-  const [categories, setCategories] = useState<Map<string, Category>>(new Map())
+  const [labels, setLabels] = useState<Category[]>([])
+  const categories = new Map(labels.map((c) => [c.id, c]))
   const [checkinList, setCheckinList] = useState<GoalCheckin[]>([])
   const [results, setResults] = useState<MilestoneResult[]>([])
   const [resultDate, setResultDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
@@ -103,13 +104,13 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
       loaded.kind === 'number' ? goalIntervalTotals(loaded) : Promise.resolve([]),
       supabase.from('daily_tasks').select('*').eq('active', true).eq('goal_series_id', loaded.series_id).order('created_at'),
       supabase.from('goals').select('*'),
-      supabase.from('categories').select('*').order('name'),
+      supabase.from('categories').select('*').order('position').order('name'),
       milestone ? loadMilestoneResults(loaded) : Promise.resolve([]),
     ])
     setProgress(resolved.progress)
     setIsRollup(resolved.isRollup)
     setBuckets(intervals)
-    setCategories(new Map(((catRows ?? []) as Category[]).map((c) => [c.id, c])))
+    setLabels((catRows ?? []) as Category[])
     setResults(milestoneResults.filter((r) => (loaded.auto_metric === 'weight' ? r.date <= periodEndISO(loaded.period_type, loaded.period_start) : r.date >= loaded.period_start)).sort((a, b) => b.date.localeCompare(a.date)))
     // Check-ins for every instance of this series (a year goal is one row; a weekly one many).
     const seriesIds = ((parentRows ?? []) as Goal[]).filter((g) => g.series_id === loaded.series_id).map((g) => g.id)
@@ -384,17 +385,8 @@ export function GoalDetail({ goalId, onBack }: { goalId: string; onBack: () => v
 
       {menuOpen && (
         <div className="flex flex-col gap-1 rounded-[18px] border border-line bg-surface p-1.5 shadow-card">
-          <div className="flex flex-wrap gap-1.5 px-2 py-2">
-            {[{ id: null as string | null, name: 'No label', color: 'violet' as const }, ...categories.values()].map((c) => (
-              <button
-                key={c.id ?? 'none'}
-                onClick={() => setLabel(c.id)}
-                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs ${goal.category_id === c.id ? 'bg-pine font-semibold text-white' : 'border border-line font-medium text-ink-2'}`}
-              >
-                {c.id && <span className="h-2 w-2 rounded-full" style={{ background: CATEGORY_STYLES[c.color].accent }} />}
-                {c.name}
-              </button>
-            ))}
+          <div className="px-2 py-2">
+            <LabelPicker labels={labels} setLabels={setLabels} value={goal.category_id} onChange={setLabel} onRefsChanged={load} />
           </div>
           {/* Target + source, editable after the fact (a target typed into the title, a goal
               created before its data source existed). Number goals only. */}

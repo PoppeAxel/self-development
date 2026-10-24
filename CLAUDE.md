@@ -7,3 +7,9 @@ non-obvious root cause, a new integration or automation), update `CONTEXT.md` yo
 with what changed and why, in the same style as the existing entries. Don't wait to be
 asked — this file is how future sessions (including other concurrent ones on this repo)
 stay in sync, since it is intentionally kept untracked and never committed to git.
+
+Hårdkoda aldrig innehåll, listor, alternativ eller standardvärden. Allt nytt sådant ska ligga
+i databasen och vara redigerbart på plats i appen (redigera/duplicera/ta bort/skapa nytt).
+Use the shared pattern: edit mode (`src/contexts/EditContext.tsx`) + ⋯ / long-press →
+`ItemSheet` (`src/components/ItemMenu.tsx`); delete = archive + `offerUndo`. See
+`src/components/LabelPicker.tsx` for a complete example.

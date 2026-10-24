@@ -3,10 +3,8 @@ import { supabase } from '../lib/supabase'
 import { enableNotifications, notificationsEnabled } from '../lib/push'
 import { connectStrava, stravaConnected, handleStravaOAuthRedirect } from '../lib/strava'
 import { DAY_LABELS } from '../lib/dates'
-import { ensureDefaultCategories, CATEGORY_STYLES, CATEGORY_COLOR_LABELS } from '../lib/categories'
 import { Screen } from '../components/Screen'
-import { CATEGORY_COLORS } from '../lib/types'
-import type { Category, CategoryColor, DailyTask, Reminder } from '../lib/types'
+import type { DailyTask, Reminder } from '../lib/types'
 
 export function Settings() {
   const [reminders, setReminders] = useState<Reminder[]>([])
@@ -14,11 +12,6 @@ export function Settings() {
   const [time, setTime] = useState('20:00')
   const [pushOn, setPushOn] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
-  const [categories, setCategories] = useState<Category[]>([])
-  const [categoryName, setCategoryName] = useState('')
-  const [categoryColor, setCategoryColor] = useState<CategoryColor>('violet')
-  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null)
-  const [editingName, setEditingName] = useState('')
   const [goalWeight, setGoalWeight] = useState('')
   const [stepGoal, setStepGoal] = useState('')
   const [bodyGoalsStatus, setBodyGoalsStatus] = useState<string | null>(null)
@@ -27,16 +20,15 @@ export function Settings() {
   const [stravaOn, setStravaOn] = useState(false)
   const [stravaStatus, setStravaStatus] = useState<string | null>(null)
 
+  // Labels used to be managed here; they're edited in place now, wherever one is picked
+  // (src/components/LabelPicker.tsx).
   async function load() {
-    await ensureDefaultCategories()
-    const [{ data: reminderRows }, { data: categoryRows }, { data: settingsRow }, { data: taskRows }] = await Promise.all([
+    const [{ data: reminderRows }, { data: settingsRow }, { data: taskRows }] = await Promise.all([
       supabase.from('reminders').select('*').order('time_of_day'),
-      supabase.from('categories').select('*').order('name'),
       supabase.from('user_settings').select('*').maybeSingle(),
       supabase.from('daily_tasks').select('*').eq('active', true).order('title'),
     ])
     setReminders(reminderRows ?? [])
-    setCategories(categoryRows ?? [])
     setGoalWeight(settingsRow?.goal_weight != null ? String(settingsRow.goal_weight) : '')
     setStepGoal(settingsRow?.step_goal != null ? String(settingsRow.step_goal) : '')
     setTasks(taskRows ?? [])
@@ -53,48 +45,6 @@ export function Settings() {
     })
     load()
   }, [])
-
-  async function addCategory(e: React.FormEvent) {
-    e.preventDefault()
-    const name = categoryName.trim()
-    if (!name) return
-    // Names are unique per user at the DB level now — a duplicate insert would just error.
-    // Reusing the existing label (rather than erroring or silently failing) is the least
-    // surprising outcome for what's just a label picker.
-    if (categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
-      setCategoryName('')
-      return
-    }
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-    if (!user) return
-    await supabase.from('categories').insert({ name, color: categoryColor, user_id: user.id })
-    setCategoryName('')
-    load()
-  }
-
-  async function renameCategory(category: Category) {
-    const name = editingName.trim()
-    if (!name || name === category.name) {
-      setEditingCategoryId(null)
-      return
-    }
-    // Same uniqueness constraint as addCategory — colliding into an existing name would
-    // otherwise error at the DB after already having optimistically renamed it locally.
-    if (categories.some((c) => c.id !== category.id && c.name.toLowerCase() === name.toLowerCase())) {
-      setEditingCategoryId(null)
-      return
-    }
-    setCategories((cs) => cs.map((c) => (c.id === category.id ? { ...c, name } : c)))
-    await supabase.from('categories').update({ name }).eq('id', category.id)
-    setEditingCategoryId(null)
-  }
-
-  async function removeCategory(category: Category) {
-    setCategories((cs) => cs.filter((c) => c.id !== category.id))
-    await supabase.from('categories').delete().eq('id', category.id)
-  }
 
   async function addReminder(e: React.FormEvent) {
     e.preventDefault()
@@ -273,70 +223,6 @@ export function Settings() {
           ))}
         </select>
       </form>
-
-      <h2 className="text-sm font-semibold text-ink-3">Labels</h2>
-      <div className="rounded-3xl border border-line bg-surface p-4 shadow-card">
-        <div className="flex flex-wrap gap-2">
-          {categories.map((category) => {
-            const style = CATEGORY_STYLES[category.color]
-            const isEditing = editingCategoryId === category.id
-            return (
-              <div key={category.id} className={`flex items-center gap-1.5 rounded-full py-1.5 pl-3 pr-2 ${style.bg}`}>
-                <span className={`h-2 w-2 rounded-full ${style.dot}`} />
-                {isEditing ? (
-                  <input
-                    autoFocus
-                    value={editingName}
-                    onChange={(e) => setEditingName(e.target.value)}
-                    onBlur={() => renameCategory(category)}
-                    onKeyDown={(e) => e.key === 'Enter' && renameCategory(category)}
-                    className={`w-20 border-b bg-transparent text-sm font-medium outline-none ${style.text}`}
-                  />
-                ) : (
-                  <button
-                    onClick={() => {
-                      setEditingCategoryId(category.id)
-                      setEditingName(category.name)
-                    }}
-                    className={`text-sm font-medium ${style.text}`}
-                  >
-                    {category.name}
-                  </button>
-                )}
-                <button onClick={() => removeCategory(category)} className="text-ink-disabled">
-                  ✕
-                </button>
-              </div>
-            )
-          })}
-        </div>
-        {/* Two rows: name, then colour + Add. All three side by side overflows an
-            iPhone-width card. */}
-        <form onSubmit={addCategory} className="mt-3 flex flex-col gap-2">
-          <input
-            value={categoryName}
-            onChange={(e) => setCategoryName(e.target.value)}
-            placeholder="New label"
-            className="w-full rounded-[20px] border border-line bg-surface px-4 py-2 text-ink placeholder-ink-disabled outline-none focus:border-pine"
-          />
-          <div className="flex gap-2">
-            <select
-              value={categoryColor}
-              onChange={(e) => setCategoryColor(e.target.value as CategoryColor)}
-              className="min-w-0 flex-1 rounded-[20px] border border-line bg-surface px-3 py-2 text-ink outline-none focus:border-pine"
-            >
-              {CATEGORY_COLORS.map((c) => (
-                <option key={c} value={c}>
-                  {CATEGORY_COLOR_LABELS[c]}
-                </option>
-              ))}
-            </select>
-            <button type="submit" className="shrink-0 rounded-[20px] bg-pine px-5 py-2 font-semibold text-white">
-              Add
-            </button>
-          </div>
-        </form>
-      </div>
 
       <h2 className="text-sm font-semibold text-ink-3">Body goals</h2>
       <form onSubmit={saveBodyGoals} className="rounded-3xl border border-line bg-surface p-4 shadow-card">

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { NavContext } from './contexts/NavContext'
+import { EditProvider } from './contexts/EditContext'
 import { Login } from './components/Login'
 import { TabBar, type Tab } from './components/TabBar'
 import { Today } from './pages/Today'
@@ -38,6 +39,7 @@ function Shell() {
   // the tab bar is fixed over the bottom of it.
   return (
     <NavContext value={{ tab, setTab, goalDetailId, openGoalDetail }}>
+      <EditProvider>
       <div className="flex h-full flex-col">
         <div className="min-h-0 flex-1 overflow-hidden">
           {tab === 'today' && <Today />}
@@ -56,6 +58,7 @@ function Shell() {
         </div>
         <TabBar active={tab} onChange={setTab} />
       </div>
+      </EditProvider>
     </NavContext>
   )
 }

@@ -109,7 +109,7 @@ export function Goals() {
     await rolloverRecurringGoals()
     const [{ data: goalRows }, { data: catRows }, { data: checkinRows }] = await Promise.all([
       supabase.from('goals').select('*').order('created_at'),
-      supabase.from('categories').select('*').order('name'),
+      supabase.from('categories').select('*').order('position').order('name'),
       supabase.from('goal_checkins').select('*'),
     ])
     const goals = (goalRows ?? []) as Goal[]
@@ -591,6 +591,7 @@ export function Goals() {
         <GoalForm
           tab={tab}
           categories={categories}
+          setCategories={setCategories}
           onClose={() => setCreating(false)}
           onCreated={() => {
             setCreating(false)

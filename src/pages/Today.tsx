@@ -16,7 +16,8 @@ import {
   resolveGoalProgress,
   type GoalPace,
 } from '../lib/goals'
-import { ensureDefaultCategories, CATEGORY_STYLES } from '../lib/categories'
+import { CATEGORY_STYLES } from '../lib/categories'
+import { LabelPicker } from '../components/LabelPicker'
 import { AUTO_METRICS, METRIC_INFO, isAutoMetric, upsertMetricValue, type AutoMetric } from '../lib/metrics'
 import { addMacros, logEntryMacros, ZERO_MACROS } from '../lib/food'
 import { THEME } from '../lib/theme'
@@ -116,7 +117,6 @@ export function Today() {
 
   async function load() {
     setLoading(true)
-    await ensureDefaultCategories()
     await rolloverRecurringGoals()
     const [
       { data: taskRows },
@@ -141,7 +141,7 @@ export function Today() {
         .or(`scheduled_date.is.null,scheduled_date.lte.${date}`)
         .order('created_at'),
       supabase.from('task_completions').select('task_id').eq('date', date),
-      supabase.from('categories').select('*').order('name'),
+      supabase.from('categories').select('*').order('position').order('name'),
       supabase
         .from('goals')
         .select('*')
@@ -900,23 +900,13 @@ export function Today() {
               placeholder="What needs doing?"
               className="rounded-[20px] border border-line bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
             />
-            <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4 py-0.5">
-              {[{ id: '', name: 'No label', color: null }, ...categories].map((c) => {
-                const on = newCategoryId === c.id
-                const accent = c.color ? CATEGORY_STYLES[c.color].accent : THEME.inkDisabled
-                return (
-                  <button
-                    key={c.id || 'none'}
-                    type="button"
-                    onClick={() => setNewCategoryId(c.id)}
-                    className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs ${on ? 'bg-pine font-semibold text-white' : 'border border-line bg-surface font-medium text-ink-2'}`}
-                  >
-                    <span className="h-2 w-2 rounded-full" style={{ background: on ? '#fff' : accent }} />
-                    {c.name}
-                  </button>
-                )
-              })}
-            </div>
+            <LabelPicker
+              labels={categories}
+              setLabels={setCategories}
+              value={newCategoryId || null}
+              onChange={(id) => setNewCategoryId(id ?? '')}
+              onRefsChanged={load}
+            />
             <div className="flex gap-2">
               <select
                 value={newGoalSeriesId}

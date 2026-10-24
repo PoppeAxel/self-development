@@ -5,6 +5,7 @@ import { todayISO } from '../lib/dates'
 import { CATEGORY_STYLES } from '../lib/categories'
 import { Screen } from '../components/Screen'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { LabelPicker } from '../components/LabelPicker'
 import type { Category, DailyTask } from '../lib/types'
 
 export function Calendar() {
@@ -30,7 +31,7 @@ export function Calendar() {
         .gte('scheduled_date', monthStart)
         .lte('scheduled_date', monthEnd)
         .order('scheduled_date'),
-      supabase.from('categories').select('*').order('name'),
+      supabase.from('categories').select('*').order('position').order('name'),
     ])
     setTasks(taskRows ?? [])
     setCategories(categoryRows ?? [])
@@ -178,20 +179,13 @@ export function Calendar() {
           placeholder={`Add a task for ${format(new Date(selectedDate + 'T00:00:00'), 'MMM d')}`}
           className="rounded-[20px] border border-line-strong bg-surface px-4 py-2.5 text-ink placeholder-ink-disabled outline-none focus:border-pine"
         />
-        <div className="flex gap-2">
-          <select
-            value={newCategoryId}
-            onChange={(e) => setNewCategoryId(e.target.value)}
-            className="flex-1 rounded-[20px] border border-line-strong bg-surface px-3 py-2.5 text-ink outline-none focus:border-pine"
-          >
-            <option value="">No label</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        <LabelPicker
+          labels={categories}
+          setLabels={setCategories}
+          value={newCategoryId || null}
+          onChange={(id) => setNewCategoryId(id ?? '')}
+          onRefsChanged={load}
+        />
         <label className="flex items-center gap-2 text-sm text-ink-3">
           <input
             type="checkbox"
