@@ -2,67 +2,18 @@
 // so scripts/budget.check.ts can run it under node.
 
 import { BUFFER_ACCOUNTS, SAVINGS_ACCOUNTS, type BufferAccount, type SavingsAccount } from './finance'
+import { liveOptions, type OptionRow } from './editable'
 
-// Head categories → subcategories. A transaction stores its SUBcategory id; heads only group
-// them on screen. Each subcategory is fixed or variable on its own, so a head can hold both
-// (Home: the housing fee is fixed, furnishing is variable). Fixed list on purpose — he asks
-// for changes rather than maintaining categories in the app.
-export const HEADS = [
-  { id: 'home', label: 'Home', icon: '🏠', color: '#8a5a44', subs: ['housing', 'mortgage', 'electricity', 'home_insurance', 'household'] },
-  { id: 'food', label: 'Food', icon: '🛒', color: '#3f9a6b', subs: ['groceries', 'eating_out'] },
-  { id: 'transport', label: 'Transport', icon: '🚗', color: '#4f7f8c', subs: ['car_costs', 'fuel_parking', 'public_transport'] },
-  { id: 'bills', label: 'Bills & subscriptions', icon: '📱', color: '#7a6aa8', subs: ['phone', 'streaming', 'union'] },
-  { id: 'loans', label: 'Loans', icon: '🎓', color: '#6b5a8a', subs: ['csn', 'other_loans'] },
-  { id: 'shopping', label: 'Shopping', icon: '🛍️', color: '#a8842f', subs: ['clothes', 'shopping'] },
-  { id: 'health', label: 'Health & training', icon: '💪', color: '#b45a6e', subs: ['gym', 'pharmacy_care'] },
-  { id: 'fun', label: 'Fun & travel', icon: '🎉', color: '#c0703a', subs: ['going_out', 'trips'] },
-  { id: 'other', label: 'Other', icon: '📦', color: '#8c8577', subs: ['other'] },
-] as const
-export type HeadId = (typeof HEADS)[number]['id']
-export type SubCategory = (typeof HEADS)[number]['subs'][number]
+// Head categories → subcategories → keyword guesses live in the `options` table (kinds
+// budget_head / budget_sub / budget_keyword, migration 0048) and are edited in place in Budget
+// and Plan. A transaction stores its SUBcategory key; heads only group them on screen. Each
+// subcategory is fixed or variable on its own, so a head can hold both (Home: the housing fee
+// is fixed, furnishing is variable). The specials below stay in code — the maths treats each
+// one differently — as do the 'mortgage' and 'other' subs (system rows: renamable, not deletable).
 
-const SUB_INFO: Record<SubCategory, { label: string; group: 'fixed' | 'variable' }> = {
-  housing: { label: 'Housing fee', group: 'fixed' },
-  // The payment row; its amortization part counts as saved, only the interest as a cost.
-  mortgage: { label: 'Mortgage interest', group: 'fixed' },
-  electricity: { label: 'Electricity', group: 'fixed' },
-  home_insurance: { label: 'Home insurance', group: 'fixed' },
-  household: { label: 'Furnishing & household', group: 'variable' },
-  groceries: { label: 'Groceries', group: 'variable' },
-  eating_out: { label: 'Eating out', group: 'variable' },
-  car_costs: { label: 'Car costs', group: 'fixed' },
-  fuel_parking: { label: 'Fuel & parking', group: 'variable' },
-  public_transport: { label: 'Public transport', group: 'variable' },
-  phone: { label: 'Phone', group: 'fixed' },
-  streaming: { label: 'Streaming & apps', group: 'fixed' },
-  union: { label: 'Union & a-kassa', group: 'fixed' },
-  csn: { label: 'CSN', group: 'fixed' },
-  other_loans: { label: 'Other loans', group: 'fixed' },
-  clothes: { label: 'Clothes', group: 'variable' },
-  shopping: { label: 'Other shopping', group: 'variable' },
-  gym: { label: 'Gym', group: 'fixed' },
-  pharmacy_care: { label: 'Pharmacy & care', group: 'variable' },
-  going_out: { label: 'Going out', group: 'variable' },
-  trips: { label: 'Trips', group: 'variable' },
-  other: { label: 'Other', group: 'variable' },
-}
-
-const SPECIAL = ['income', 'savings', 'card', 'shared', 'transfer'] as const
-export type BudgetCategory = (typeof SPECIAL)[number] | SubCategory
+/** A stored category id: a budget_sub key or one of the specials. */
+export type BudgetCategory = string
 export type BudgetGroup = 'income' | 'saved' | 'card' | 'fixed' | 'variable' | 'shared' | 'ignored'
-
-/** Every category, in picker order: income, savings, card, then each head's subs, shared, transfer. */
-export const BUDGET_CATEGORIES: BudgetCategory[] = ['income', 'savings', 'card', ...HEADS.flatMap((h) => h.subs), 'shared', 'transfer']
-
-export const GROUP_LABEL: Record<BudgetGroup, string> = {
-  income: 'Income',
-  saved: 'Saved',
-  card: 'Spending card',
-  fixed: 'Fixed costs',
-  variable: 'Variable',
-  shared: 'Shared',
-  ignored: 'Ignored',
-}
 
 export interface CategoryInfo {
   label: string
@@ -70,28 +21,91 @@ export interface CategoryInfo {
   color: string
   group: BudgetGroup
   /** Set for subcategories only. */
-  head?: HeadId
+  head?: string
 }
 
-export const CATEGORY_INFO = {
+export const SPECIAL_INFO = {
   income: { label: 'Income', icon: '💰', color: '#2f6b5a', group: 'income' },
   // Split by SplitRules into the buffers and ETF & stocks (see bankSavingsEntries).
   savings: { label: 'Savings (Avanza)', icon: '🏦', color: '#46608f', group: 'saved' },
+  // Top-ups of his Revolut card, which he spends on food, fuel and odds and ends. Split by
+  // SplitRules.card into subcategories (see periodBudget) — the purchases themselves never
+  // reach this account.
+  card: { label: 'Revolut card (split)', icon: '💳', color: '#5b7fa6', group: 'card' },
   // Swish to/from his partner for split costs. Her share covers rent as well as food, so it
   // nets against the total (left over), not against any one head.
   shared: { label: 'Shared costs', icon: '🤝', color: '#9a7b5f', group: 'shared' },
   // Moves between his own accounts: counted nowhere.
   transfer: { label: 'Own transfer (ignored)', icon: '↔️', color: '#b9b2a4', group: 'ignored' },
-  // Top-ups of his Revolut card, which he spends on food, fuel and odds and ends. Split by
-  // SplitRules.card into subcategories (see periodBudget) — the purchases themselves never
-  // reach this account.
-  card: { label: 'Revolut card (split)', icon: '💳', color: '#5b7fa6', group: 'card' },
-  ...Object.fromEntries(HEADS.flatMap((h) => h.subs.map((s) => [s, { ...SUB_INFO[s], icon: h.icon, color: h.color, head: h.id }]))),
-} as Record<BudgetCategory, CategoryInfo>
+} satisfies Record<string, CategoryInfo>
+export type SpecialCategory = keyof typeof SPECIAL_INFO
+
+// What an id nothing knows reads as, if even the Other row is missing.
+const UNKNOWN: CategoryInfo = { label: 'Other', icon: '📦', color: '#8c8577', group: 'variable' }
+
+export interface Head {
+  key: string
+  label: string
+  icon: string
+  color: string
+}
+
+export interface Sub {
+  key: string
+  label: string
+  head: string
+  group: 'fixed' | 'variable'
+}
+
+export interface BudgetCatalog {
+  /** Live heads, in display order. */
+  heads: Head[]
+  /** Live subcategories, in head order then their own. */
+  subs: Sub[]
+  /** Every known id → its info; archived subs included, so old transactions keep their name. */
+  info: Map<string, CategoryInfo>
+  /** Live keyword guesses in order (first match wins), only those pointing at a live category. */
+  keywords: [RegExp, BudgetCategory][]
+}
+
+/** A keyword pattern as a RegExp, or null when it's empty or doesn't compile. */
+export function safeRegExp(pattern: string): RegExp | null {
+  if (!pattern.trim()) return null
+  try {
+    return new RegExp(pattern)
+  } catch {
+    return null
+  }
+}
+
+const toSub = (r: OptionRow): Sub => ({ key: r.key, label: r.label, head: String(r.meta.head ?? ''), group: r.meta.group === 'fixed' ? 'fixed' : 'variable' })
+
+/** The budget's categories, from the `options` rows of kinds budget_head / budget_sub / budget_keyword. */
+export function makeCatalog(rows: OptionRow[]): BudgetCatalog {
+  const heads = liveOptions(rows, 'budget_head').map((r) => ({ key: r.key, label: r.label, icon: r.icon ?? '', color: r.color ?? UNKNOWN.color }))
+  const order = new Map(heads.map((h, i) => [h.key, i]))
+  const subs = liveOptions(rows, 'budget_sub')
+    .map(toSub)
+    .sort((a, b) => (order.get(a.head) ?? heads.length) - (order.get(b.head) ?? heads.length))
+  const headRow = new Map(rows.filter((r) => r.kind === 'budget_head').map((r) => [r.key, r]))
+  const info = new Map<string, CategoryInfo>(Object.entries(SPECIAL_INFO))
+  for (const r of rows) {
+    if (r.kind !== 'budget_sub') continue
+    const s = toSub(r)
+    const h = headRow.get(s.head)
+    info.set(s.key, { label: s.label, group: s.group, head: s.head, icon: h?.icon ?? UNKNOWN.icon, color: h?.color ?? UNKNOWN.color })
+  }
+  const live = new Set<string>([...Object.keys(SPECIAL_INFO), ...subs.map((s) => s.key)])
+  const keywords = liveOptions(rows, 'budget_keyword').flatMap((r): [RegExp, BudgetCategory][] => {
+    const category = String(r.meta.category ?? '')
+    const re = safeRegExp(r.label)
+    return re && live.has(category) ? [[re, category]] : []
+  })
+  return { heads, subs, info, keywords }
+}
 
 /** Info for a stored category; anything unknown (an id from before a rename) reads as Other. */
-export const categoryInfo = (c: string): CategoryInfo => CATEGORY_INFO[c as BudgetCategory] ?? CATEGORY_INFO.other
-export const headOf = (id: HeadId) => HEADS.find((h) => h.id === id)!
+export const categoryInfo = (cat: BudgetCatalog, c: string): CategoryInfo => cat.info.get(c) ?? cat.info.get('other') ?? UNKNOWN
 
 export interface BankTransaction {
   id: string
@@ -112,40 +126,15 @@ export interface ParsedRow {
 // Card rows read "Kortköp 241005 ICA NARA" — drop digits so every ICA visit shares one key.
 export const merchantKey = (description: string) => description.toLowerCase().replace(/[\d/.,:-]+/g, ' ').replace(/\s+/g, ' ').trim()
 
-const GUESSES: [RegExp, BudgetCategory][] = [
-  [/\b(lön|lon|salary|försäkringskassan)\b/, 'income'],
-  [/(avanza|nordnet|sparkonto|\bisk\b)/, 'savings'],
-  [/(hyra|\bbrf\b|\bhsb\b)/, 'housing'],
-  [/(bolån|omsättning lån)/, 'mortgage'],
-  [/(ellevio|vattenfall|e\.on|tibber|fortum)/, 'electricity'],
-  [/(hemförsäkring|if skade|folksam|trygg-hansa|länsförsäkringar)/, 'home_insurance'],
-  [/(ikea|clas ohlson|jula|bauhaus|hornbach|byggmax|mio\b|rusta)/, 'household'],
-  [/(\bcsn\b)/, 'csn'],
-  [/(ränta|avgift lån|nordea bank\b)/, 'other_loans'],
-  [/(telia|tele2|comviq|telenor|\btre\b|hallon)/, 'phone'],
-  [/(spotify|netflix|\bhbo\b|viaplay|disney|youtube|apple\.com|anthropic|claude|microsoft)/, 'streaming'],
-  [/(akademike|a-kassa|unionen|\bsaco\b)/, 'union'],
-  // Revolut is his food/household card — topping it up is the grocery spend.
-  [/(revolut)/, 'card'],
-  [/(\bica\b|coop|willys|hemköp|lidl|city gross|mathem|\bspar\b|tempo)/, 'groceries'],
-  [/(\bbar\b|\bpub\b|liffey|nattklubb|tickster|ticketmaster|filmstaden|biljett)/, 'going_out'],
-  [/(restaurang|brasserie|mcdonald|\bmax\b|burger|pizz|sushi|foodora|wolt|espresso house|pressbyrån|7-eleven|cafe|café)/, 'eating_out'],
-  [/(transportstyrelsen|fordonsskatt|bilförsäkring|besiktning|bilprovning|däck)/, 'car_costs'],
-  [/(circle k|preem|okq8|\bingo\b|\bst1\b|easypark|parkering|trafikkon|biltema)/, 'fuel_parking'],
-  [/(\bsl\b|\bsj\b|ruter|a train|\bvy\b|uber|\bbolt\b|västtrafik|skånetrafiken)/, 'public_transport'],
-  [/(\bsas\b|norwegian|ryanair|booking\.com|airbnb|hotel|hotell)/, 'trips'],
-  [/(sats|nordic wellness|friskis|actic)/, 'gym'],
-  [/(apotek|vårdcentral|tandläk|\bkry\b|1177)/, 'pharmacy_care'],
-  [/(h&m|zalando|boozt|vinted|johnhenric|stadium|dressmann|weekday|carlings)/, 'clothes'],
-  [/(klarna|elgiganten|amazon|systembolaget|åhléns|ahlens|webhallen|inet)/, 'shopping'],
-]
-
-/** Last category he chose for this merchant wins; otherwise a keyword guess. Money in is only ever income or a refund. */
-export function guessCategory(description: string, amount: number, learned: Map<string, BudgetCategory>): BudgetCategory {
+/**
+ * Last category he chose for this merchant wins; otherwise the first matching keyword (the
+ * catalog's, in order). Money in is only ever income or a refund.
+ */
+export function guessCategory(description: string, amount: number, learned: Map<string, BudgetCategory>, cat: BudgetCatalog): BudgetCategory {
   const known = learned.get(merchantKey(description))
   if (known) return known
   const text = ` ${description.toLowerCase()} `
-  for (const [re, category] of GUESSES) if (re.test(text) && (category !== 'income' || amount > 0)) return category
+  for (const [re, category] of cat.keywords) if (re.test(text) && (category !== 'income' || amount > 0)) return category
   return amount > 0 ? 'income' : 'other'
 }
 
@@ -262,12 +251,9 @@ export interface SplitRules {
   /** How much of each pay period's savings goes to each buffer, filled in BUFFER_ACCOUNTS order. */
   buffers: Record<BufferAccount, number>
   amortizationPerMonth: number
-  /** How each pay period's card top-ups are spent, filled in CARD_SUBS order; the rest is Other. */
-  card: Partial<Record<SubCategory, number>>
+  /** How each pay period's card top-ups are spent, by subcategory key, filled in catalog order; the rest is Other. */
+  card: Record<string, number>
 }
-
-/** Subcategories a card top-up can be split into, in fill order. */
-export const CARD_SUBS = ['groceries', 'fuel_parking', 'shopping', 'eating_out'] as const satisfies readonly SubCategory[]
 
 export const NO_RULES: SplitRules = { buffers: { buffer: 0, car_buffer: 0, travel_buffer: 0 }, amortizationPerMonth: 0, card: {} }
 
@@ -328,16 +314,17 @@ export interface PeriodBudget {
 }
 
 /**
- * A period's net card top-ups split into subcategories: each CARD_SUBS entry up to its amount
- * in order, the rest Other. Money back from the card (net negative) reads as Other too.
+ * A period's net card top-ups split into subcategories: each live sub with a card amount, in
+ * catalog order, up to that amount; the rest Other. Money back from the card (net negative)
+ * reads as Other too.
  */
-export function splitCard(topUps: number, split: SplitRules['card']): { category: SubCategory; amount: number }[] {
-  const out: { category: SubCategory; amount: number }[] = []
+export function splitCard(topUps: number, split: SplitRules['card'], cat: BudgetCatalog): { category: BudgetCategory; amount: number }[] {
+  const out: { category: BudgetCategory; amount: number }[] = []
   let rest = topUps
-  for (const c of CARD_SUBS) {
-    const take = Math.min(split[c] ?? 0, Math.max(rest, 0))
+  for (const { key } of cat.subs) {
+    const take = Math.min(split[key] ?? 0, Math.max(rest, 0))
     if (take <= 0) continue
-    out.push({ category: c, amount: take })
+    out.push({ category: key, amount: take })
     rest -= take
   }
   if (rest) out.push({ category: 'other', amount: rest })
@@ -349,7 +336,13 @@ export function splitCard(topUps: number, split: SplitRules['card']): { category
  * nowhere; a mortgage payment's amortization is saved and only its interest is a fixed cost;
  * card top-ups are spread over their subcategories by `rules.card`.
  */
-export function periodBudget(transactions: Pick<BankTransaction, 'date' | 'amount' | 'category'>[], start: string, end: string, rules: SplitRules): PeriodBudget {
+export function periodBudget(
+  transactions: Pick<BankTransaction, 'date' | 'amount' | 'category'>[],
+  start: string,
+  end: string,
+  rules: SplitRules,
+  cat: BudgetCatalog,
+): PeriodBudget {
   const inPeriod = transactions.filter((t) => t.date >= start && t.date <= end)
   const savedByAccount = Object.fromEntries(SAVINGS_ACCOUNTS.map((a) => [a, 0])) as Record<SavingsAccount, number>
   for (const e of bankSavingsEntries(inPeriod, rules, () => '')) savedByAccount[e.account] += e.amount
@@ -360,8 +353,8 @@ export function periodBudget(transactions: Pick<BankTransaction, 'date' | 'amoun
   const addSpend = (c: BudgetCategory, cost: number) => spend.set(c, (spend.get(c) ?? 0) + cost)
   for (const t of inPeriod) {
     // An id that no longer exists (renamed category) counts as Other rather than vanishing.
-    const category = t.category in CATEGORY_INFO ? t.category : 'other'
-    const group = CATEGORY_INFO[category].group
+    const category = cat.info.has(t.category) ? t.category : 'other'
+    const group = categoryInfo(cat, category).group
     if (group === 'ignored' || group === 'saved') continue
     const amount = Number(t.amount)
     const cost = category === 'mortgage' ? -amount - Math.min(rules.amortizationPerMonth, Math.max(-amount, 0)) : -amount
@@ -370,9 +363,9 @@ export function periodBudget(transactions: Pick<BankTransaction, 'date' | 'amoun
     else if (group === 'card') topUps += cost
     else addSpend(category, cost)
   }
-  for (const s of splitCard(topUps, rules.card)) addSpend(s.category, s.amount)
+  for (const s of splitCard(topUps, rules.card, cat)) addSpend(s.category, s.amount)
   const byCategory = [...spend].map(([category, amount]) => ({ category, amount })).filter((c) => c.amount !== 0).sort((a, b) => b.amount - a.amount)
-  const sum = (g: BudgetGroup) => byCategory.filter((c) => CATEGORY_INFO[c.category].group === g).reduce((s, c) => s + c.amount, 0)
+  const sum = (g: BudgetGroup) => byCategory.filter((c) => categoryInfo(cat, c.category).group === g).reduce((s, c) => s + c.amount, 0)
   const fixed = sum('fixed')
   const variable = sum('variable')
   const saved = SAVINGS_ACCOUNTS.reduce((s, a) => s + savedByAccount[a], 0)
@@ -381,10 +374,10 @@ export function periodBudget(transactions: Pick<BankTransaction, 'date' | 'amoun
 
 // --- Plan: one monthly target per fixed/variable category (user_settings.budget_targets).
 
-export type BudgetTargets = Partial<Record<BudgetCategory, number>>
+export type BudgetTargets = Record<string, number>
 
-/** Categories a target can be set for: what a pay period spends on. */
-export const PLANNABLE: BudgetCategory[] = HEADS.flatMap((h) => h.subs)
+/** Categories a target can be set for: what a pay period spends on (never a special like 'card'). */
+export const plannable = (cat: BudgetCatalog): BudgetCategory[] => cat.subs.map((s) => s.key)
 
 export interface PlanRow {
   category: BudgetCategory
@@ -399,31 +392,40 @@ export interface PlanRow {
  * ponytail: one set of targets for every period — changing a target re-judges past periods
  * too. Store targets per period if he ever wants history of the plan itself.
  */
-export function planRows(b: Pick<PeriodBudget, 'byCategory'>, targets: BudgetTargets): PlanRow[] {
+export function planRows(b: Pick<PeriodBudget, 'byCategory'>, targets: BudgetTargets, cat: BudgetCatalog): PlanRow[] {
   const actual = new Map(b.byCategory.map((c) => [c.category, c.amount]))
-  return PLANNABLE.filter((c) => actual.has(c) || (targets[c] ?? 0) > 0).map((c) => ({ category: c, actual: actual.get(c) ?? 0, target: (targets[c] ?? 0) > 0 ? targets[c]! : null }))
+  return plannable(cat).filter((c) => actual.has(c) || (targets[c] ?? 0) > 0).map((c) => ({ category: c, actual: actual.get(c) ?? 0, target: (targets[c] ?? 0) > 0 ? targets[c]! : null }))
 }
 
 export interface HeadRow {
-  head: HeadId
+  head: Head
   actual: number
   /** Sum of its subcategories' targets; null when none of them has one. */
   target: number | null
   subs: PlanRow[]
 }
 
-/** Plan rows rolled up into their head categories, in HEADS order (heads with nothing to show are left out). */
-export function headRows(rows: PlanRow[]): HeadRow[] {
-  return HEADS.map((h) => {
-    const subs = rows.filter((r) => CATEGORY_INFO[r.category].head === h.id)
-    const targets = subs.filter((r) => r.target != null)
-    return {
-      head: h.id,
-      actual: subs.reduce((s, r) => s + r.actual, 0),
-      target: targets.length ? targets.reduce((s, r) => s + r.target!, 0) : null,
-      subs,
-    }
-  }).filter((h) => h.subs.length)
+/**
+ * Plan rows rolled up into their head categories, in catalog order. Heads with nothing to show
+ * are left out — unless `everything` (edit mode), which lists every live head and every live sub,
+ * empty ones as 0, so they can be edited.
+ */
+export function headRows(rows: PlanRow[], cat: BudgetCatalog, everything = false): HeadRow[] {
+  const byKey = new Map(rows.map((r) => [r.category, r]))
+  return cat.heads
+    .map((h) => {
+      const subs = everything
+        ? cat.subs.filter((s) => s.head === h.key).map((s) => byKey.get(s.key) ?? { category: s.key, actual: 0, target: null })
+        : rows.filter((r) => categoryInfo(cat, r.category).head === h.key)
+      const targets = subs.filter((r) => r.target != null)
+      return {
+        head: h,
+        actual: subs.reduce((s, r) => s + r.actual, 0),
+        target: targets.length ? targets.reduce((s, r) => s + r.target!, 0) : null,
+        subs,
+      }
+    })
+    .filter((h) => everything || h.subs.length)
 }
 
 /** Days left in start..end counting today, or null when today is outside it. */

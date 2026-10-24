@@ -3,15 +3,13 @@
 import assert from 'node:assert/strict'
 import {
   bankSavingsEntries,
-  BUDGET_CATEGORIES,
-  CATEGORY_INFO,
+  makeCatalog,
   categoryInfo,
   daysLeft,
   guessCategory,
-  HEADS,
   headRows,
   NO_RULES,
-  PLANNABLE,
+  plannable,
   planRows,
   splitCard,
   merchantKey,
@@ -23,6 +21,13 @@ import {
   periodBudget,
   type BudgetCategory,
 } from '../src/lib/budget'
+import type { OptionRow } from '../src/lib/editable'
+import fixture from './budget.fixture.json'
+
+// The catalog exactly as migration 0048 seeded it (dumped from the DB), so these asserts run
+// against the real keyword list, not a copy of it.
+const rows = (fixture as Omit<OptionRow, 'id' | 'icon' | 'color' | 'archived_at'>[]).map((r, i) => ({ icon: null, color: null, archived_at: null, ...r, id: 'f' + i }) as OptionRow)
+const cat = makeCatalog(rows)
 
 assert.equal(parseAmount('-1 234,50'), -1234.5)
 assert.equal(parseAmount('-1.234,50'), -1234.5)
@@ -54,33 +59,46 @@ assert.throws(() => parseNordeaCsv('foo;bar\n1;2'), /date and amount/)
 
 // Categories: keyword guess, short words don't match inside others, learned choice wins.
 const none = new Map<string, BudgetCategory>()
-assert.equal(guessCategory('Kortköp 261003 ICA NARA', -100, none), 'groceries')
-assert.equal(guessCategory('Kortköp SPAR KVARNEN', -100, none), 'groceries')
-assert.equal(guessCategory('MUSICA MEDICA', -100, none), 'other')
-assert.equal(guessCategory('Överföring Avanza', -5000, none), 'savings')
-assert.equal(guessCategory('ARBETSGIVAREN AB', 32000, none), 'income')
-assert.equal(guessCategory('Betalning BG CSN Centrala', -1707, none), 'csn') // a repayment, not income
-assert.equal(guessCategory('Betalning PG 4173300-7 Nordea Bank', -924, none), 'other_loans')
-assert.equal(guessCategory('Kortköp 261022 Revolut**6942*', -5000, none), 'card') // his spending card
-assert.equal(guessCategory('Betalning BG 5552-2635 Ellevio (pub', -265, none), 'electricity')
-assert.equal(guessCategory('Betalning PG 4746003-5 Comviq', -134, none), 'phone')
-assert.equal(guessCategory('Open Banking BG 5862-8082 AKADEMIKE', -140, none), 'union')
-assert.equal(guessCategory('Kortköp ANTHROPIC* CLAUDE SU', -260, none), 'streaming')
-assert.equal(guessCategory('Open Banking PG 4809603-6 TRAFIKKON', -500, none), 'fuel_parking')
-assert.equal(guessCategory('Kortköp RUTERAPPEN', -40, none), 'public_transport')
-assert.equal(guessCategory('Kortköp THE LIFFEY', -255, none), 'going_out')
-assert.equal(guessCategory('Kortköp BRASSERIE ASTORIA', -1209, none), 'eating_out')
-assert.equal(guessCategory('Lön', -500, none), 'other') // money out is never income
-assert.equal(guessCategory('Open Banking BG HSB Stockh', -4463, none), 'housing')
-assert.equal(guessCategory('Swish återbetalning Boozt Fashion A', 839, none), 'clothes') // refund nets clothes
+assert.equal(guessCategory('Kortköp 261003 ICA NARA', -100, none, cat), 'groceries')
+assert.equal(guessCategory('Kortköp SPAR KVARNEN', -100, none, cat), 'groceries')
+assert.equal(guessCategory('MUSICA MEDICA', -100, none, cat), 'other')
+assert.equal(guessCategory('Överföring Avanza', -5000, none, cat), 'savings')
+assert.equal(guessCategory('ARBETSGIVAREN AB', 32000, none, cat), 'income')
+assert.equal(guessCategory('Betalning BG CSN Centrala', -1707, none, cat), 'csn') // a repayment, not income
+assert.equal(guessCategory('Betalning PG 4173300-7 Nordea Bank', -924, none, cat), 'other_loans')
+assert.equal(guessCategory('Kortköp 261022 Revolut**6942*', -5000, none, cat), 'card') // his spending card
+assert.equal(guessCategory('Betalning BG 5552-2635 Ellevio (pub', -265, none, cat), 'electricity')
+assert.equal(guessCategory('Betalning PG 4746003-5 Comviq', -134, none, cat), 'phone')
+assert.equal(guessCategory('Open Banking BG 5862-8082 AKADEMIKE', -140, none, cat), 'union')
+assert.equal(guessCategory('Kortköp ANTHROPIC* CLAUDE SU', -260, none, cat), 'streaming')
+assert.equal(guessCategory('Open Banking PG 4809603-6 TRAFIKKON', -500, none, cat), 'fuel_parking')
+assert.equal(guessCategory('Kortköp RUTERAPPEN', -40, none, cat), 'public_transport')
+assert.equal(guessCategory('Kortköp THE LIFFEY', -255, none, cat), 'going_out')
+assert.equal(guessCategory('Kortköp BRASSERIE ASTORIA', -1209, none, cat), 'eating_out')
+assert.equal(guessCategory('Lön', -500, none, cat), 'other') // money out is never income
+assert.equal(guessCategory('Open Banking BG HSB Stockh', -4463, none, cat), 'housing')
+assert.equal(guessCategory('Swish återbetalning Boozt Fashion A', 839, none, cat), 'clothes') // refund nets clothes
 // Every subcategory sits in exactly one head and is fixed or variable.
-for (const h of HEADS) for (const s of h.subs) assert.equal(CATEGORY_INFO[s].head, h.id)
-assert.ok(PLANNABLE.every((c) => ['fixed', 'variable'].includes(CATEGORY_INFO[c].group)))
-assert.equal(new Set(BUDGET_CATEGORIES).size, BUDGET_CATEGORIES.length)
-assert.equal(categoryInfo('bills').label, 'Other') // an id from before the split reads as Other
+const headKeys = new Set(cat.heads.map((h) => h.key))
+for (const s of cat.subs) assert.ok(headKeys.has(s.head), s.key)
+assert.ok(plannable(cat).every((c) => ['fixed', 'variable'].includes(categoryInfo(cat, c).group)))
+assert.equal(new Set(plannable(cat)).size, plannable(cat).length)
+assert.deepEqual([cat.heads.length, cat.subs.length, cat.keywords.length], [9, 22, 24])
+assert.equal(categoryInfo(cat, 'bills').label, 'Other') // an id from before the split reads as Other
+
+// Edited in place: an archived sub keeps its name for old rows but leaves pickers and plans,
+// and keywords pointing at it stop guessing it; a pattern that doesn't compile is skipped.
+const edited = makeCatalog([
+  ...rows.map((r) => (r.kind === 'budget_sub' && r.key === 'clothes' ? { ...r, archived_at: '2026-10-24T10:00:00Z' } : r)),
+  { ...rows[0], id: 'bad', kind: 'budget_keyword', key: 'bad', label: '(unclosed', position: -1, meta: { category: 'gym' } },
+])
+assert.equal(categoryInfo(edited, 'clothes').label, 'Clothes')
+assert.ok(!plannable(edited).includes('clothes'))
+assert.equal(guessCategory('Kortköp BOOZT', -500, none, edited), 'other')
+assert.equal(edited.keywords.length, 23)
 assert.equal(merchantKey('Kortköp 261003 ICA NARA'), merchantKey('Kortköp 261117 ICA NARA'))
 const learned = new Map<string, BudgetCategory>([[merchantKey('Kortköp 261003 ICA NARA'), 'eating_out']])
-assert.equal(guessCategory('Kortköp 261117 ICA NARA', -50, learned), 'eating_out')
+assert.equal(guessCategory('Kortköp 261117 ICA NARA', -50, learned, cat), 'eating_out')
 
 // Payday: the salary row's date wins; without one, the 22nd, or the 23rd when that's a Sunday.
 const salary = (date: string) => ({ date, description: 'Lön', amount: 36000 })
@@ -117,6 +135,7 @@ const b = periodBudget(
   '2026-10-01',
   '2026-10-31',
   NO_RULES,
+  cat,
 )
 assert.equal(b.income, 32000)
 assert.equal(b.saved, 5000)
@@ -154,19 +173,20 @@ assert.deepEqual([sum(short, 'buffer'), sum(short, 'car_buffer'), sum(short, 'tr
 assert.equal(sum(bankSavingsEntries([{ date: '2026-12-01', amount: 2000, category: 'savings' }], rules), 'buffer'), -2000)
 
 // Budget with the rules: amortization is saved, only interest is a fixed cost.
-const p = periodBudget([...avanza, { date: '2026-10-28', amount: -6236, category: 'mortgage' }, { date: '2026-10-22', amount: 34117, category: 'income' }], '2026-10-22', '2026-11-22', rules)
+const p = periodBudget([...avanza, { date: '2026-10-28', amount: -6236, category: 'mortgage' }, { date: '2026-10-22', amount: 34117, category: 'income' }], '2026-10-22', '2026-11-22', rules, cat)
 assert.deepEqual(p.savedByAccount, { buffer: 2500, car_buffer: 500, travel_buffer: 1000, investments: 6000, mortgage: 1386 })
 assert.equal(p.saved, 11386)
 assert.equal(p.fixed, 4850) // 6236 − 1386 interest
 assert.deepEqual(p.byCategory, [{ category: 'mortgage', amount: 4850 }])
 assert.equal(p.left, 34117 - 11386 - 4850)
-assert.equal(guessCategory('Omsättning lån 3990 12 34567', -6236, none), 'mortgage')
+assert.equal(guessCategory('Omsättning lån 3990 12 34567', -6236, none, cat), 'mortgage')
 
 // Plan: targets show even with no spending yet; spending without a target keeps target null;
 // income/savings/shared never become plan rows; rows come in head order.
 const plan = planRows(
   { byCategory: [{ category: 'groceries', amount: 3200 }, { category: 'shopping', amount: 2001 }, { category: 'mortgage', amount: 4850 }] },
-  { groceries: 5000, eating_out: 1500, mortgage: 5000, savings: 9999 } as Parameters<typeof planRows>[1],
+  { groceries: 5000, eating_out: 1500, mortgage: 5000, savings: 9999 },
+  cat,
 )
 assert.deepEqual(plan, [
   { category: 'mortgage', actual: 4850, target: 5000 },
@@ -174,7 +194,7 @@ assert.deepEqual(plan, [
   { category: 'eating_out', actual: 0, target: 1500 },
   { category: 'shopping', actual: 2001, target: null },
 ])
-assert.deepEqual(planRows({ byCategory: [] }, { groceries: 0 }), []) // a cleared target is no target
+assert.deepEqual(planRows({ byCategory: [] }, { groceries: 0 }, cat), []) // a cleared target is no target
 
 // Heads roll up their subs; a head's target sums only the subs that have one, null if none.
 const heads = headRows([
@@ -183,15 +203,19 @@ const heads = headRows([
   { category: 'groceries', actual: 3200, target: 5000 },
   { category: 'eating_out', actual: 800, target: 1500 },
   { category: 'clothes', actual: 600, target: null },
-])
+], cat)
 assert.deepEqual(
-  heads.map((h) => [h.head, h.actual, h.target, h.subs.length]),
+  heads.map((h) => [h.head.key, h.actual, h.target, h.subs.length]),
   [
     ['home', 4763, 4500, 2],
     ['food', 4000, 6500, 2],
     ['shopping', 600, null, 1],
   ],
 )
+// Edit mode lists every live head and sub, empty ones as 0.
+const all = headRows([{ category: 'groceries', actual: 3200, target: null }], cat, true)
+assert.equal(all.length, 9)
+assert.deepEqual(all[1].subs, [{ category: 'groceries', actual: 3200, target: null }, { category: 'eating_out', actual: 0, target: null }])
 
 assert.equal(daysLeft('2026-10-23', '2026-11-22', '2026-10-22'), 31)
 assert.equal(daysLeft('2026-11-22', '2026-11-22', '2026-10-22'), 1) // last day counts
@@ -201,17 +225,17 @@ assert.equal(daysLeft('2026-03-29', '2026-04-21', '2026-03-23'), 24) // across t
 // Card top-ups: his 3 000 food / 1 500 fuel / 500 shopping. Exactly 5 000 fills all three; more
 // spills into Other; less fills in order; split is per period over the sum of top-ups.
 const card = { groceries: 3000, fuel_parking: 1500, shopping: 500 }
-assert.deepEqual(splitCard(5000, card), [
+assert.deepEqual(splitCard(5000, card, cat), [
   { category: 'groceries', amount: 3000 },
   { category: 'fuel_parking', amount: 1500 },
   { category: 'shopping', amount: 500 },
 ])
-assert.deepEqual(splitCard(6200, card).at(-1), { category: 'other', amount: 1200 })
-assert.deepEqual(splitCard(3500, card), [
+assert.deepEqual(splitCard(6200, card, cat).at(-1), { category: 'other', amount: 1200 })
+assert.deepEqual(splitCard(3500, card, cat), [
   { category: 'groceries', amount: 3000 },
   { category: 'fuel_parking', amount: 500 },
 ])
-assert.deepEqual(splitCard(0, card), [])
+assert.deepEqual(splitCard(0, card, cat), [])
 const withCard = periodBudget(
   [
     { date: '2026-10-22', amount: -3000, category: 'card' },
@@ -221,6 +245,7 @@ const withCard = periodBudget(
   '2026-10-22',
   '2026-11-22',
   { ...NO_RULES, card },
+  cat,
 )
 assert.deepEqual(withCard.byCategory, [
   { category: 'groceries', amount: 3400 },
@@ -228,6 +253,6 @@ assert.deepEqual(withCard.byCategory, [
   { category: 'shopping', amount: 500 },
 ])
 assert.equal(withCard.variable, 5400)
-assert.ok(!PLANNABLE.includes('card')) // the top-up itself is never planned — its subs are
+assert.ok(!plannable(cat).includes('card')) // the top-up itself is never planned — its subs are
 
 console.log('budget.check: ok')

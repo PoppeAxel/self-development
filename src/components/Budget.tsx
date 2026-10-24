@@ -1,59 +1,58 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { format } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { ACCOUNT_INFO, BUFFER_ACCOUNTS, SAVINGS_ACCOUNTS, formatKr, type BufferAccount } from '../lib/finance'
 import { loadBudgetRules } from '../lib/bankSavings'
+import { loadOptions } from '../lib/options'
+import type { OptionRow } from '../lib/editable'
 import {
-  CARD_SUBS,
-  CATEGORY_INFO,
-  HEADS,
   NO_RULES,
-  PLANNABLE,
+  SPECIAL_INFO,
   categoryInfo,
   daysLeft,
   decodeCsv,
   guessCategory,
-  headOf,
   headRows,
+  makeCatalog,
   merchantKey,
   parseNordeaCsv,
   payMonthOf,
   payPeriod,
   periodBudget,
+  plannable,
   planRows,
   shiftMonth,
   type BankTransaction,
   type BudgetCategory,
   type BudgetTargets,
-  type HeadId,
   type PlanRow,
+  type SpecialCategory,
   type SplitRules,
 } from '../lib/budget'
+import { useEdit } from '../contexts/EditContext'
+import { EditDots, useLongPress } from './ItemMenu'
+import { HeadSheet, SpecialSheet, SubSheet } from './BudgetCategorySheets'
 
 // Economy → Budget / Plan: import Nordea's CSV export (no bank API), see income, saved, fixed
 // costs, variable spending and left over per pay period (salary day → day before the next),
 // spending by head category (tap one for its subcategories), each against its monthly plan.
 // Categories are guessed on import; changing one applies to every transaction from that
-// merchant and to future imports — no rules to maintain.
-
-// The transaction picker: the special categories around each head's subcategories.
-const PICKER: { label: string; options: BudgetCategory[] }[] = [
-  { label: 'Income', options: ['income'] },
-  { label: 'Saved', options: ['savings'] },
-  { label: 'Spending card', options: ['card'] },
-  ...HEADS.map((h) => ({ label: `${h.icon} ${h.label}`, options: [...h.subs] as BudgetCategory[] })),
-  { label: 'Shared', options: ['shared'] },
-  { label: 'Ignored', options: ['transfer'] },
-]
+// merchant and to future imports — no rules to maintain. The categories and their keyword
+// guesses are edited in place: ✎ edit mode (or a long-press) puts a ⋯ on every head and sub.
 
 /** A small F / V tag: is this subcategory a fixed cost or variable spending? */
-function FixedTag({ category }: { category: BudgetCategory }) {
-  const fixed = CATEGORY_INFO[category].group === 'fixed'
+function FixedTag({ fixed }: { fixed: boolean }) {
   return (
     <span className={`shrink-0 rounded px-1 text-[9px] font-semibold ${fixed ? 'bg-cat-sky-tint text-cat-sky-ink' : 'bg-page text-ink-muted'}`} title={fixed ? 'Fixed cost' : 'Variable'}>
       {fixed ? 'FIXED' : 'VAR'}
     </span>
   )
+}
+
+/** A row that opens its sheet on long-press, on top of its normal tap. */
+function Pressable({ onLongPress, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { onLongPress: () => void }) {
+  const press = useLongPress(onLongPress)
+  return <button {...props} {...press} className={`${props.className ?? ''} select-none [-webkit-touch-callout:none]`} />
 }
 
 type Row = Pick<BankTransaction, 'id' | 'description' | 'category'>
@@ -68,8 +67,11 @@ async function fetchAllMerchants(): Promise<Row[]> {
   }
 }
 
+type Sheet = { kind: 'head'; row: OptionRow | null } | { kind: 'sub'; row: OptionRow | null; head: string } | { kind: 'special'; category: SpecialCategory }
+
 /** `actual` = import, what happened, transactions. `plan` = each category against its monthly target. */
 export function Budget({ view }: { view: 'actual' | 'plan' }) {
+  const { editing } = useEdit()
   // The calendar month whose salary opens the period shown.
   const [month, setMonth] = useState(payMonthOf(format(new Date(), 'yyyy-MM-dd')))
   // This month and the next — enough to find both paydays around the period.
@@ -81,9 +83,14 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
   const [editingRules, setEditingRules] = useState(false)
   const [targets, setTargets] = useState<BudgetTargets>({})
   const [editingPlan, setEditingPlan] = useState(false)
+  // Heads, subs and keyword guesses (options table), archived ones included for old rows' names.
+  const [options, setOptions] = useState<OptionRow[]>([])
+  const [optionsLoaded, setOptionsLoaded] = useState(false)
+  const cat = useMemo(() => makeCatalog(options), [options])
+  const [sheet, setSheet] = useState<Sheet | null>(null)
   // Head categories expanded to show their subcategories.
-  const [openHeads, setOpenHeads] = useState<Set<HeadId>>(new Set())
-  const toggleHead = (h: HeadId) =>
+  const [openHeads, setOpenHeads] = useState<Set<string>>(new Set())
+  const toggleHead = (h: string) =>
     setOpenHeads((s) => {
       const next = new Set(s)
       if (next.has(h)) next.delete(h)
@@ -93,12 +100,23 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
 
   useEffect(() => {
     loadBudgetRules().then(setRules)
+    loadOptions(['budget_head', 'budget_sub', 'budget_keyword']).then((rows) => {
+      setOptions(rows)
+      setOptionsLoaded(true)
+    })
     supabase
       .from('user_settings')
       .select('budget_targets')
       .maybeSingle()
       .then(({ data }) => setTargets((data?.budget_targets ?? {}) as BudgetTargets))
   }, [])
+
+  const optionRow = (kind: string, key: string) => options.find((r) => r.kind === kind && r.key === key) ?? null
+  const openCategory = (category: BudgetCategory) => {
+    if (category in SPECIAL_INFO) return setSheet({ kind: 'special', category: category as SpecialCategory })
+    const row = optionRow('budget_sub', category)
+    if (row) setSheet({ kind: 'sub', row, head: String(row.meta.head) })
+  }
 
   async function saveTarget(category: BudgetCategory, raw: string) {
     const value = Number(raw.replace(/\s/g, '').replace(',', '.') || 0)
@@ -112,10 +130,12 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
     await supabase.from('user_settings').upsert({ user_id: user.id, budget_targets: next })
   }
 
-  async function saveCardSplit(sub: (typeof CARD_SUBS)[number], raw: string) {
+  /** Empty or 0 takes the category out of the card split. */
+  async function saveCardSplit(sub: string, raw: string) {
     const value = Number(raw.replace(/\s/g, '').replace(',', '.') || 0)
-    if (!Number.isFinite(value) || value < 0 || value === (rules.card[sub] ?? 0)) return
+    if (!Number.isFinite(value) || value < 0 || (sub in rules.card && value === rules.card[sub])) return
     const card = { ...rules.card, [sub]: value }
+    if (!value) delete card[sub]
     setRules({ ...rules, card })
     const {
       data: { user },
@@ -170,7 +190,7 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
         const { data, error } = await supabase
           .from('bank_transactions')
           .upsert(
-            rows.slice(i, i + 500).map((r) => ({ ...r, user_id: user.id, category: guessCategory(r.description, r.amount, learned) })),
+            rows.slice(i, i + 500).map((r) => ({ ...r, user_id: user.id, category: guessCategory(r.description, r.amount, learned, cat) })),
             { onConflict: 'user_id,import_key', ignoreDuplicates: true },
           )
           .select('id')
@@ -196,14 +216,28 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
 
   const { start, end } = payPeriod(month, loaded)
   const txs = loaded.filter((t) => t.date >= start && t.date <= end)
-  const b = periodBudget(txs, start, end, rules)
-  const plan = planRows(b, targets)
-  const planned = PLANNABLE.reduce((s, c) => s + (targets[c] ?? 0), 0)
+  const b = periodBudget(txs, start, end, rules, cat)
+  const plan = planRows(b, targets, cat)
+  const planned = plannable(cat).reduce((s, c) => s + (targets[c] ?? 0), 0)
   // Only categories with a plan count here — unplanned spending would make "of planned" lie.
   const plannedSpent = plan.filter((r) => r.target != null).reduce((s, r) => s + r.actual, 0)
   const remainingDays = daysLeft(format(new Date(), 'yyyy-MM-dd'), end, start)
   const day = (iso: string) => format(new Date(iso + 'T00:00:00'), 'd MMM')
   const step = (n: number) => setMonth(shiftMonth(month, n))
+  const isFixed = (c: BudgetCategory) => categoryInfo(cat, c).group === 'fixed'
+  const cardSubs = cat.subs.filter((s) => s.key in rules.card)
+  const cardTotal = Object.values(rules.card).reduce((s, v) => s + v, 0)
+
+  // The transaction picker: the specials around each head's subcategories.
+  const picker: { label: string; options: BudgetCategory[] }[] = [
+    { label: 'Income', options: ['income'] },
+    { label: 'Saved', options: ['savings'] },
+    { label: 'Spending card', options: ['card'] },
+    ...cat.heads.map((h) => ({ label: `${h.icon} ${h.label}`, options: cat.subs.filter((s) => s.head === h.key).map((s) => s.key) })),
+    { label: 'Shared', options: ['shared'] },
+    { label: 'Ignored', options: ['transfer'] },
+  ]
+  const pickable = new Set(picker.flatMap((g) => g.options))
 
   // "1 200 kr" or "1 200 kr / 5 000 kr"; money back reads "+300 kr back".
   const amountText = (actual: number, target: number | null, over: boolean) => (
@@ -215,53 +249,73 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
 
   // One bar per head category (collapsed); tap it for its subcategories, each tagged fixed or
   // variable. With targets: "actual / target", a bar of the target that turns rose when over,
-  // and what's left. Without: a bar relative to the biggest head.
+  // and what's left. Without: a bar relative to the biggest head. In edit mode every head and
+  // sub shows (empty ones too) with its ⋯, plus "+ New" rows.
   const headSections = (rows: PlanRow[]) => {
-    const heads = headRows(rows)
-    if (!heads.length) return null
+    const heads = headRows(rows, cat, editing)
+    if (!heads.length && !editing) return null
     const maxHead = Math.max(...heads.map((h) => h.actual), 1)
     return (
       <div className="flex flex-col gap-3">
         <p className="mt-1 text-[11px] font-semibold tracking-[0.1em] text-ink-3">BY CATEGORY</p>
         {heads.map(({ head, actual, target, subs }) => {
-          const info = headOf(head)
           const over = target != null && actual > target
           const width = target != null ? Math.min(Math.max(actual, 0) / target, 1) : Math.max(actual, 0) / maxHead
-          const open = openHeads.has(head)
+          const open = openHeads.has(head.key)
+          const editHead = () => setSheet({ kind: 'head', row: optionRow('budget_head', head.key) })
           return (
-            <div key={head} className="flex flex-col gap-1">
-              <button onClick={() => toggleHead(head)} className="flex flex-col gap-1 text-left" aria-expanded={open}>
-                <span className="flex w-full items-baseline justify-between gap-2 text-[13px]">
-                  <span className="min-w-0 truncate font-medium text-ink-2">
-                    {info.icon} {info.label} <span className="text-[10px] text-ink-faint">{open ? '▲' : '▼'}</span>
+            <div key={head.key} className="flex flex-col gap-1">
+              <div className="flex items-start gap-1.5">
+                <Pressable onClick={() => toggleHead(head.key)} onLongPress={editHead} className="flex min-w-0 flex-1 flex-col gap-1 text-left" aria-expanded={open}>
+                  <span className="flex w-full items-baseline justify-between gap-2 text-[13px]">
+                    <span className="min-w-0 truncate font-medium text-ink-2">
+                      {head.icon} {head.label} <span className="text-[10px] text-ink-faint">{open ? '▲' : '▼'}</span>
+                    </span>
+                    {amountText(actual, target, over)}
                   </span>
-                  {amountText(actual, target, over)}
-                </span>
-                <span className="block h-1.5 w-full overflow-hidden rounded-full bg-[#ece5d7]">
-                  <span className="block h-full rounded-full" style={{ width: `${width * 100}%`, background: over ? 'var(--color-cat-rose)' : info.color }} />
-                </span>
-                {target != null && (
-                  <span className={`text-[11px] ${over ? 'font-medium text-cat-rose-ink' : 'text-ink-muted'}`}>
-                    {over ? `${formatKr(actual - target)} over` : `${formatKr(target - actual)} left`}
+                  <span className="block h-1.5 w-full overflow-hidden rounded-full bg-[#ece5d7]">
+                    <span className="block h-full rounded-full" style={{ width: `${width * 100}%`, background: over ? 'var(--color-cat-rose)' : head.color }} />
                   </span>
-                )}
-              </button>
+                  {target != null && (
+                    <span className={`text-[11px] ${over ? 'font-medium text-cat-rose-ink' : 'text-ink-muted'}`}>
+                      {over ? `${formatKr(actual - target)} over` : `${formatKr(target - actual)} left`}
+                    </span>
+                  )}
+                </Pressable>
+                {editing && <EditDots onClick={editHead} label={head.label} />}
+              </div>
               {open && (
                 <div className="ml-6 flex flex-col gap-1.5 border-l border-line pl-3 pt-1">
-                  {subs.map((s) => (
-                    <div key={s.category} className="flex items-baseline justify-between gap-2 text-[12px]">
-                      <span className="flex min-w-0 items-center gap-1.5 text-ink-3">
-                        <span className="truncate">{CATEGORY_INFO[s.category].label}</span>
-                        <FixedTag category={s.category} />
-                      </span>
-                      {amountText(s.actual, s.target, s.target != null && s.actual > s.target)}
-                    </div>
-                  ))}
+                  {subs.map((s) => {
+                    const editSub = () => openCategory(s.category)
+                    return (
+                      <div key={s.category} className="flex items-center gap-1.5">
+                        <Pressable onClick={() => editing && editSub()} onLongPress={editSub} className="flex min-w-0 flex-1 items-baseline justify-between gap-2 text-left text-[12px]">
+                          <span className="flex min-w-0 items-center gap-1.5 text-ink-3">
+                            <span className="truncate">{categoryInfo(cat, s.category).label}</span>
+                            <FixedTag fixed={isFixed(s.category)} />
+                          </span>
+                          {amountText(s.actual, s.target, s.target != null && s.actual > s.target)}
+                        </Pressable>
+                        {editing && <EditDots onClick={editSub} label={categoryInfo(cat, s.category).label} />}
+                      </div>
+                    )
+                  })}
+                  {editing && (
+                    <button onClick={() => setSheet({ kind: 'sub', row: null, head: head.key })} className="self-start text-[12px] font-medium text-pine">
+                      + New subcategory
+                    </button>
+                  )}
                 </div>
               )}
             </div>
           )
         })}
+        {editing && (
+          <button onClick={() => setSheet({ kind: 'head', row: null })} className="rounded-xl border border-dashed border-line-strong py-2 text-[13px] font-semibold text-pine">
+            + New category
+          </button>
+        )}
       </div>
     )
   }
@@ -271,12 +325,13 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
       {/* Import */}
       {view === 'actual' && (
       <>
-      <label className={`flex items-center justify-center gap-2 rounded-2xl border border-dashed border-line-strong bg-surface py-3 text-sm font-semibold text-pine ${importing ? 'opacity-50' : ''}`}>
+      <label className={`flex items-center justify-center gap-2 rounded-2xl border border-dashed border-line-strong bg-surface py-3 text-sm font-semibold text-pine ${importing || !optionsLoaded ? 'opacity-50' : ''}`}>
         {importing ? 'Importing…' : '⬆️ Import Nordea CSV'}
         <input
           type="file"
           accept=".csv,.txt,text/csv"
-          disabled={importing}
+          // The keyword guesses come from the options table — don't import before they've loaded.
+          disabled={importing || !optionsLoaded}
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0]
@@ -330,25 +385,27 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
           {editingPlan && (
             <div className="flex flex-col gap-1.5">
               <p className="text-[11px] text-ink-muted">What you plan to spend per pay period. Leave a category empty for no plan.</p>
-              {HEADS.map((h) => (
-                <div key={h.id} className="flex flex-col gap-1.5">
+              {cat.heads.map((h) => (
+                <div key={h.key} className="flex flex-col gap-1.5">
                   <p className="mt-1 text-[11px] font-semibold tracking-[0.06em] text-ink-3">
                     {h.icon} {h.label.toUpperCase()}
                   </p>
-                  {PLANNABLE.filter((c) => CATEGORY_INFO[c].head === h.id).map((c) => (
-                    <label key={c} className="flex items-center gap-2 rounded-xl border border-line bg-page px-3 py-2">
-                      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink-2">{CATEGORY_INFO[c].label}</span>
-                      <FixedTag category={c} />
-                      <input
-                        defaultValue={targets[c] || ''}
-                        onBlur={(e) => saveTarget(c, e.target.value)}
-                        inputMode="decimal"
-                        placeholder="—"
-                        className="w-20 shrink-0 bg-transparent text-right text-sm font-semibold text-ink outline-none placeholder:text-ink-faint"
-                      />
-                      <span className="text-xs text-ink-muted">kr</span>
-                    </label>
-                  ))}
+                  {cat.subs
+                    .filter((s) => s.head === h.key)
+                    .map((s) => (
+                      <label key={s.key} className="flex items-center gap-2 rounded-xl border border-line bg-page px-3 py-2">
+                        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink-2">{s.label}</span>
+                        <FixedTag fixed={s.group === 'fixed'} />
+                        <input
+                          defaultValue={targets[s.key] || ''}
+                          onBlur={(e) => saveTarget(s.key, e.target.value)}
+                          inputMode="decimal"
+                          placeholder="—"
+                          className="w-20 shrink-0 bg-transparent text-right text-sm font-semibold text-ink outline-none placeholder:text-ink-faint"
+                        />
+                        <span className="text-xs text-ink-muted">kr</span>
+                      </label>
+                    ))}
                 </div>
               ))}
             </div>
@@ -387,11 +444,11 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
             ))}
           </div>
         )}
-        {headSections(planRows(b, {}))}
+        {headSections(planRows(b, {}, cat))}
         {b.sharedBack !== 0 && (
           <div className="mt-1 flex items-baseline justify-between border-t border-line pt-2.5 text-[13px]">
             <span className="text-ink-2">
-              {CATEGORY_INFO.shared.icon} {CATEGORY_INFO.shared.label}
+              {SPECIAL_INFO.shared.icon} {SPECIAL_INFO.shared.label}
             </span>
             <span className={`font-semibold ${b.sharedBack > 0 ? 'text-pine' : 'text-ink'}`}>
               {b.sharedBack > 0 ? `+${formatKr(b.sharedBack)} back` : formatKr(-b.sharedBack)}
@@ -401,7 +458,7 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
         <button onClick={() => setEditingRules((v) => !v)} className="self-start text-[11px] font-medium text-ink-muted">
           {editingRules
             ? 'Done'
-            : `Split rules · buffers ${formatKr(BUFFER_ACCOUNTS.reduce((s, a) => s + rules.buffers[a], 0))} · card ${formatKr(CARD_SUBS.reduce((s, c) => s + (rules.card[c] ?? 0), 0))} · amortization ${formatKr(rules.amortizationPerMonth)}`}
+            : `Split rules · buffers ${formatKr(BUFFER_ACCOUNTS.reduce((s, a) => s + rules.buffers[a], 0))} · card ${formatKr(cardTotal)} · amortization ${formatKr(rules.amortizationPerMonth)}`}
         </button>
         {editingRules && (
           <div className="flex flex-col gap-1.5">
@@ -422,16 +479,16 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
               </label>
             ))}
             <p className="mt-2 text-[11px] text-ink-muted">
-              💳 Revolut card: each pay period, top-ups count as spent on these, in order; anything above them counts as Other.
+              {SPECIAL_INFO.card.icon} Revolut card: each pay period, top-ups count as spent on these, in category order; anything above them counts as Other. Empty one to take it out.
             </p>
-            {CARD_SUBS.map((c) => (
-              <label key={c} className="flex items-center gap-3 rounded-xl border border-line bg-page px-3 py-2">
+            {cardSubs.map((s) => (
+              <label key={s.key} className="flex items-center gap-3 rounded-xl border border-line bg-page px-3 py-2">
                 <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink-2">
-                  {CATEGORY_INFO[c].icon} {CATEGORY_INFO[c].label}
+                  {categoryInfo(cat, s.key).icon} {s.label}
                 </span>
                 <input
-                  defaultValue={rules.card[c] || ''}
-                  onBlur={(e) => saveCardSplit(c, e.target.value)}
+                  defaultValue={rules.card[s.key] || ''}
+                  onBlur={(e) => saveCardSplit(s.key, e.target.value)}
                   inputMode="decimal"
                   placeholder="0"
                   className="w-20 shrink-0 bg-transparent text-right text-sm font-semibold text-ink outline-none"
@@ -439,6 +496,29 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
                 <span className="text-xs text-ink-muted">kr</span>
               </label>
             ))}
+            {/* Adding a category asks for its amount right away; it shows up above once saved. */}
+            <select
+              value=""
+              onChange={(e) => {
+                const raw = e.target.value && window.prompt(`Revolut card: kr per pay period on ${categoryInfo(cat, e.target.value).label}`)
+                if (e.target.value && raw) saveCardSplit(e.target.value, raw)
+              }}
+              className="rounded-xl border border-dashed border-line-strong bg-page px-3 py-2 text-[13px] font-medium text-pine outline-none"
+              aria-label="Add a category to the card split"
+            >
+              <option value="">+ Add a category to the card split</option>
+              {cat.heads.map((h) => (
+                <optgroup key={h.key} label={`${h.icon} ${h.label}`}>
+                  {cat.subs
+                    .filter((s) => s.head === h.key && !(s.key in rules.card))
+                    .map((s) => (
+                      <option key={s.key} value={s.key}>
+                        {s.label}
+                      </option>
+                    ))}
+                </optgroup>
+              ))}
+            </select>
           </div>
         )}
       </div>
@@ -453,27 +533,30 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
         <div className="-mt-1 overflow-hidden rounded-[20px] border border-line bg-surface">
           {txs.map((t, i) => (
             <div key={t.id} className={`flex items-center gap-3 px-3.5 py-2.5 ${i > 0 ? 'border-t border-line' : ''}`}>
-              <span className="text-base">{categoryInfo(t.category).icon}</span>
+              <span className="text-base">{categoryInfo(cat, t.category).icon}</span>
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-[13px] font-medium text-ink">{t.description}</span>
                 <span className="flex items-center gap-1 text-[11px] text-ink-muted">
                   {day(t.date)} ·
                   <select
                     value={t.category}
-                    onChange={(e) => recategorize(t, e.target.value as BudgetCategory)}
+                    onChange={(e) => recategorize(t, e.target.value)}
                     className="min-w-0 truncate bg-transparent text-[11px] text-pine outline-none"
                     aria-label="Category"
                   >
-                    {PICKER.map((g) => (
+                    {/* A deleted (archived) or unknown category still shows as the row's value. */}
+                    {!pickable.has(t.category) && <option value={t.category}>{categoryInfo(cat, t.category).label}</option>}
+                    {picker.map((g) => (
                       <optgroup key={g.label} label={g.label}>
                         {g.options.map((c) => (
                           <option key={c} value={c}>
-                            {CATEGORY_INFO[c].label}
+                            {categoryInfo(cat, c).label}
                           </option>
                         ))}
                       </optgroup>
                     ))}
                   </select>
+                  {editing && <EditDots onClick={() => openCategory(t.category)} label={categoryInfo(cat, t.category).label} />}
                 </span>
               </span>
               <span className={`shrink-0 text-[13px] font-semibold ${t.amount > 0 ? 'text-pine' : 'text-ink'}`}>
@@ -486,6 +569,10 @@ export function Budget({ view }: { view: 'actual' | 'plan' }) {
       )}
       </>
       )}
+
+      {sheet?.kind === 'head' && <HeadSheet head={sheet.row} options={options} setOptions={setOptions} onClose={() => setSheet(null)} onRefsChanged={load} />}
+      {sheet?.kind === 'sub' && <SubSheet sub={sheet.row} headKey={sheet.head} options={options} setOptions={setOptions} onClose={() => setSheet(null)} onRefsChanged={load} />}
+      {sheet?.kind === 'special' && <SpecialSheet category={sheet.category} options={options} setOptions={setOptions} onClose={() => setSheet(null)} />}
     </>
   )
 }

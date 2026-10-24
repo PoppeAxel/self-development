@@ -77,7 +77,7 @@ export function ItemSheet({
   const action = 'flex-1 rounded-[14px] bg-track px-2 py-2.5 text-xs font-semibold text-ink-2 disabled:opacity-40'
   return (
     <div className="fixed inset-0 z-[75] flex items-end justify-center bg-black/40" onClick={onClose}>
-      <div className="safe-bottom w-full max-w-md rounded-t-3xl border border-line bg-surface p-5 shadow-card" onClick={(e) => e.stopPropagation()}>
+      <div className="safe-bottom max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-t-3xl border border-line bg-surface p-5 shadow-card" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
           <p className="font-semibold text-ink">{title}</p>
           <button type="button" onClick={onClose} className="rounded-full bg-track px-3 py-1.5 text-sm font-medium text-ink-2">

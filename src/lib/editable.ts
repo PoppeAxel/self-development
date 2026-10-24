@@ -3,6 +3,26 @@
 
 export const MAX_NAME = 30
 
+/** A row of the generic `options` table (migration 0048): one in-app editable list item. */
+export interface OptionRow {
+  id: string
+  kind: string
+  /** Stable id other rows store; never changes on rename. */
+  key: string
+  label: string
+  icon: string | null
+  color: string | null
+  position: number
+  meta: Record<string, unknown>
+  /** Code logic depends on it: can be renamed, not deleted. */
+  system: boolean
+  archived_at: string | null
+}
+
+/** Live rows of one kind in display order. */
+export const liveOptions = (rows: OptionRow[], kind: string) =>
+  rows.filter((r) => r.kind === kind && !r.archived_at).sort((a, b) => a.position - b.position || a.label.localeCompare(b.label))
+
 /** Why a name can't be saved, or null if it can. `others` = every other item's name, archived ones too. */
 export function nameProblem(name: string, others: string[]): string | null {
   const n = name.trim()
