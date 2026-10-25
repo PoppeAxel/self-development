@@ -53,7 +53,8 @@ export function EditDots({ onClick, label }: { onClick: () => void; label: strin
         onClick()
       }}
       aria-label={`Edit ${label}`}
-      className="flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-track px-1 text-[11px] font-bold leading-none text-ink-3"
+      // Solid pine with white dots, plus a light ring so it still stands out on a pine (selected) chip.
+      className="flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-pine px-1 text-[13px] font-bold leading-none text-white shadow-card ring-2 ring-surface"
     >
       ⋯
     </button>
