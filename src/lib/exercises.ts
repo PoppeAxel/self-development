@@ -2,9 +2,16 @@ import { live } from './optionStore'
 
 // The muscle groups an exercise can be tagged with (kind 'muscle_group', migration 0051, edited in
 // place in the exercise library). The label IS the text exercises.primary_muscle /
-// secondary_muscle store, so renaming one rewrites those rows.
+// secondary_muscles store, so renaming one rewrites those rows.
 export type MuscleGroup = string
 export const muscleGroups = (): MuscleGroup[] => live('muscle_group').map((r) => r.label)
+
+/** The muscle-group columns to write for an exercise: secondaries deduped, never the primary,
+ *  and the legacy secondary_muscle kept as a mirror of the first one (migration 0053). */
+export function muscleColumns(primary: string, secondaries: string[]) {
+  const list = [...new Set(secondaries.filter((m) => m && m !== primary))]
+  return { primary_muscle: primary || null, secondary_muscles: list, secondary_muscle: list[0] ?? null }
+}
 
 // The lifts worth tracking progress on (kind 'tracked_lift', edited in place on Training).
 // `exercise` is matched against gym_session_sets.exercise_name (exact, case-insensitive) so a

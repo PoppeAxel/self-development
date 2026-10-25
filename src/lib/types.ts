@@ -154,7 +154,9 @@ export interface Exercise {
   user_id: string
   name: string
   primary_muscle: string | null
+  /** Legacy mirror of secondary_muscles[0] (migration 0053) — read secondary_muscles instead. */
   secondary_muscle: string | null
+  secondary_muscles: string[]
   created_at: string
 }
 
