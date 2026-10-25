@@ -485,6 +485,12 @@ export function Training() {
         >
           All programs
         </button>
+        <button
+          onClick={() => gymRef.current?.openLibrary()}
+          className="rounded-[18px] border border-line bg-surface px-3.5 py-3 text-xs font-medium text-ink-2"
+        >
+          Exercises
+        </button>
         {otherOpen && (
           <ProgramPicker
             programs={programs}
