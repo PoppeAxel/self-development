@@ -14,6 +14,7 @@ import { Journal } from './pages/Journal'
 import { Food } from './pages/Food'
 import { Training } from './components/Training'
 import { Finance } from './components/Finance'
+import { ResumeBanner } from './components/LiveSession'
 
 function Shell() {
   // Strava redirects back here with ?code=... after connecting — land on Training, which
@@ -73,6 +74,7 @@ function Shell() {
           {tab === 'food' && <Food />}
           {tab === 'training' && <Training />}
         </div>
+        <ResumeBanner onResume={() => setTab('training')} />
         <TabBar active={tab} onChange={setTab} />
       </div>
       </EditProvider>
