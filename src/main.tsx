@@ -18,4 +18,16 @@ if ('serviceWorker' in navigator) {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') checkForUpdate()
   })
+  // That check only installs the new worker; this page is still running the old bundle it
+  // loaded from the precache. Once the new worker takes over (skipWaiting + clients.claim),
+  // reload so the deploy shows now instead of on the next launch. Skipped on first install,
+  // when there was no previous worker. A live workout survives this (it's in localStorage).
+  if (navigator.serviceWorker.controller) {
+    let reloaded = false
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloaded) return
+      reloaded = true
+      window.location.reload()
+    })
+  }
 }
