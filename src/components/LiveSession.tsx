@@ -1,5 +1,5 @@
 import { setting } from '../lib/settings'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { format, parseISO } from 'date-fns'
 import { supabase } from '../lib/supabase'
 import { todayISO } from '../lib/dates'
@@ -12,7 +12,9 @@ import type { Exercise, GymProgram, GymProgramExercise, GymSession, GymSessionSe
 // normal set is one tap. It writes the same gym_sessions / gym_session_sets rows the old
 // log sheet did — the session on the first tick, each set as it's ticked — and mirrors its
 // own state to localStorage, so killing the PWA mid-workout loses nothing and reopening
-// the Training tab resumes it.
+// the Training tab resumes it. "Park" closes the overlay but keeps that saved state, flagged
+// `parked`, so the rest of the app is usable; ResumeBanner (above the tab bar on every tab)
+// brings it back.
 
 export const LIVE_KEY = 'liveSession'
 
@@ -40,6 +42,8 @@ export interface LiveState {
   index: number
   restEndsAt: number | null
   restAfter: number | null
+  /** Set while the workout is parked: saved, but the overlay is closed. */
+  parked?: boolean
 }
 
 /** An unfinished workout from today, if the app was closed mid-session. */
@@ -52,12 +56,80 @@ export function savedLiveState(): LiveState | null {
   }
 }
 
-function clearSaved() {
+// Same-tab writes don't fire 'storage', so park/resume/clear announce themselves.
+const LIVE_EVENT = 'live-session-change'
+
+function writeSaved(s: LiveState | null) {
   try {
-    localStorage.removeItem(LIVE_KEY)
+    if (s) localStorage.setItem(LIVE_KEY, JSON.stringify(s))
+    else localStorage.removeItem(LIVE_KEY)
   } catch {
     // Private mode etc. — the sets are in the database either way.
   }
+  window.dispatchEvent(new Event(LIVE_EVENT))
+}
+
+export function clearSaved() {
+  writeSaved(null)
+}
+
+export function setParked(parked: boolean) {
+  const s = savedLiveState()
+  if (s) writeSaved({ ...s, parked })
+}
+
+function subscribeSaved(onChange: () => void) {
+  window.addEventListener(LIVE_EVENT, onChange)
+  window.addEventListener('storage', onChange)
+  return () => {
+    window.removeEventListener(LIVE_EVENT, onChange)
+    window.removeEventListener('storage', onChange)
+  }
+}
+
+function savedRaw() {
+  try {
+    return localStorage.getItem(LIVE_KEY)
+  } catch {
+    return null
+  }
+}
+
+/** The saved workout, re-read whenever it's parked, resumed or cleared. */
+export function useSavedLive(): LiveState | null {
+  const raw = useSyncExternalStore(subscribeSaved, savedRaw)
+  return raw == null ? null : savedLiveState()
+}
+
+/** Floating pill above the tab bar while a workout is parked; tapping it resumes. */
+export function ResumeBanner({ onResume }: { onResume: () => void }) {
+  const saved = useSavedLive()
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
+  if (!saved?.parked) return null
+  const done = saved.exercises.reduce((n, ex) => n + ex.sets.filter((s) => s.done).length, 0)
+  return (
+    <button
+      onClick={() => {
+        setParked(false)
+        onResume()
+      }}
+      className="fixed inset-x-4 z-30 flex items-center gap-3 rounded-[18px] bg-[#8a6321] px-4 py-2.5 text-left text-white shadow-tabbar"
+      style={{ bottom: 'calc(var(--tabbar-space) + 8px)' }}
+    >
+      <span className="text-lg">🏋️</span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-[13px] font-semibold">{saved.programName} · parked</span>
+        <span className="text-[11px] text-white/80 tabular-nums">
+          {clock(now - saved.startedAt)} · {done} {done === 1 ? 'set' : 'sets'} logged
+        </span>
+      </span>
+      <span className="shrink-0 rounded-full bg-white/20 px-3 py-1.5 text-xs font-semibold">Resume ›</span>
+    </button>
+  )
 }
 
 /** Set by set from last time; with no history, the program's target reps and no kg. */
@@ -158,6 +230,7 @@ export function LiveSession({
   allSets,
   sessionsThisWeek,
   onClose,
+  onPark,
 }: {
   initial: LiveState
   catalog: Exercise[]
@@ -168,6 +241,8 @@ export function LiveSession({
   /** Sessions already logged this week, not counting this one. */
   sessionsThisWeek: number
   onClose: () => void
+  /** Leave the overlay with the workout kept for later (see ResumeBanner). */
+  onPark: () => void
 }) {
   const [state, setState] = useState(initial)
   const [selected, setSelected] = useState<number | null>(null)
@@ -195,6 +270,12 @@ export function LiveSession({
 
   useEffect(() => {
     if (finishedAt) return
+    if (state.parked) {
+      // park() set this once its writes settled, so the saved copy has every row id.
+      writeSaved(state)
+      onPark()
+      return
+    }
     try {
       localStorage.setItem(LIVE_KEY, JSON.stringify(state))
     } catch {
@@ -370,6 +451,13 @@ export function LiveSession({
     onClose()
   }
 
+  // Waits for in-flight set writes first: a set saved without its row id in the parked
+  // copy would be inserted a second time on resume.
+  async function park() {
+    await flush()
+    setState((s) => ({ ...s, parked: true }))
+  }
+
   async function finish() {
     if (!anyDone) {
       clearSaved()
@@ -507,16 +595,23 @@ export function LiveSession({
     >
       <div className="flex shrink-0 flex-col gap-3.5 px-5 pt-4">
         <div className="flex items-center justify-between">
-          <button onClick={() => (anyDone ? setConfirmEnd(true) : end())} className="text-[13px] font-medium text-ink-3">
-            ✕ End
-          </button>
-          <span className="flex flex-col items-center">
-            <span className="text-sm font-semibold text-ink">{state.programName}</span>
+          <span className="flex w-[92px] gap-3.5">
+            <button onClick={() => (anyDone ? setConfirmEnd(true) : end())} className="text-[13px] font-medium text-ink-3">
+              ✕ End
+            </button>
+            <button onClick={park} className="text-[13px] font-medium text-[#8a6321]" aria-label="Park workout">
+              ⏸ Park
+            </button>
+          </span>
+          <span className="flex min-w-0 flex-col items-center">
+            <span className="truncate text-sm font-semibold text-ink">{state.programName}</span>
             <span className="text-[11px] text-ink-muted tabular-nums">{clock(now - state.startedAt)}</span>
           </span>
-          <button onClick={finish} className="text-[13px] font-semibold text-pine">
-            Finish
-          </button>
+          <span className="flex w-[92px] justify-end">
+            <button onClick={finish} className="text-[13px] font-semibold text-pine">
+              Finish
+            </button>
+          </span>
         </div>
         <div className="flex gap-1">
           {state.exercises.map((e, i) => (

@@ -25,7 +25,7 @@ import {
 import { THEME } from '../lib/theme'
 import { Screen, HeroChip, HeroSegments } from './Screen'
 import { CLOSE_BTN, GymPrograms, INPUT, SHEET, type GymProgramsHandle } from './GymPrograms'
-import { LiveSession, newLiveState, savedLiveState, SectionLabel, type LiveState } from './LiveSession'
+import { clearSaved, LiveSession, newLiveState, savedLiveState, SectionLabel, useSavedLive, type LiveState } from './LiveSession'
 import { ConfirmDialog } from './ConfirmDialog'
 import { EditDots } from './ItemMenu'
 import { SettingChips } from './SettingChips'
@@ -205,7 +205,16 @@ export function Training() {
   const [workouts, setWorkouts] = useState<Workout[]>([])
   const [goals, setGoals] = useState<Goal[]>([])
   const [loading, setLoading] = useState(true)
-  const [live, setLive] = useState<LiveState | null>(() => savedLiveState())
+  // A parked workout stays closed until it's resumed from the banner.
+  const [live, setLive] = useState<LiveState | null>(() => {
+    const s = savedLiveState()
+    return s && !s.parked ? s : null
+  })
+  const saved = useSavedLive()
+  const [replaceParked, setReplaceParked] = useState<GymProgram | null>(null)
+  useEffect(() => {
+    if (saved && !saved.parked && !live) setLive(saved)
+  }, [saved?.parked]) // eslint-disable-line react-hooks/exhaustive-deps
   const [view, setView] = useRemembered<'strength' | 'cardio'>('training', 'strength', ['strength', 'cardio'])
   const [otherOpen, setOtherOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -299,8 +308,14 @@ export function Training() {
 
   const next = nextProgram(programs, sessions)
 
-  function start(program: GymProgram) {
+  function start(program: GymProgram, replace = false) {
     setOtherOpen(false)
+    if (saved?.parked && !replace) {
+      setReplaceParked(program)
+      return
+    }
+    if (replace) clearSaved()
+    setReplaceParked(null)
     const list = (exercisesByProgram.get(program.id) ?? []).slice().sort((a, b) => a.position - b.position)
     setLive(newLiveState(program, list, sessions, setsBySession))
   }
@@ -838,8 +853,21 @@ export function Training() {
             setLive(null)
             load()
           }}
+          onPark={() => {
+            setLive(null)
+            load()
+          }}
         />
       )}
+
+      <ConfirmDialog
+        open={replaceParked !== null}
+        title="You have a parked workout"
+        message={`${saved?.programName ?? 'It'} is still parked. Starting ${replaceParked?.name ?? 'a new one'} ends it; its ticked sets are kept.`}
+        confirmLabel="Start new"
+        onConfirm={() => replaceParked && start(replaceParked, true)}
+        onCancel={() => setReplaceParked(null)}
+      />
 
       <ConfirmDialog
         open={confirmDeleteSession !== null}
