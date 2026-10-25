@@ -599,7 +599,7 @@ export function Training() {
               )
             })}
           </div>
-          <span className="-mt-1.5 text-[10px] text-ink-muted">Sets per week, 4-week average. Secondary muscles count as half a set.</span>
+          <span className="-mt-1.5 text-[10px] text-ink-muted">Sets per week, 4-week average. Each secondary muscle counts as half a set.</span>
         </>
       )}
 

@@ -6,9 +6,9 @@ import { autoLinks, nextProgram, paceTrend, paceTrendLabel, planCaption, workout
 import type { GoalPace } from '../src/lib/goals'
 import type { Workout } from '../src/lib/types'
 
-const ex = (name: string, primary: string | null, secondary: string | null = null) =>
-  [name.toLowerCase(), { id: name, user_id: '', name, primary_muscle: primary, secondary_muscle: secondary, created_at: '' }] as const
-const byName = new Map([ex('Bench', 'Chest', 'Triceps'), ex('Row', 'Upper back', 'Lower back')])
+const ex = (name: string, primary: string | null, ...secondaries: string[]) =>
+  [name.toLowerCase(), { id: name, user_id: '', name, primary_muscle: primary, secondary_muscle: secondaries[0] ?? null, secondary_muscles: secondaries, created_at: '' }] as const
+const byName = new Map([ex('Bench', 'Chest', 'Triceps'), ex('Row', 'Upper back', 'Lower back'), ex('Dip', 'Chest', 'Shoulders', 'Triceps', 'Biceps')])
 const session = (id: string, date: string, extra = {}) => ({ id, user_id: '', program_id: null, program_name: null, date, created_at: '', strava_workout_id: null, ...extra })
 const set = (session_id: string, exercise_name: string) => ({ id: '', user_id: '', session_id, exercise_name, set_number: 1, reps: 5, weight: 100, created_at: '' })
 
@@ -19,6 +19,11 @@ assert.equal(bal.find((r) => r.region === 'Arms')!.perWeek, 0.5)
 assert.equal(bal.find((r) => r.region === 'Arms')!.direct, 0)
 assert.equal(bal.find((r) => r.region === 'Chest')!.direct, 1)
 assert.equal(bal.find((r) => r.region === 'Back')!.perWeek, 1)
+// Several secondaries: each other region gets 0.5 once (Triceps + Biceps are both Arms).
+const dip = regionBalance([session('a', '2026-09-20')], [set('a', 'Dip')], byName, '2026-09-23', 1)
+assert.equal(dip.find((r) => r.region === 'Chest')!.perWeek, 1)
+assert.equal(dip.find((r) => r.region === 'Shoulders')!.perWeek, 0.5)
+assert.equal(dip.find((r) => r.region === 'Arms')!.perWeek, 0.5)
 // Outside the 4-week window → ignored; empty weeks still divide.
 assert.equal(regionBalance([session('b', '2026-08-01')], [set('b', 'Bench')], byName, '2026-09-23')[1].perWeek, 0)
 

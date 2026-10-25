@@ -1,6 +1,6 @@
 import { useImperativeHandle, useState, type Ref } from 'react'
 import { supabase } from '../lib/supabase'
-import { muscleGroups } from '../lib/exercises'
+import { muscleColumns, muscleGroups } from '../lib/exercises'
 import { lastTime } from '../lib/training'
 import { ConfirmDialog } from './ConfirmDialog'
 import { EditDots } from './ItemMenu'
@@ -9,8 +9,19 @@ import { useEdit } from '../contexts/EditContext'
 import { live as liveRows } from '../lib/optionStore'
 import type { OptionRow } from '../lib/editable'
 
-// An exercise stores its muscle groups' names as text (primary and secondary), so deleting one
-// moves those exercises (ids prefixed by column) and renaming one rewrites them.
+// An exercise stores its muscle groups' names as text (a primary, a list of secondaries), so
+// deleting one moves those exercises and renaming one rewrites them. Primary ids are `p:<id>`;
+// secondary ids carry the label and the list as it was (`s:{json}`), so the undo — a move back
+// to that label — can put the list back exactly instead of guessing where the label sat.
+interface SecondaryRef {
+  id: string
+  label: string
+  prev: string[]
+}
+const swapSecondary = (list: string[], from: string, to: string | null) =>
+  [...new Set(list.flatMap((m) => (m !== from ? [m] : to ? [to] : [])))]
+const writeSecondaries = (id: string, list: string[]) =>
+  supabase.from('exercises').update({ secondary_muscles: list, secondary_muscle: list[0] ?? null }).eq('id', id).throwOnError()
 const MUSCLE_REFS: RefMover = {
   noun: (n) => `${n} exercise ${n === 1 ? 'tag' : 'tags'}`,
   valueOf: (r) => r.label,
@@ -18,21 +29,54 @@ const MUSCLE_REFS: RefMover = {
   find: async (label) => {
     const [{ data: p }, { data: s }] = await Promise.all([
       supabase.from('exercises').select('id').eq('primary_muscle', label).throwOnError(),
-      supabase.from('exercises').select('id').eq('secondary_muscle', label).throwOnError(),
+      supabase.from('exercises').select('id, secondary_muscles').contains('secondary_muscles', [label]).throwOnError(),
     ])
-    return [...(p ?? []).map((r) => `p:${r.id}`), ...(s ?? []).map((r) => `s:${r.id}`)]
+    return [
+      ...(p ?? []).map((r) => `p:${r.id}`),
+      ...(s ?? []).map((r) => `s:${JSON.stringify({ id: r.id, label, prev: r.secondary_muscles } satisfies SecondaryRef)}`),
+    ]
   },
   move: async (ids, to) => {
-    const of = (prefix: string) => ids.filter((i) => i.startsWith(prefix)).map((i) => i.slice(2))
-    if (of('p:').length) await supabase.from('exercises').update({ primary_muscle: to }).in('id', of('p:')).throwOnError()
-    if (of('s:').length) await supabase.from('exercises').update({ secondary_muscle: to }).in('id', of('s:')).throwOnError()
+    const primaries = ids.filter((i) => i.startsWith('p:')).map((i) => i.slice(2))
+    const secondaries = ids.filter((i) => i.startsWith('s:')).map((i) => JSON.parse(i.slice(2)) as SecondaryRef)
+    if (primaries.length) await supabase.from('exercises').update({ primary_muscle: to }).in('id', primaries).throwOnError()
+    await Promise.all(secondaries.map((r) => writeSecondaries(r.id, to === r.label ? r.prev : swapSecondary(r.prev, r.label, to))))
   },
 }
 const renameMuscle = async (from: string, to: string) => {
+  const { data } = await supabase.from('exercises').select('id, secondary_muscles').contains('secondary_muscles', [from]).throwOnError()
   await Promise.all([
     supabase.from('exercises').update({ primary_muscle: to }).eq('primary_muscle', from).throwOnError(),
-    supabase.from('exercises').update({ secondary_muscle: to }).eq('secondary_muscle', from).throwOnError(),
+    ...(data ?? []).map((r) => writeSecondaries(r.id, swapSecondary(r.secondary_muscles, from, to))),
   ])
+}
+
+// Tap-to-toggle chips for an exercise's secondary muscles; the primary is left out (it already
+// counts in full) and picking it as primary later drops it from here (muscleColumns).
+function SecondaryChips({ primary, value, onChange }: { primary: string; value: string[]; onChange: (next: string[]) => void }) {
+  const options = muscleGroups().filter((m) => m !== primary)
+  if (options.length === 0) return null
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="text-[11px] font-semibold tracking-[0.06em] text-ink-3">SECONDARY MUSCLES (OPTIONAL)</p>
+      <div className="flex flex-wrap gap-[7px]">
+        {options.map((m) => {
+          const on = value.includes(m)
+          return (
+            <button
+              key={m}
+              type="button"
+              aria-pressed={on}
+              onClick={() => onChange(on ? value.filter((v) => v !== m) : [...value, m])}
+              className={`rounded-full px-3 py-1.5 text-xs ${on ? 'bg-pine font-semibold text-white' : 'border border-line bg-surface font-medium text-ink-2'}`}
+            >
+              {m}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 import type { Exercise, GymProgram, GymProgramExercise, GymSession, GymSessionSet } from '../lib/types'
 
@@ -46,7 +90,7 @@ interface ExerciseRow {
   sets: string
   reps: string
   primaryMuscle: string
-  secondaryMuscle: string
+  secondaryMuscles: string[]
 }
 
 interface SessionExerciseRow {
@@ -62,7 +106,7 @@ export interface GymProgramsHandle {
 }
 
 function emptyExerciseRow(): ExerciseRow {
-  return { name: '', sets: '3', reps: '10', primaryMuscle: '', secondaryMuscle: '' }
+  return { name: '', sets: '3', reps: '10', primaryMuscle: '', secondaryMuscles: [] }
 }
 
 export const SHEET = 'fixed inset-0 flex flex-col bg-page safe-top safe-bottom'
@@ -196,7 +240,7 @@ export function GymPrograms({
   const [editingExercise, setEditingExercise] = useState<Exercise | null>(null)
   const [exerciseFormName, setExerciseFormName] = useState('')
   const [exerciseFormPrimary, setExerciseFormPrimary] = useState('')
-  const [exerciseFormSecondary, setExerciseFormSecondary] = useState('')
+  const [exerciseFormSecondary, setExerciseFormSecondary] = useState<string[]>([])
   const [confirmDeleteExercise, setConfirmDeleteExercise] = useState<Exercise | null>(null)
 
   const exerciseByName = new Map(exercises.map((ex) => [ex.name.toLowerCase(), ex]))
@@ -224,7 +268,7 @@ export function GymPrograms({
               sets: String(ex.target_sets),
               reps: String(ex.target_reps),
               primaryMuscle: catalogEx?.primary_muscle ?? '',
-              secondaryMuscle: catalogEx?.secondary_muscle ?? '',
+              secondaryMuscles: catalogEx?.secondary_muscles ?? [],
             }
           })
         : [emptyExerciseRow()],
@@ -234,11 +278,11 @@ export function GymPrograms({
 
   // Upserts the row's name into the exercise catalog with its chosen muscle groups (or
   // clears them if left blank) and returns the catalog id to link on the program row.
-  async function upsertExercise(userId: string, name: string, primaryMuscle: string, secondaryMuscle: string): Promise<string | null> {
+  async function upsertExercise(userId: string, name: string, primaryMuscle: string, secondaryMuscles: string[]): Promise<string | null> {
     const { data, error } = await supabase
       .from('exercises')
       .upsert(
-        { user_id: userId, name, primary_muscle: primaryMuscle || null, secondary_muscle: secondaryMuscle || null },
+        { user_id: userId, name, ...muscleColumns(primaryMuscle, secondaryMuscles) },
         { onConflict: 'user_id,name' },
       )
       .select('id')
@@ -257,7 +301,7 @@ export function GymPrograms({
     if (!user) return
 
     const exerciseIds = await Promise.all(
-      validRows.map((r) => upsertExercise(user.id, r.name.trim(), r.primaryMuscle, r.secondaryMuscle)),
+      validRows.map((r) => upsertExercise(user.id, r.name.trim(), r.primaryMuscle, r.secondaryMuscles)),
     )
 
     const exercisePayload = (programId: string) =>
@@ -298,7 +342,7 @@ export function GymPrograms({
     setEditingExercise(null)
     setExerciseFormName('')
     setExerciseFormPrimary('')
-    setExerciseFormSecondary('')
+    setExerciseFormSecondary([])
     setExerciseFormOpen(true)
   }
 
@@ -306,7 +350,7 @@ export function GymPrograms({
     setEditingExercise(ex)
     setExerciseFormName(ex.name)
     setExerciseFormPrimary(ex.primary_muscle ?? '')
-    setExerciseFormSecondary(ex.secondary_muscle ?? '')
+    setExerciseFormSecondary(ex.secondary_muscles ?? [])
     setExerciseFormOpen(true)
   }
 
@@ -322,7 +366,7 @@ export function GymPrograms({
     if (editingExercise) {
       await supabase
         .from('exercises')
-        .update({ name, primary_muscle: exerciseFormPrimary || null, secondary_muscle: exerciseFormSecondary || null })
+        .update({ name, ...muscleColumns(exerciseFormPrimary, exerciseFormSecondary) })
         .eq('id', editingExercise.id)
       // gym_program_exercises.name is denormalized for display, so a rename here
       // needs to propagate to current programs — gym_session_sets.exercise_name is
@@ -335,7 +379,7 @@ export function GymPrograms({
       await supabase
         .from('exercises')
         .upsert(
-          { user_id: user.id, name, primary_muscle: exerciseFormPrimary || null, secondary_muscle: exerciseFormSecondary || null },
+          { user_id: user.id, name, ...muscleColumns(exerciseFormPrimary, exerciseFormSecondary) },
           { onConflict: 'user_id,name' },
         )
     }
@@ -423,7 +467,7 @@ export function GymPrograms({
       data: { user },
     } = await supabase.auth.getUser()
     if (!user) return
-    const exerciseId = await upsertExercise(user.id, name, '', '')
+    const exerciseId = await upsertExercise(user.id, name, '', [])
     const position = (exercisesByProgram.get(program.id) ?? []).length
     await supabase.from('gym_program_exercises').insert({
       program_id: program.id,
@@ -595,21 +639,12 @@ export function GymPrograms({
                         </option>
                       ))}
                     </select>
-                    <select
-                      value={row.secondaryMuscle}
-                      onChange={(e) =>
-                        setExerciseRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, secondaryMuscle: e.target.value } : r)))
-                      }
-                      className="min-w-0 flex-1 rounded-[20px] border border-line-strong bg-surface px-2 py-2.5 text-sm text-ink outline-none focus:border-pine"
-                    >
-                      <option value="">Secondary (optional)</option>
-                      {muscleGroups().map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                    </select>
                   </div>
+                  <SecondaryChips
+                    primary={row.primaryMuscle}
+                    value={row.secondaryMuscles}
+                    onChange={(next) => setExerciseRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, secondaryMuscles: next } : r)))}
+                  />
                 </div>
               ))}
             </div>
@@ -636,7 +671,7 @@ export function GymPrograms({
                 setExerciseRows((rows) =>
                   rows.map((r, idx) =>
                     idx === substitutingIndex
-                      ? { ...r, name: ex.name, primaryMuscle: ex.primary_muscle ?? '', secondaryMuscle: ex.secondary_muscle ?? '' }
+                      ? { ...r, name: ex.name, primaryMuscle: ex.primary_muscle ?? '', secondaryMuscles: ex.secondary_muscles ?? [] }
                       : r,
                   ),
                 )
@@ -667,7 +702,7 @@ export function GymPrograms({
                       {catalogEx?.primary_muscle && (
                         <span className="ml-2 text-xs font-normal text-ink-disabled">
                           {catalogEx.primary_muscle}
-                          {catalogEx.secondary_muscle ? ` · ${catalogEx.secondary_muscle}` : ''}
+                          {catalogEx.secondary_muscles?.length ? ` · ${catalogEx.secondary_muscles.join(', ')}` : ''}
                         </span>
                       )}
                     </p>
@@ -902,7 +937,7 @@ export function GymPrograms({
                       <div key={ex.id} className="flex items-center justify-between rounded-[20px] border border-line bg-surface px-4 py-3 shadow-card">
                         <button onClick={() => openEditExercise(ex)} className="flex-1 text-left">
                           <p className="font-medium text-ink">{ex.name}</p>
-                          {ex.secondary_muscle && <p className="text-[11px] text-ink-disabled">+ {ex.secondary_muscle}</p>}
+                          {ex.secondary_muscles?.length > 0 && <p className="text-[11px] text-ink-disabled">+ {ex.secondary_muscles.join(', ')}</p>}
                         </button>
                         <button onClick={() => setConfirmDeleteExercise(ex)} className="pl-3 text-ink-faint" aria-label="Remove exercise">
                           ✕
@@ -969,14 +1004,7 @@ export function GymPrograms({
                     </option>
                   ))}
                 </select>
-                <select value={exerciseFormSecondary} onChange={(e) => setExerciseFormSecondary(e.target.value)} className={INPUT}>
-                  <option value="">Secondary muscle (optional)</option>
-                  {muscleGroups().map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
+                <SecondaryChips primary={exerciseFormPrimary} value={exerciseFormSecondary} onChange={setExerciseFormSecondary} />
                 <button type="submit" className="mt-2 rounded-[20px] bg-pine px-4 py-2.5 font-semibold text-white">
                   {editingExercise ? 'Save changes' : 'Add exercise'}
                 </button>

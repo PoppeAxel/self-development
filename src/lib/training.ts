@@ -44,8 +44,8 @@ export function formatSets(n: number): string {
 
 /**
  * 4-week average sets/week per region. A set counts 1 toward its exercise's primary
- * region and 0.5 toward the secondary one — but only when that's a *different* region
- * (bench: Chest 1, Arms 0.5, never Chest 1.5). Weeks with no gym visit still count in
+ * region and 0.5 toward each secondary region — but only regions *different* from the
+ * primary, and each region once (bench: Chest 1, Shoulders 0.5, Arms 0.5, never Chest 1.5). Weeks with no gym visit still count in
  * the average: skipping the gym is real data here, unlike a half-logged food day.
  */
 export function regionBalance(
@@ -66,12 +66,12 @@ export function regionBalance(
     if (!inWindow.has(set.session_id)) continue
     const ex = exercisesByName.get(set.exercise_name.toLowerCase())
     const primary = ex?.primary_muscle ? REGION_OF.get(ex.primary_muscle) : undefined
-    const secondary = ex?.secondary_muscle ? REGION_OF.get(ex.secondary_muscle) : undefined
+    const secondaries = new Set((ex?.secondary_muscles ?? []).map((m) => REGION_OF.get(m)))
     if (primary) {
       add(primary, 1)
       direct.set(primary, (direct.get(primary) ?? 0) + 1)
     }
-    if (secondary && secondary !== primary) add(secondary, 0.5)
+    for (const region of secondaries) if (region && region !== primary) add(region, 0.5)
   }
   return regions.map(({ label: region }) => {
     // Rounded here so the shown number and its "N under" always add up to the target.

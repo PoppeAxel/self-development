@@ -487,7 +487,7 @@ export function LiveSession({
     const touched = new Set(
       doneByExercise.flatMap((ex) => {
         const c = exerciseByName.get(ex.name.toLowerCase())
-        return [c?.primary_muscle, c?.secondary_muscle].flatMap((m) =>
+        return [c?.primary_muscle, ...(c?.secondary_muscles ?? [])].flatMap((m) =>
           balanceRegions()
             .filter((r) => m && r.muscles.includes(m))
             .map((r) => r.label),
