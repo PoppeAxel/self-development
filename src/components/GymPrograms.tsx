@@ -83,6 +83,7 @@ export function SwapSheet({
   z = 'z-[60]',
   title = 'Swap exercise',
   footer,
+  onCreate,
 }: {
   exercises: Exercise[]
   currentName: string
@@ -92,6 +93,8 @@ export function SwapSheet({
   z?: string
   title?: string
   footer?: React.ReactNode
+  /** When set, a name that isn't in the library can be added to it from here. */
+  onCreate?: (name: string) => void
 }) {
   const [query, setQuery] = useState('')
   const q = query.trim().toLowerCase()
@@ -103,6 +106,7 @@ export function SwapSheet({
       const bMatches = primaryMuscle && b.primary_muscle === primaryMuscle ? 0 : 1
       return aMatches !== bMatches ? aMatches - bMatches : a.name.localeCompare(b.name)
     })
+  const exactMatch = exercises.some((ex) => ex.name.toLowerCase() === q)
   return (
     <div className={`${SHEET} ${z}`}>
       <div className="flex items-center justify-between px-4 pt-4">
@@ -112,11 +116,26 @@ export function SwapSheet({
         </button>
       </div>
       <div className="flex flex-col gap-3 p-4">
-        <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search exercises" className={`w-full ${INPUT}`} />
+        <input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={onCreate ? 'Search exercises or type a new name' : 'Search exercises'}
+          className={`w-full ${INPUT}`}
+        />
         {footer}
       </div>
       <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-4 pb-4">
-        {candidates.length === 0 && <p className="text-sm text-ink-disabled">No matches.</p>}
+        {onCreate && q && !exactMatch && (
+          <button
+            type="button"
+            onClick={() => onCreate(query.trim())}
+            className="rounded-[20px] border border-line-strong bg-surface py-3 text-sm font-semibold text-pine"
+          >
+            + Add "{query.trim()}" as a new exercise
+          </button>
+        )}
+        {candidates.length === 0 && !(onCreate && q) && <p className="text-sm text-ink-disabled">No matches.</p>}
         {candidates.map((ex) => (
           <button
             key={ex.id}

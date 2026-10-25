@@ -350,6 +350,17 @@ export function LiveSession({
     })
   }
 
+  // A name typed in "Add exercise" that isn't in the library yet: save it there first
+  // (muscles can be set later in the exercise library), then add it like any other.
+  async function createExercise(name: string, toProgram: boolean) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) return
+    const { data } = await supabase.from('exercises').upsert({ user_id: user.id, name }, { onConflict: 'user_id,name' }).select('*').single()
+    if (data) await addExercise(data as Exercise, toProgram)
+  }
+
   const anyDone = state.exercises.some((ex) => ex.sets.some((s) => s.done))
 
   async function end() {
@@ -729,6 +740,7 @@ export function LiveSession({
           primaryMuscle={undefined}
           onClose={() => setAdding(false)}
           onPick={(picked) => addExercise(picked, addToProgram)}
+          onCreate={(name) => createExercise(name, addToProgram)}
           footer={
             state.programId && (
               <label className="flex items-center gap-2 text-sm text-ink-2">
