@@ -57,6 +57,7 @@ interface SessionExerciseRow {
 export interface GymProgramsHandle {
   newProgram: () => void
   editPrograms: () => void
+  openLibrary: () => void
   editSession: (session: GymSession) => void
 }
 
@@ -200,7 +201,7 @@ export function GymPrograms({
 
   const exerciseByName = new Map(exercises.map((ex) => [ex.name.toLowerCase(), ex]))
 
-  useImperativeHandle(ref, () => ({ newProgram: openBuilder, editPrograms: () => setProgramsListOpen(true), editSession: openEditSession }))
+  useImperativeHandle(ref, () => ({ newProgram: openBuilder, editPrograms: () => setProgramsListOpen(true), openLibrary: () => setLibraryOpen(true), editSession: openEditSession }))
 
   function openBuilder() {
     setEditingProgram(null)
