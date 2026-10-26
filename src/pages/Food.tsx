@@ -5,6 +5,7 @@ import { addDays, format, subDays } from 'date-fns'
 import { todayISO } from '../lib/dates'
 import { Screen, HeroSegments, HeroSearch, ChipRail } from '../components/Screen'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { PortionStepper } from '../components/PortionStepper'
 import { BarcodeScanner } from '../components/BarcodeScanner'
 import {
   addMacros,
@@ -2203,23 +2204,19 @@ export function Food() {
                     />
                   )}
 
-                  {/* An ingredient with a standard portion keeps its quick-taps — this is
+                  {/* An ingredient with a standard portion gets a − n + stepper — this is
                       how "1 msk = 15 g" reaches the sheet. */}
                   {kind === 'ingredient' && ingredient?.portion_label && ingredient.portion_grams != null && (
-                    <div className="flex gap-1.5">
-                      {[1, 2, 3].map((n) => (
-                        <button
-                          key={n}
-                          onClick={() => {
-                            setQuantifyValue(String(round(ingredient.portion_grams! * n, 1)))
-                            setQuantifyFreeform(true)
-                          }}
-                          className="flex-1 rounded-xl bg-track py-1.5 text-xs font-medium text-ink-2"
-                        >
-                          {n} {ingredient.portion_label}
-                        </button>
-                      ))}
-                    </div>
+                    <PortionStepper
+                      grams={quantifyValue}
+                      portionGrams={ingredient.portion_grams}
+                      label={ingredient.portion_label}
+                      size="md"
+                      onChange={(g) => {
+                        setQuantifyValue(g)
+                        setQuantifyFreeform(true)
+                      }}
+                    />
                   )}
 
                   {quantifyLastUsed != null && (
@@ -2497,24 +2494,12 @@ export function Food() {
                       </button>
                     </div>
                     {portionIngredient?.portion_label && portionIngredient.portion_grams && (
-                      <div className="flex gap-1.5">
-                        {[1, 2, 3].map((n) => (
-                          <button
-                            key={n}
-                            type="button"
-                            onClick={() =>
-                              setRecipeRows((rows) =>
-                                rows.map((r, idx) =>
-                                  idx === i ? { ...r, grams: String(round(portionIngredient.portion_grams! * n, 1)) } : r,
-                                ),
-                              )
-                            }
-                            className="flex-1 rounded-xl bg-track py-1 text-xs font-medium text-ink-2"
-                          >
-                            {n} {portionIngredient.portion_label}
-                          </button>
-                        ))}
-                      </div>
+                      <PortionStepper
+                        grams={row.grams}
+                        portionGrams={portionIngredient.portion_grams}
+                        label={portionIngredient.portion_label}
+                        onChange={(g) => setRecipeRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, grams: g } : r)))}
+                      />
                     )}
                   </div>
                 )
