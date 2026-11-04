@@ -181,7 +181,8 @@ export function GymPrograms({
   const [editingProgram, setEditingProgram] = useState<GymProgram | null>(null)
   const [programName, setProgramName] = useState('')
   const [exerciseRows, setExerciseRows] = useState<ExerciseRow[]>([emptyExerciseRow()])
-  const [substitutingIndex, setSubstitutingIndex] = useState<number | null>(null)
+  // Which builder row the library picker fills: a row index, 'new' to append a row, or null (closed).
+  const [pickingFor, setPickingFor] = useState<number | 'new' | null>(null)
 
   const [editingSession, setEditingSession] = useState<GymSession | null>(null)
   const [sessionDate, setSessionDate] = useState('')
@@ -206,7 +207,7 @@ export function GymPrograms({
   function openBuilder() {
     setEditingProgram(null)
     setProgramName('')
-    setExerciseRows([emptyExerciseRow()])
+    setExerciseRows([])
     setBuilderOpen(true)
   }
 
@@ -227,7 +228,7 @@ export function GymPrograms({
               secondaryMuscle: catalogEx?.secondary_muscle ?? '',
             }
           })
-        : [emptyExerciseRow()],
+        : [],
     )
     setBuilderOpen(true)
   }
@@ -256,8 +257,14 @@ export function GymPrograms({
     } = await supabase.auth.getUser()
     if (!user) return
 
+    // Rows picked from the library link to that entry as-is (its muscles are owned by the
+    // library); only names typed in as new exercises are added to the catalog here.
     const exerciseIds = await Promise.all(
-      validRows.map((r) => upsertExercise(user.id, r.name.trim(), r.primaryMuscle, r.secondaryMuscle)),
+      validRows.map(
+        (r) =>
+          exerciseByName.get(r.name.trim().toLowerCase())?.id ??
+          upsertExercise(user.id, r.name.trim(), r.primaryMuscle, r.secondaryMuscle),
+      ),
     )
 
     const exercisePayload = (programId: string) =>
@@ -287,6 +294,13 @@ export function GymPrograms({
     setBuilderOpen(false)
     setEditingProgram(null)
     onChanged()
+  }
+
+  function fillPickedRow(picked: Pick<ExerciseRow, 'name' | 'primaryMuscle' | 'secondaryMuscle'>) {
+    const target = pickingFor
+    if (target === 'new') setExerciseRows((rows) => [...rows, { ...emptyExerciseRow(), ...picked }])
+    else if (target !== null) setExerciseRows((rows) => rows.map((r, idx) => (idx === target ? { ...r, ...picked } : r)))
+    setPickingFor(null)
   }
 
   async function deleteProgram(program: GymProgram) {
@@ -534,24 +548,19 @@ export function GymPrograms({
               className={INPUT}
             />
             <div className="flex flex-col gap-2">
-              {exerciseRows.map((row, i) => (
+              {exerciseRows.map((row, i) => {
+                const libEx = exerciseByName.get(row.name.trim().toLowerCase())
+                return (
                 <div key={i} className="flex flex-col gap-2 rounded-[20px] border border-line p-3">
                   <div className="flex gap-2">
-                    <input
-                      value={row.name}
-                      onChange={(e) =>
-                        setExerciseRows((rows) => rows.map((r, idx) => (idx === i ? { ...r, name: e.target.value } : r)))
-                      }
-                      placeholder="Exercise, e.g. Bench Press"
-                      className={`min-w-0 flex-1 ${INPUT}`}
-                    />
                     <button
                       type="button"
-                      onClick={() => setSubstitutingIndex(i)}
-                      className="shrink-0 px-2 text-ink-disabled"
-                      aria-label="Swap exercise"
+                      onClick={() => setPickingFor(i)}
+                      className={`flex min-w-0 flex-1 items-center justify-between text-left ${INPUT}`}
+                      aria-label="Choose exercise"
                     >
-                      ⇄
+                      <span className={`truncate ${row.name ? 'font-medium' : 'text-ink-disabled'}`}>{row.name || 'Choose exercise'}</span>
+                      <span className="shrink-0 pl-2 text-ink-disabled">⇄</span>
                     </button>
                     <button
                       type="button"
@@ -581,6 +590,15 @@ export function GymPrograms({
                       placeholder="Reps"
                       className="w-16 min-w-0 rounded-[20px] border border-line-strong bg-surface px-2 py-2.5 text-center text-ink placeholder-ink-disabled outline-none focus:border-pine"
                     />
+                    {libEx ? (
+                      <p className="flex min-w-0 flex-1 items-center px-1 text-sm text-ink-3">
+                        <span className="truncate">
+                          {libEx.primary_muscle ?? 'No muscle group'}
+                          {libEx.secondary_muscle ? ` · ${libEx.secondary_muscle}` : ''}
+                        </span>
+                      </p>
+                    ) : (
+                    <>
                     <select
                       value={row.primaryMuscle}
                       onChange={(e) =>
@@ -609,13 +627,16 @@ export function GymPrograms({
                         </option>
                       ))}
                     </select>
+                    </>
+                    )}
                   </div>
                 </div>
-              ))}
+                )
+              })}
             </div>
             <button
               type="button"
-              onClick={() => setExerciseRows((rows) => [...rows, emptyExerciseRow()])}
+              onClick={() => setPickingFor('new')}
               className="rounded-[20px] border border-line-strong bg-surface py-2.5 text-sm font-semibold text-pine"
             >
               + Add exercise
@@ -626,22 +647,19 @@ export function GymPrograms({
             {libraryButton}
           </form>
 
-          {substitutingIndex !== null && (
+          {pickingFor !== null && (
             <SwapSheet
               exercises={exercises}
-              currentName={exerciseRows[substitutingIndex].name}
-              primaryMuscle={exerciseRows[substitutingIndex].primaryMuscle}
-              onClose={() => setSubstitutingIndex(null)}
-              onPick={(ex) => {
-                setExerciseRows((rows) =>
-                  rows.map((r, idx) =>
-                    idx === substitutingIndex
-                      ? { ...r, name: ex.name, primaryMuscle: ex.primary_muscle ?? '', secondaryMuscle: ex.secondary_muscle ?? '' }
-                      : r,
-                  ),
-                )
-                setSubstitutingIndex(null)
-              }}
+              title={pickingFor === 'new' || !exerciseRows[pickingFor]?.name ? 'Choose exercise' : 'Swap exercise'}
+              currentName={pickingFor === 'new' ? '' : (exerciseRows[pickingFor]?.name ?? '')}
+              primaryMuscle={pickingFor === 'new' ? null : exerciseRows[pickingFor]?.primaryMuscle}
+              onClose={() => setPickingFor(null)}
+              onPick={(ex) =>
+                fillPickedRow({ name: ex.name, primaryMuscle: ex.primary_muscle ?? '', secondaryMuscle: ex.secondary_muscle ?? '' })
+              }
+              // A name that isn't in the library yet: the row gets muscle pickers, and saving the
+              // program adds it to the library.
+              onCreate={(name) => fillPickedRow({ name, primaryMuscle: '', secondaryMuscle: '' })}
             />
           )}
         </div>
